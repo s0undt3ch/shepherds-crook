@@ -117,6 +117,23 @@ fn percent_decode(text: &str, plus: bool) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The whitespace-separated runs of `text` that decoding changes, decoded, one
+/// per line; empty when there are none.
+fn decoded_runs(text: &str, plus: bool) -> String {
+    let mut out = String::new();
+    for run in text
+        .split(char::is_whitespace)
+        .filter(|r| r.contains(['%', '+']))
+    {
+        let d = percent_decode(run, plus);
+        if d != run {
+            out.push_str(&d);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// `to` written relative to `from`, both absolute. `None` when `to` is `from`
 /// or above it, which would be only `..` steps.
 fn relative(from: &Path, to: &Path) -> Option<String> {
@@ -266,17 +283,18 @@ impl Finder<'_> {
         }
     }
 
-    /// Every string once as written and, with a `%` or `+` in it, once decoded
-    /// as a URL would be.
+    /// Every string once as written, then the runs in it with a `%` or `+`
+    /// decoded as a URL would be: only those runs, so a large input with a few
+    /// `+` signs is not scanned twice.
     fn scan(&mut self, text: &str, is_command: bool) {
         self.scan_as_written(text, is_command);
         if text.contains(['%', '+']) {
-            let decoded = percent_decode(text, false);
-            let spaced = percent_decode(text, true);
-            if decoded != text {
+            let decoded = decoded_runs(text, false);
+            let spaced = decoded_runs(text, true);
+            if !decoded.is_empty() {
                 self.scan_as_written(&decoded, is_command);
             }
-            if spaced != decoded && spaced != text {
+            if spaced != decoded {
                 self.scan_as_written(&spaced, is_command);
             }
         }

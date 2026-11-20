@@ -1,5 +1,7 @@
 use std::ffi::OsString;
-use std::io::Write;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::os::fd::AsFd;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -54,6 +56,27 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
+/// Stands in for a stdout that is not open: every write fails.
+struct NoStdout;
+
+impl Write for NoStdout {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(nix::errno::Errno::EBADF.into())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(nix::errno::Errno::EBADF.into())
+    }
+}
+
+/// The hook's stdout as a plain file. `std::io::stdout()` reports success on
+/// `EBADF`, which would turn an unwritable answer into no answer at all.
+fn hook_stdout() -> Box<dyn Write> {
+    match std::io::stdout().as_fd().try_clone_to_owned() {
+        Ok(fd) => Box::new(BufWriter::new(File::from(fd))),
+        Err(_) => Box::new(NoStdout),
+    }
+}
+
 fn run(args: &[OsString], env: Env) -> u8 {
     // `hook` and `mod` are routed before clap, which exits 2 on a bad argument.
     // With `onFailure: "block"` that would block every tool call.
@@ -66,12 +89,7 @@ fn run(args: &[OsString], env: Env) -> u8 {
             .collect();
         let code = if first == Some("hook") {
             let event = rest.first().map_or("", String::as_str);
-            hook::main(
-                event,
-                &mut std::io::stdin().lock(),
-                env,
-                &mut std::io::stdout().lock(),
-            )
+            hook::main(event, &mut std::io::stdin().lock(), env, &mut hook_stdout())
         } else {
             modverb::main(
                 &rest,

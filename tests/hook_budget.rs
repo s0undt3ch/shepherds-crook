@@ -145,7 +145,8 @@ fn reason(v: &Value) -> &str {
 fn large_write_budget() {
     let w = World::new();
     let secret = w.notes.join("secret.md").display().to_string();
-    let mut content = prose(WRITE_BYTES, 7, 6);
+    // A `+` makes every line a candidate for the decoded rescan.
+    let mut content = prose(WRITE_BYTES, 7, 6).replace('\n', " a+b\n");
     content.push_str(&format!("see {secret}\n"));
     let (took, v) = w.write(&content);
     eprintln!("5 MB write checked in {took:?}");

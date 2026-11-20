@@ -229,3 +229,34 @@ fn unwritable_stdout_exits_two() {
     let o = child.wait_with_output().unwrap();
     assert_eq!(o.status.code(), Some(2));
 }
+
+/// Rust's own stdout reports success on `EBADF`, so a stdout the hook cannot
+/// write to (here read-only) must still end in exit 2, not 0 with no answer.
+#[test]
+fn read_only_stdout_exits_two() {
+    let tmp = setup();
+    let stdout = std::fs::File::open("/dev/null").unwrap();
+    let mut child = crook()
+        .args(["hook", "PreToolUse"])
+        .env("XDG_STATE_HOME", tmp.path())
+        .envs(CHILD)
+        .stdin(Stdio::piped())
+        .stdout(stdout)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _ = child.stdin.take().unwrap().write_all(b"not json");
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(o.status.code(), Some(2));
+    // No answer to give: nothing to fail, so still 0.
+    let stdout = std::fs::File::open("/dev/null").unwrap();
+    let mut child = crook()
+        .args(["hook", "Stop"])
+        .env("XDG_STATE_HOME", tmp.path())
+        .stdin(Stdio::piped())
+        .stdout(stdout)
+        .spawn()
+        .unwrap();
+    let _ = child.stdin.take().unwrap().write_all(b"{}");
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+}

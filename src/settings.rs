@@ -9,7 +9,7 @@ use crate::{Env, Error, paths};
 
 pub struct Opts {
     pub role: Role,
-    pub data_dir: PathBuf,
+    pub state_dir: PathBuf,
     pub crook_bin: PathBuf,
 }
 
@@ -45,14 +45,14 @@ fn hook(bin: &str, event: &str) -> Value {
 
 pub fn build(o: &Opts) -> Result<Vec<u8>, Error> {
     let bin = o.crook_bin.to_string_lossy();
-    let data = format!(
+    let state = format!(
         "//{}/**",
-        o.data_dir.to_string_lossy().trim_start_matches('/')
+        o.state_dir.to_string_lossy().trim_start_matches('/')
     );
     let mut deny = vec![
-        format!("Read({data})"),
-        format!("Edit({data})"),
-        format!("Write({data})"),
+        format!("Read({state})"),
+        format!("Edit({state})"),
+        format!("Write({state})"),
     ];
     let mut allow: Vec<&str> = Vec::new();
     if o.role == Role::Child {
@@ -61,6 +61,7 @@ pub fn build(o: &Opts) -> Result<Vec<u8>, Error> {
             "mcp__crook__need",
             "mcp__crook__done",
             "mcp__crook__status",
+            "mcp__crook__worktree",
         ]);
         deny.extend(
             [
@@ -92,7 +93,7 @@ mod tests {
     fn opts(role: Role) -> Opts {
         Opts {
             role,
-            data_dir: "/d/crook/p".into(),
+            state_dir: "/s/crook".into(),
             crook_bin: "/bin/crook".into(),
         }
     }
@@ -117,7 +118,10 @@ mod tests {
         assert_eq!(v["crossSessionInbound"], "refuse");
         let deny = list(&v, "deny");
         for t in ["Read", "Edit", "Write"] {
-            assert!(deny.contains(&format!("{t}(//d/crook/p/**)")), "{t}");
+            assert!(deny.contains(&format!("{t}(//s/crook/**)")), "{t}");
+        }
+        for d in &deny {
+            assert!(!d.contains("share/crook") && !d.contains("//d/"), "{d}");
         }
         assert!(v["hooks"].get("PostToolUse").is_none());
         let pre = &v["hooks"]["PreToolUse"][0];
@@ -136,7 +140,7 @@ mod tests {
     fn settings_child() {
         let v = built(Role::Child);
         let allow = list(&v, "allow");
-        for t in ["take_task", "need", "done", "status"] {
+        for t in ["take_task", "need", "done", "status", "worktree"] {
             assert!(allow.contains(&format!("mcp__crook__{t}")), "{t}");
         }
         let deny = list(&v, "deny");

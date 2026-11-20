@@ -296,7 +296,7 @@ mod tests {
 
     fn env_for(dir: &Path) -> impl Fn(&str) -> Option<String> + use<> {
         let x = dir.to_str().unwrap().to_string();
-        move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone())
+        move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone())
     }
 
     fn fresh() -> (tempfile::TempDir, Store) {

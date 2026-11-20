@@ -9,7 +9,7 @@ use crook::store::{Mode, Store, Touch};
 
 fn env_for(xdg: &Path) -> impl Fn(&str) -> Option<String> + use<> {
     let x = xdg.display().to_string();
-    move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone())
+    move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone())
 }
 
 fn project_with(xdg: &Path, slug: &str, children: &[&str]) -> Store {
@@ -38,7 +38,7 @@ fn project_with(xdg: &Path, slug: &str, children: &[&str]) -> Store {
 fn run(xdg: &Path, args: &[&str]) -> Output {
     crook()
         .args(args)
-        .env("XDG_DATA_HOME", xdg)
+        .env("XDG_STATE_HOME", xdg)
         .output()
         .unwrap()
 }
@@ -83,7 +83,7 @@ fn unpark_is_refused_inside_a_session() {
     project_with(tmp.path(), "p", &["c1"]);
     let o = crook()
         .args(["unpark", "c1"])
-        .env("XDG_DATA_HOME", tmp.path())
+        .env("XDG_STATE_HOME", tmp.path())
         .env("CROOK_ROLE", "child")
         .output()
         .unwrap();

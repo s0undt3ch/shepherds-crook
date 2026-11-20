@@ -733,7 +733,7 @@ mod tests {
     fn fresh() -> (tempfile::TempDir, Store) {
         let tmp = tempfile::tempdir().unwrap();
         let x = tmp.path().display().to_string();
-        let env = move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone());
+        let env = move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone());
         project::init(&env, "p").unwrap();
         let mut s = Store::open(&env, "p", Mode::ReadWrite).unwrap();
         for id in ["c1", "c2"] {

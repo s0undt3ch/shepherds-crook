@@ -347,7 +347,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut vars = HashMap::from([
             (
-                "XDG_DATA_HOME".to_string(),
+                "XDG_STATE_HOME".to_string(),
                 tmp.path().display().to_string(),
             ),
             ("CROOK_ROLE".to_string(), role.to_string()),
@@ -382,7 +382,7 @@ mod tests {
         migrate(&f);
         let (code, v) = call(&f, &["ping"], GOOD);
         assert_eq!(code, 0);
-        let gen_path = format!("{}/crook/p/gen", f.vars["XDG_DATA_HOME"]);
+        let gen_path = format!("{}/crook/p/gen", f.vars["XDG_STATE_HOME"]);
         assert_eq!(
             v,
             json!({"ok":true,"slug":"p","role":"child","child":"c1","schema":1,"gen":gen_path})
@@ -407,7 +407,9 @@ mod tests {
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("run crook open p"));
         assert_eq!(
-            std::fs::read_dir(&f.vars["XDG_DATA_HOME"]).unwrap().count(),
+            std::fs::read_dir(&f.vars["XDG_STATE_HOME"])
+                .unwrap()
+                .count(),
             0
         );
     }
@@ -476,7 +478,7 @@ mod tests {
     fn old_schema_says_run_crook_open() {
         let f = fixture("child");
         migrate(&f);
-        let db = format!("{}/crook/p/crook.db", f.vars["XDG_DATA_HOME"]);
+        let db = format!("{}/crook/p/crook.db", f.vars["XDG_STATE_HOME"]);
         let conn = rusqlite::Connection::open(db).unwrap();
         conn.pragma_update(None, "user_version", 0).unwrap();
         drop(conn);
@@ -581,7 +583,7 @@ mod tests {
         })
         .unwrap();
         assert!(
-            std::fs::metadata(format!("{}/crook/p/gen", f.vars["XDG_DATA_HOME"])).is_ok(),
+            std::fs::metadata(format!("{}/crook/p/gen", f.vars["XDG_STATE_HOME"])).is_ok(),
             "a project write bumps gen"
         );
     }

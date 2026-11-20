@@ -7,7 +7,7 @@ use crate::{Env, Error, paths};
 
 /// Slugs of every project that has a database, sorted.
 pub fn all_slugs(env: Env) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(paths::data_dir(env)) else {
+    let Ok(entries) = std::fs::read_dir(paths::state_dir(env)) else {
         return Vec::new();
     };
     let mut slugs: Vec<String> = entries

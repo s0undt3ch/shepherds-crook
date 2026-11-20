@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 fn hook(event: &str, xdg: &std::path::Path, input: &str, extra: &[(&str, &str)]) -> Output {
     let mut c: Command = crook();
-    c.args(["hook", event]).env("XDG_DATA_HOME", xdg);
+    c.args(["hook", event]).env("XDG_STATE_HOME", xdg);
     for (k, v) in extra {
         c.env(k, v);
     }
@@ -35,7 +35,7 @@ const CHILD: [(&str, &str); 3] = [
 fn setup() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let x = tmp.path().display().to_string();
-    let env = move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone());
+    let env = move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone());
     let env: Env = &env;
     project::init(env, "p").unwrap();
     let mut s = Store::open(env, "p", Mode::ReadWrite).unwrap();
@@ -87,7 +87,7 @@ fn session_start_records_parent_pid() {
             .contains("Project card")
     );
     let x = tmp.path().display().to_string();
-    let env = move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone());
+    let env = move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone());
     let s = Store::open(&env, "p", Mode::ReadOnly).unwrap();
     assert_eq!(
         s.read(|c| crew::claude_pid(c, "c1")).unwrap(),
@@ -128,7 +128,7 @@ fn forced_panic_release() {
     let mut c = Command::new(target.join("release/crook"));
     c.args(["hook", "PreToolUse"])
         .env_clear()
-        .env("XDG_DATA_HOME", tmp.path())
+        .env("XDG_STATE_HOME", tmp.path())
         .env("CROOK_HOOK_TEST_PANIC", "1");
     for (k, v) in CHILD {
         c.env(k, v);

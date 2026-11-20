@@ -1,4 +1,4 @@
-//! The user's config, `~/.config/crook/config.toml`.
+//! The user's config, `$XDG_CONFIG_HOME/crook/config.toml`.
 
 use serde::Deserialize;
 

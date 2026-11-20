@@ -12,7 +12,7 @@ use crook::store::{Mode, Store};
 fn run(xdg: &Path, args: &[&str], stdin: &str) -> Output {
     let mut child = crook()
         .args(args)
-        .env("XDG_DATA_HOME", xdg)
+        .env("XDG_STATE_HOME", xdg)
         .current_dir(xdg)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -30,7 +30,7 @@ fn run(xdg: &Path, args: &[&str], stdin: &str) -> Output {
 
 fn record(xdg: &Path) -> project::Record {
     let x = xdg.display().to_string();
-    let env = move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone());
+    let env = move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone());
     let e: Env = &env;
     Store::open(e, "p", Mode::ReadOnly)
         .unwrap()
@@ -107,7 +107,7 @@ fn user_verbs_refuse_inside_a_session_and_on_a_missing_project() {
     let tmp = tempfile::tempdir().unwrap();
     let mut c: Command = crook();
     c.args(["project", "p", "add-link", "u"])
-        .env("XDG_DATA_HOME", tmp.path())
+        .env("XDG_STATE_HOME", tmp.path())
         .env("CROOK_ROLE", "orchestrator");
     let o = c.output().unwrap();
     assert_eq!(o.status.code(), Some(2));

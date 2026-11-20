@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 fn mod_cmd(xdg: &std::path::Path) -> Command {
     let mut c = crook();
     c.args(["mod", "ping"])
-        .env("XDG_DATA_HOME", xdg)
+        .env("XDG_STATE_HOME", xdg)
         .env("CROOK_ROLE", "child")
         .env("CROOK_PROJECT", "p")
         .env("CROOK_CHILD", "c1");
@@ -44,7 +44,7 @@ const GOOD: &str = r#"{"session_id":"s1","user_turn":false}"#;
 fn mod_ping() {
     let tmp = tempfile::tempdir().unwrap();
     let xdg = tmp.path().display().to_string();
-    let env = |k: &str| (k == "XDG_DATA_HOME").then(|| xdg.clone());
+    let env = |k: &str| (k == "XDG_STATE_HOME").then(|| xdg.clone());
     let env: Env = &env;
     Store::open(env, "p", Mode::Migrate).unwrap();
 

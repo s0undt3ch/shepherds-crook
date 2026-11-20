@@ -6,7 +6,7 @@ use crook::store::{Mode, Store, Touch};
 fn immediate_concurrent() {
     let tmp = tempfile::tempdir().unwrap();
     let x = tmp.path().to_str().unwrap().to_string();
-    let env = move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone());
+    let env = move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone());
     {
         let mut s = Store::open(&env, "p", Mode::Migrate).unwrap();
         s.write(Touch::empty(), |tx| {

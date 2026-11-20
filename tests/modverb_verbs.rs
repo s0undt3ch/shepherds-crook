@@ -15,7 +15,7 @@ struct Fx {
 fn base_env(xdg: &Path) -> impl Fn(&str, &[(&str, &str)]) -> Option<String> + use<> {
     let x = xdg.display().to_string();
     move |k, extra| {
-        if k == "XDG_DATA_HOME" {
+        if k == "XDG_STATE_HOME" {
             return Some(x.clone());
         }
         extra

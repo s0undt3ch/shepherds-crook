@@ -12,7 +12,7 @@ const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/agent
 
 fn env_for(xdg: &Path) -> impl Fn(&str) -> Option<String> + use<> {
     let x = xdg.display().to_string();
-    move |k: &str| (k == "XDG_DATA_HOME").then(|| x.clone())
+    move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone())
 }
 
 /// A `claude` that prints the fixture, so no test runs the live command.
@@ -57,7 +57,7 @@ fn run(tmp: &Path, args: &[&str]) -> Output {
     fake_bin(&bin);
     crook()
         .args(args)
-        .env("XDG_DATA_HOME", tmp.join("data"))
+        .env("XDG_STATE_HOME", tmp.join("state"))
         .env("PATH", &bin)
         .output()
         .unwrap()
@@ -70,8 +70,8 @@ fn out(o: &Output) -> String {
 #[test]
 fn list_shows_counts_and_card() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let mut s = project(&data, "alpha");
+    let state = tmp.path().join("state");
+    let mut s = project(&state, "alpha");
     add(&mut s, "c1", "aaaa-interactive");
     add(&mut s, "c2", "bbbb-background");
     s.write(Touch::STATUS, |tx| {
@@ -93,8 +93,8 @@ fn list_shows_counts_and_card() {
 #[test]
 fn list_marks_a_stale_card_and_a_live_orchestrator() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let mut s = project(&data, "alpha");
+    let state = tmp.path().join("state");
+    let mut s = project(&state, "alpha");
     // The orchestrator's pid is this test process, which is alive; the fake
     // `claude` below reports that pid with the recorded session.
     let me = std::process::id();
@@ -120,7 +120,7 @@ fn list_marks_a_stale_card_and_a_live_orchestrator() {
     std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
     let o = crook()
         .arg("list")
-        .env("XDG_DATA_HOME", &data)
+        .env("XDG_STATE_HOME", &state)
         .env("PATH", &bin)
         .output()
         .unwrap();
@@ -133,8 +133,8 @@ fn list_marks_a_stale_card_and_a_live_orchestrator() {
 #[test]
 fn list_orchestrator_with_another_session_is_not_live() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let mut s = project(&data, "alpha");
+    let state = tmp.path().join("state");
+    let mut s = project(&state, "alpha");
     let me = std::process::id();
     s.write(Touch::PROJECT, |tx| {
         tx.execute(
@@ -154,9 +154,9 @@ fn list_orchestrator_with_another_session_is_not_live() {
 #[test]
 fn list_broken_db() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    drop(project(&data, "good"));
-    let bad = data.join("crook/bad");
+    let state = tmp.path().join("state");
+    drop(project(&state, "good"));
+    let bad = state.join("crook/bad");
     std::fs::create_dir_all(&bad).unwrap();
     std::fs::write(bad.join("crook.db"), "this is not a database, just text").unwrap();
     let o = run(tmp.path(), &["list"]);
@@ -173,8 +173,8 @@ fn list_broken_db() {
 #[test]
 fn list_old_schema() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let dir = data.join("crook/old");
+    let state = tmp.path().join("state");
+    let dir = state.join("crook/old");
     std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("crook.db");
     let c = rusqlite::Connection::open(&db).unwrap();
@@ -195,6 +195,30 @@ fn list_old_schema() {
 }
 
 #[test]
+fn list_state_glob() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = tmp.path().join("state");
+    drop(project(&state, "instate"));
+    // A database under the data tree is not a project.
+    let stray = tmp.path().join("data/crook/indata");
+    std::fs::create_dir_all(&stray).unwrap();
+    drop(rusqlite::Connection::open(stray.join("crook.db")).unwrap());
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    fake_bin(&bin);
+    let o = crook()
+        .arg("list")
+        .env("XDG_STATE_HOME", &state)
+        .env("XDG_DATA_HOME", tmp.path().join("data"))
+        .env("PATH", &bin)
+        .output()
+        .unwrap();
+    let text = out(&o);
+    assert!(text.contains("instate"), "{text}");
+    assert!(!text.contains("indata"), "{text}");
+}
+
+#[test]
 fn list_with_no_projects() {
     let tmp = tempfile::tempdir().unwrap();
     let o = run(tmp.path(), &["list"]);
@@ -205,8 +229,8 @@ fn list_with_no_projects() {
 #[test]
 fn status_flags_no_mod() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let mut s = project(&data, "alpha");
+    let state = tmp.path().join("state");
+    let mut s = project(&state, "alpha");
     add(&mut s, "c1", "aaaa-interactive");
     add(&mut s, "c2", "bbbb-background");
     let o = run(tmp.path(), &["status"]);
@@ -228,8 +252,8 @@ fn status_flags_no_mod() {
 #[test]
 fn status_shows_untaken_and_no_agent() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let mut s = project(&data, "alpha");
+    let state = tmp.path().join("state");
+    let mut s = project(&state, "alpha");
     add(&mut s, "c3", "unknown-session");
     s.write(Touch::INBOX, |tx| {
         crew::task(tx, "c3", "do a thing")?;
@@ -246,8 +270,8 @@ fn status_shows_untaken_and_no_agent() {
 #[test]
 fn next_prints_the_oldest_waiting_child() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let mut s = project(&data, "alpha");
+    let state = tmp.path().join("state");
+    let mut s = project(&state, "alpha");
     add(&mut s, "c1", "aaaa-interactive");
     add(&mut s, "c2", "bbbb-background");
     add(&mut s, "c3", "unknown-session");
@@ -275,8 +299,8 @@ fn next_prints_the_oldest_waiting_child() {
 #[test]
 fn next_with_nothing_waiting() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    let mut s = project(&data, "alpha");
+    let state = tmp.path().join("state");
+    let mut s = project(&state, "alpha");
     add(&mut s, "c1", "aaaa-interactive");
     let o = run(tmp.path(), &["next"]);
     assert!(o.status.success());

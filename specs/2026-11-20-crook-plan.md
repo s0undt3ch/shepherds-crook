@@ -108,7 +108,7 @@ D starts, because it is the privacy boundary.
 - **Claude Code versions.** The floor is 2.1.318 and the tested version is
   2.1.329. `crook open` refuses older versions and warns on newer ones.
 - **Slugs** match `^[a-z0-9-]+$`.
-- **Paths** (built from `XDG_STATE_HOME`, `XDG_DATA_HOME` and `HOME` by
+- **Paths** (built from `XDG_STATE_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `HOME` by
   hand, never with the `dirs` crate, which gives
   `~/Library/Application Support` on macOS). An empty variable counts as
   unset:
@@ -120,7 +120,8 @@ D starts, because it is the privacy boundary.
   - home: `${XDG_DATA_HOME:-~/.local/share}/crook/<slug>/` by default (Task
     13)
   - mod: `${XDG_DATA_HOME:-~/.local/share}/crook-plugin/<version>-<hash>/`
-  - config: `~/.config/crook/config.toml`
+  - config: `$XDG_CONFIG_HOME/crook/config.toml` (default
+    `~/.config/crook/config.toml`)
   - Claude Code's config: `${CLAUDE_CONFIG_DIR:-~/.claude}`, never a
     hard-coded `~/.claude`
 - **SQLite:**

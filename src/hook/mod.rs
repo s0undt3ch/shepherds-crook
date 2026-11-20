@@ -208,7 +208,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect();
             m.push((
-                "XDG_DATA_HOME".into(),
+                "XDG_STATE_HOME".into(),
                 self.tmp.path().display().to_string(),
             ));
             move |k: &str| m.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())

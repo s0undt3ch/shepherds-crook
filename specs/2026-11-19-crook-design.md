@@ -321,7 +321,7 @@ on by this change" (strings in the loam v0.4.8 binary).
   private. If it were, writes into worktrees would be exempt, the bare-name
   rule would fire on every command, and the repo search would be skipped.
   `crook init` refuses a home that falls inside a private location.
-- `~/.config/crook/config.toml` has a user-wide `private` list for every
+- `$XDG_CONFIG_HOME/crook/config.toml` (default `~/.config/crook/config.toml`) has a user-wide `private` list for every
   project, for example the vault, so it's declared once.
 - The same files hold `allow` entries for known false positives.
 
@@ -608,7 +608,7 @@ Only `crook open` and `crook resume` migrate the schema. Mod verbs and the
 hook work against any version they can read, and otherwise fail with `run
 crook open <slug>`.
 
-User-wide settings live in `~/.config/crook/config.toml`: the `private` and
+User-wide settings live in `$XDG_CONFIG_HOME/crook/config.toml` (default `~/.config/crook/config.toml`): the `private` and
 `allow` lists, `home` and the optional `diary_root`.
 
 - **Only the `crook` binary opens `crook.db`.** The mod API has no SQLite,

@@ -85,15 +85,20 @@ fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set) -> Vec<String> {
         return Vec::new();
     };
     let mut lines = Vec::new();
-    for row in out.stdout.split(|&b| b == b'\n') {
-        // `--null` puts a NUL between the path and the line, and quotes nothing.
+    // `--null` puts a NUL between the path and the line and quotes nothing, so a
+    // path may hold a newline: a row without a NUL is the start of a path.
+    let mut row: Vec<u8> = Vec::new();
+    for part in out.stdout.split(|&b| b == b'\n') {
+        row.extend_from_slice(part);
         let Some(nul) = row.iter().position(|&b| b == 0) else {
+            row.push(b'\n');
             continue;
         };
         let path = repo.join(OsStr::from_bytes(&row[..nul]));
         if !s.contains(&path) {
             lines.push(padded(&String::from_utf8_lossy(&row[nul + 1..])));
         }
+        row.clear();
     }
     lines
 }
@@ -272,5 +277,15 @@ mod tests {
             &fx.set(&[]),
         );
         assert_eq!(got.len(), 1);
+    }
+
+    #[test]
+    fn a_newline_in_a_tracked_path_does_not_misattribute_it() {
+        let fx = Fx::new();
+        let secret = "private words that only live in the folder";
+        let r = repo(&fx, "proj", &[("pvt/x\nfoo.md", secret)]);
+        let set = fx.set(&[&r.join("pvt/*.md")]);
+        let got = subtract(vec![hit(secret)], &[], "", "", &[r], &set);
+        assert_eq!(got, vec![hit(secret)]);
     }
 }

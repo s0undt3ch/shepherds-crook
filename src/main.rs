@@ -52,7 +52,12 @@ fn run(args: &[OsString], env: Env) -> u8 {
         let code = if first == Some("hook") {
             hook::main(&rest, env)
         } else {
-            modverb::main(&rest, env)
+            modverb::main(
+                &rest,
+                env,
+                &mut std::io::stdin().lock(),
+                &mut std::io::stdout().lock(),
+            )
         };
         return u8::try_from(code).unwrap_or(1);
     }

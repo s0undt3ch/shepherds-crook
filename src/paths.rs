@@ -2,11 +2,6 @@ use std::path::PathBuf;
 
 use crate::{Env, Error};
 
-/// Placeholder until Task 3 hashes the embedded mod.
-fn plugin_hash() -> &'static str {
-    "000000000000"
-}
-
 pub fn valid_slug(s: &str) -> Result<(), Error> {
     let ok = !s.is_empty()
         && s.bytes()
@@ -49,7 +44,7 @@ pub fn plugin_dir(env: Env) -> PathBuf {
     data_home(env).join("crook-plugin").join(format!(
         "{}-{}",
         env!("CARGO_PKG_VERSION"),
-        plugin_hash()
+        crate::launch::plugin_dir::content_hash()
     ))
 }
 

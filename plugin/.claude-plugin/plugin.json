@@ -1,0 +1,5 @@
+{
+  "name": "crook",
+  "description": "The crook mod: session tools, inbox watcher and status line for crook-managed Claude Code sessions.",
+  "license": "Apache-2.0"
+}

@@ -6,6 +6,7 @@
 pub mod error;
 pub mod gate;
 pub mod hook;
+pub mod launch;
 pub mod modverb;
 pub mod paths;
 pub mod store;

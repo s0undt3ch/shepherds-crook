@@ -8,6 +8,7 @@ pub mod gate;
 pub mod hook;
 pub mod modverb;
 pub mod paths;
+pub mod store;
 
 pub use error::Error;
 

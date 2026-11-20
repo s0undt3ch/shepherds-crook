@@ -8,11 +8,16 @@ license = "Apache-2.0"
 repository = "https://github.com/s0undt3ch/shepherds-crook"
 
 [dependencies]
+bitflags = "2.13.2"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 thiserror = "2"
 
 [profile.release]
 panic = "unwind"
 lto = "thin"
 strip = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -29,6 +29,9 @@ const EXEMPT: [&str; 7] = [
 const ASKS_BUSY: Duration = Duration::from_secs(1);
 /// References counted and listed per call; the rest of a huge input is not worth the work.
 const MAX_REFS: usize = 512;
+/// The repo searches of the subtraction stop this long after the check starts,
+/// leaving room in the 500 ms budget; on timeout every hit stands.
+const SUBTRACT_BY: Duration = Duration::from_millis(300);
 /// The largest file read as "the edited file's current content".
 const MAX_CURRENT: u64 = 16 << 20;
 
@@ -51,6 +54,7 @@ pub fn check(
     if exempt_tool(tool) {
         return Ok(None);
     }
+    let started = Instant::now();
     let cfg = config::load(env)?;
     let set = Set::load(rec, &cfg, env, slug);
     let write = matches!(tool, "Write" | "Edit");
@@ -91,7 +95,8 @@ pub fn check(
         let current = target.as_deref().map(current_content).unwrap_or_default();
         let public: Vec<String> = rec.links.iter().chain(&rec.tickets).cloned().collect();
         let repos: Vec<PathBuf> = rec.repos.iter().map(PathBuf::from).collect();
-        let kept = subtract(hits, &public, &current, old, &repos, &set);
+        let deadline = started + SUBTRACT_BY;
+        let kept = subtract(hits, &public, &current, old, &repos, &set, deadline);
         refs.extend(files_of(kept));
     }
 
@@ -438,5 +443,58 @@ mod tests {
         assert!(dir.join("index.bin").is_file(), "rebuilt");
         std::fs::write(dir.join("index.bin"), b"junk").unwrap();
         assert_eq!(reason(&f.pre("Bash", call)), first);
+    }
+
+    #[test]
+    fn many_references_still_ask_with_the_first() {
+        let f = Fx::new();
+        let many = f.notes.join("many");
+        std::fs::create_dir_all(&many).unwrap();
+        let mut cmd = String::from("cat");
+        for i in 0..(super::MAX_REFS + 88) {
+            let p = many.join(format!("f{i:04}"));
+            std::fs::write(&p, "x\n").unwrap();
+            cmd.push_str(&format!(" {}", p.display()));
+        }
+        let r = reason(&f.pre("Bash", json!({"command": cmd})));
+        let first = many.join("f0000").display().to_string();
+        assert!(
+            r.starts_with(&format!("crook: private reference: {first} (+")),
+            "{}",
+            &r[..r.len().min(200)]
+        );
+        assert_eq!(f.asks().len(), 1);
+    }
+
+    #[test]
+    fn distinct_never_empties_a_list() {
+        let same = vec!["/n/a".to_string(), "/n/a".to_string()];
+        assert_eq!(
+            super::distinct(same).len(),
+            2,
+            "equal texts are not 'inside' each other"
+        );
+        assert_eq!(super::distinct(vec!["/n/a".into()]), ["/n/a"]);
+        let nested = vec!["/private/n/a".to_string(), "/n/a".to_string()];
+        assert_eq!(super::distinct(nested), ["/private/n/a"]);
+    }
+
+    #[test]
+    fn erroring_check_asks_with_a_hook_error() {
+        let f = Fx::new();
+        let cfg = crate::paths::config_file(&f.env());
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        for text in ["privat = [\"x\"]\n", "private = ["] {
+            std::fs::write(&cfg, text).unwrap();
+            let r = reason(&f.pre("Bash", json!({"command": "ls"})));
+            assert!(r.starts_with("crook: hook error: config "), "{r}");
+        }
+        // An unreadable config (a directory in its place) is the same.
+        std::fs::remove_file(&cfg).unwrap();
+        std::fs::create_dir(&cfg).unwrap();
+        let r = reason(&f.pre("Bash", json!({"command": "ls"})));
+        assert!(r.starts_with("crook: hook error: config "), "{r}");
+        // Exempt tools never reach the config.
+        assert_eq!(f.pre("Read", json!({})), "");
     }
 }

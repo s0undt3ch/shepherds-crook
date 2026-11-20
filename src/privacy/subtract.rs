@@ -1,10 +1,12 @@
 //! Subtracting chunks that are public anyway.
 
 use std::ffi::OsStr;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Instant;
 
 use super::chunks::normalise_line;
 use super::{ChunkHit, Set};
@@ -12,6 +14,9 @@ use super::{ChunkHit, Set};
 /// Keeps the hits whose chunk is not already public: not in a record link or
 /// ticket, not in the edited file or its `old_string`, and not on a line of a
 /// tracked file in a project repo outside the private locations.
+///
+/// The repo searches stop at `deadline`: the search is killed and every hit is
+/// kept, since a partial answer must never clear a chunk.
 pub fn subtract(
     hits: Vec<ChunkHit>,
     public: &[String],
@@ -19,7 +24,9 @@ pub fn subtract(
     old_string: &str,
     repos: &[PathBuf],
     s: &Set,
+    deadline: Instant,
 ) -> Vec<ChunkHit> {
+    let original = hits.clone();
     let mut known: Vec<String> = Vec::new();
     for text in public
         .iter()
@@ -36,10 +43,15 @@ pub fn subtract(
         if kept.is_empty() {
             break;
         }
+        if Instant::now() >= deadline {
+            return original;
+        }
         if s.contains(repo) {
             continue;
         }
-        let lines = repo_lines(repo, &kept, s);
+        let Some(lines) = repo_lines(repo, &kept, s, deadline) else {
+            return original;
+        };
         kept.retain(|h| !covered(&h.chunk, &lines));
     }
     kept
@@ -59,8 +71,9 @@ fn covered(chunk: &str, lines: &[String]) -> bool {
 /// Whole lines of tracked files that contain any of the chunks, padded. The
 /// chunks go in on stdin, so private text never reaches a file or a command line.
 /// Lines from a file that is private by any rule (glob included) are dropped.
-/// A repo that cannot be searched gives no lines.
-fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set) -> Vec<String> {
+/// A repo that cannot be searched gives no lines. `None` means the search did
+/// not finish by `deadline` and was killed.
+fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set, deadline: Instant) -> Option<Vec<String>> {
     let Ok(mut child) = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -70,25 +83,44 @@ fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set) -> Vec<String> {
         .stderr(Stdio::null())
         .spawn()
     else {
-        return Vec::new();
+        return Some(Vec::new());
     };
     let mut patterns = String::new();
     for h in hits {
         patterns.push_str(&h.chunk);
         patterns.push('\n');
     }
+    // Both pipes are served from threads, so neither a full stdin nor a full
+    // stdout can stall the wait below. git may exit before reading everything;
+    // its output is judged as it stands.
     if let Some(mut stdin) = child.stdin.take() {
-        // git may exit before reading everything; its output is judged as it stands.
-        let _ = stdin.write_all(patterns.as_bytes());
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(patterns.as_bytes());
+        });
     }
-    let Ok(out) = child.wait_with_output() else {
-        return Vec::new();
+    let (tx, rx) = mpsc::channel();
+    if let Some(mut stdout) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout.read_to_end(&mut buf);
+            let _ = tx.send(buf);
+        });
+    }
+    let wait = deadline.saturating_duration_since(Instant::now());
+    let Ok(stdout) = rx.recv_timeout(wait) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
     };
+    let _ = child.wait();
     let mut lines = Vec::new();
     // `--null` puts a NUL between the path and the line and quotes nothing, so a
     // path may hold a newline: a row without a NUL is the start of a path.
     let mut row: Vec<u8> = Vec::new();
-    for part in out.stdout.split(|&b| b == b'\n') {
+    for part in stdout.split(|&b| b == b'\n') {
+        if Instant::now() >= deadline {
+            return None;
+        }
         row.extend_from_slice(part);
         let Some(nul) = row.iter().position(|&b| b == 0) else {
             row.push(b'\n');
@@ -100,7 +132,7 @@ fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set) -> Vec<String> {
         }
         row.clear();
     }
-    lines
+    Some(lines)
 }
 
 #[cfg(test)]
@@ -108,8 +140,23 @@ mod tests {
     use std::path::Path;
     use std::process::Command;
 
+    use std::time::Duration;
+
     use super::*;
     use crate::privacy::fixture::Fx;
+
+    /// `subtract` with a deadline far enough away to never matter.
+    fn subtract(
+        hits: Vec<ChunkHit>,
+        public: &[String],
+        file_content: &str,
+        old_string: &str,
+        repos: &[PathBuf],
+        s: &Set,
+    ) -> Vec<ChunkHit> {
+        let far = Instant::now() + Duration::from_secs(60);
+        super::subtract(hits, public, file_content, old_string, repos, s, far)
+    }
 
     fn hit(chunk: &str) -> ChunkHit {
         ChunkHit {
@@ -287,5 +334,19 @@ mod tests {
         let set = fx.set(&[&r.join("pvt/*.md")]);
         let got = subtract(vec![hit(secret)], &[], "", "", &[r], &set);
         assert_eq!(got, vec![hit(secret)]);
+    }
+
+    #[test]
+    fn deadline_keeps_every_hit() {
+        let fx = Fx::new();
+        let secret = "alpha beta gamma delta epsilon zeta eta theta";
+        let r = repo(&fx, "proj", &[("a.txt", &format!("{secret}\n"))]);
+        let hits = vec![hit(secret)];
+        let set = fx.set(&[]);
+        let now = Instant::now();
+        let far = now + Duration::from_secs(60);
+        let sub = |d| super::subtract(hits.clone(), &[], "", "", std::slice::from_ref(&r), &set, d);
+        assert!(sub(far).is_empty(), "subtracted when there is time");
+        assert_eq!(sub(now), hits, "kept when the time is up");
     }
 }

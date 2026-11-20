@@ -5,6 +5,7 @@
 
 pub mod card;
 pub mod cli;
+pub mod crew;
 pub mod error;
 pub mod gate;
 pub mod hook;

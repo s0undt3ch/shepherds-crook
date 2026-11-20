@@ -1,11 +1,13 @@
 //! `crook mod <verb>`: one JSON object in on stdin, one JSON object out on stdout.
 //! Exit 0 carries `{"ok":true,...}`, exit 1 carries `{"ok":false,"error":"..."}`.
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::crew::{self, Outcome, Snap};
 use crate::gate::{self, Entry, Identity, Role};
 use crate::project::{self, ItemKind};
 use crate::store::{Mode, SCHEMA_VERSION, Store, Touch};
@@ -79,6 +81,98 @@ fn project_writer(id: &Identity, req: &Request) -> Result<(), Error> {
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct Need {
+    question: String,
+}
+
+#[derive(Deserialize)]
+struct Done {
+    outcome: Outcome,
+    pr_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TaskArgs {
+    child: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct SnapshotArgs {
+    #[serde(default)]
+    ack: BTreeMap<String, i64>,
+}
+
+fn child_name(id: &Identity) -> Result<&str, Error> {
+    match (id.role, id.child.as_deref()) {
+        (Role::Child, Some(c)) => Ok(c),
+        _ => Err(Error::Refused(
+            "this verb is for a child session only".into(),
+        )),
+    }
+}
+
+fn orchestrator_only(id: &Identity) -> Result<(), Error> {
+    if id.role == Role::Orchestrator {
+        Ok(())
+    } else {
+        Err(Error::Refused(
+            "this verb is for the orchestrator only".into(),
+        ))
+    }
+}
+
+/// Runs a child's write. The guard sits inside the transaction, so a session
+/// that stops being the child between the check and the write cannot write.
+/// `need_current: false` is for `snapshot` and `adopt`.
+fn child_write<T: Serialize>(
+    env: Env,
+    id: &Identity,
+    req: &Request,
+    touches: Touch,
+    need_current: bool,
+    f: impl FnOnce(&rusqlite::Transaction, &str) -> Result<T, Error>,
+) -> Result<Value, Error> {
+    let child = child_name(id)?;
+    let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+    let out = store.write(touches, |tx| {
+        crew::guard(tx, child, &req.session_id, need_current)?;
+        f(tx, child)
+    })?;
+    Ok(ok(out))
+}
+
+fn snapshot(env: Env, id: &Identity, req: &Request) -> Result<Value, Error> {
+    let a: SnapshotArgs = args(req)?;
+    let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+    let now = project::now();
+    let snap = match id.role {
+        Role::Child => {
+            let child = child_name(id)?;
+            store.read(|c| {
+                crew::guard(c, child, &req.session_id, false)?;
+                crew::snapshot(c, id, &req.session_id, now, &a.ack)
+            })?
+        }
+        Role::Orchestrator if a.ack.is_empty() => {
+            store.read(|c| crew::snapshot(c, id, &req.session_id, now, &a.ack))?
+        }
+        Role::Orchestrator => store.write(Touch::empty(), |tx| {
+            crew::snapshot(tx, id, &req.session_id, now, &a.ack)
+        })?,
+        Role::None => {
+            return Err(Error::Refused(
+                "snapshot needs a child or the orchestrator".into(),
+            ));
+        }
+    };
+    Ok(match snap {
+        Snap::Child(s) => ok(s),
+        Snap::Orch(s) => ok(s),
+    })
+}
+
 fn project_write(
     env: Env,
     id: &Identity,
@@ -126,6 +220,87 @@ fn dispatch(verb: &str, id: &Identity, req: &Request, env: Env) -> Result<Value,
                 )));
             }
             project_write(env, id, |tx| project::add(tx, kind, &a.value))
+        }
+        "status" => {
+            let store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+            let view = store.read(|c| {
+                if let Some(child) = id.child.as_deref() {
+                    crew::guard(c, child, &req.session_id, true)?;
+                }
+                crew::status(c, id, req.user_turn)
+            })?;
+            Ok(ok(view))
+        }
+        "take-task" => child_write(
+            env,
+            id,
+            req,
+            Touch::INBOX | Touch::STATUS,
+            true,
+            |tx, child| {
+                let (seq, text) = crew::take_task(tx, child)?;
+                Ok(json!({ "seq": seq, "text": text }))
+            },
+        ),
+        "need" => {
+            let a: Need = args(req)?;
+            child_write(env, id, req, Touch::STATUS, true, |tx, child| {
+                crew::need(tx, child, &a.question)?;
+                Ok(json!({}))
+            })
+        }
+        "done" => {
+            let a: Done = args(req)?;
+            child_write(
+                env,
+                id,
+                req,
+                Touch::STATUS | Touch::PROJECT,
+                true,
+                |tx, child| {
+                    crew::done(tx, child, a.outcome, a.pr_url.as_deref())?;
+                    Ok(json!({}))
+                },
+            )
+        }
+        "lift" => child_write(env, id, req, Touch::STATUS, true, |tx, child| {
+            Ok(json!({ "lifted": crew::lift(tx, child)? }))
+        }),
+        "adopt" => {
+            child_name(id)?;
+            if !req.user_turn {
+                return Err(Error::Refused(
+                    "only on a turn the user started; don't retry".into(),
+                ));
+            }
+            child_write(env, id, req, Touch::CHILDREN, false, |tx, child| {
+                crew::adopt(tx, child, &req.session_id)?;
+                Ok(json!({}))
+            })
+        }
+        "task" => {
+            orchestrator_only(id)?;
+            let a: TaskArgs = args(req)?;
+            let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+            let seq = store.write(Touch::INBOX, |tx| crew::task(tx, &a.child, &a.text))?;
+            Ok(ok(json!({ "seq": seq })))
+        }
+        "snapshot" => snapshot(env, id, req),
+        "orch-context" => {
+            orchestrator_only(id)?;
+            if !req.user_turn {
+                return Err(Error::Refused(
+                    "only on a turn the user started; don't retry".into(),
+                ));
+            }
+            let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+            let (lines, stale) = store.write(Touch::empty(), |tx| {
+                Ok((
+                    crew::orch_context(tx)?,
+                    crew::card_stale(tx, project::now())?,
+                ))
+            })?;
+            Ok(ok(json!({ "lines": lines, "stale": stale })))
         }
         other => Err(Error::Refused(format!("unknown mod verb {other:?}"))),
     }

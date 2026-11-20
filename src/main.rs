@@ -26,6 +26,8 @@ enum Cmd {
         #[command(subcommand)]
         action: ProjectCmd,
     },
+    /// Lift a child's park by hand: `<child>` or `<slug>/<child>`
+    Unpark { child: String },
     /// Shell completions
     Completion {
         #[command(subcommand)]
@@ -80,6 +82,7 @@ fn run(args: &[OsString], env: Env) -> u8 {
             0
         }
         Cmd::Init { slug } => user_verb(env, |env| cli::init::run(env, &slug)),
+        Cmd::Unpark { child } => user_verb(env, |env| cli::unpark::run(env, &child)),
         Cmd::Project { slug, action } => user_verb(env, |env| {
             let cwd = std::env::current_dir()?;
             cli::project::run(env, &slug, action, &cwd, &mut std::io::stdin().lock())

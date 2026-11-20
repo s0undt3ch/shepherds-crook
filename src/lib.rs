@@ -3,12 +3,15 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub mod card;
+pub mod cli;
 pub mod error;
 pub mod gate;
 pub mod hook;
 pub mod launch;
 pub mod modverb;
 pub mod paths;
+pub mod project;
 pub mod store;
 
 pub use error::Error;

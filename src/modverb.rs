@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::gate::{self, Entry, Identity, Role};
-use crate::store::{Mode, SCHEMA_VERSION, Store};
+use crate::project::{self, ItemKind};
+use crate::store::{Mode, SCHEMA_VERSION, Store, Touch};
 use crate::{Env, Error};
 
 #[derive(Debug, Deserialize)]
@@ -38,7 +39,57 @@ fn ok(body: impl Serialize) -> Value {
     v
 }
 
-fn dispatch(verb: &str, id: &Identity, _req: &Request, env: Env) -> Result<Value, Error> {
+#[derive(Deserialize)]
+struct SetWhatWhy {
+    what: String,
+    why: String,
+    version: i64,
+}
+
+#[derive(Deserialize)]
+struct SetStatus {
+    text: String,
+    version: i64,
+}
+
+#[derive(Deserialize)]
+struct Add {
+    kind: String,
+    value: String,
+}
+
+fn args<T: serde::de::DeserializeOwned>(req: &Request) -> Result<T, Error> {
+    serde_json::from_value(req.rest.clone())
+        .map_err(|e| Error::Refused(format!("bad arguments: {e}")))
+}
+
+/// Project writes need the orchestrator on a turn the user started. The
+/// wording tells the model not to retry.
+fn project_writer(id: &Identity, req: &Request) -> Result<(), Error> {
+    if id.role != Role::Orchestrator {
+        return Err(Error::Refused(
+            "project writes are for the orchestrator only".into(),
+        ));
+    }
+    if !req.user_turn {
+        return Err(Error::Refused(
+            "only on a turn the user started; don't retry".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn project_write(
+    env: Env,
+    id: &Identity,
+    f: impl FnOnce(&rusqlite::Transaction) -> Result<i64, Error>,
+) -> Result<Value, Error> {
+    let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+    let version = store.write(Touch::PROJECT, f)?;
+    Ok(ok(json!({ "version": version })))
+}
+
+fn dispatch(verb: &str, id: &Identity, req: &Request, env: Env) -> Result<Value, Error> {
     match verb {
         "ping" => {
             let store = Store::open(env, &id.slug, Mode::ReadWrite)?;
@@ -52,6 +103,24 @@ fn dispatch(verb: &str, id: &Identity, _req: &Request, env: Env) -> Result<Value
                 schema: SCHEMA_VERSION,
                 gen_path: store.gen_path().display().to_string(),
             }))
+        }
+        "project-set-what-why" => {
+            project_writer(id, req)?;
+            let a: SetWhatWhy = args(req)?;
+            project_write(env, id, |tx| {
+                project::set_what_why(tx, &a.what, &a.why, a.version)
+            })
+        }
+        "project-set-status" => {
+            project_writer(id, req)?;
+            let a: SetStatus = args(req)?;
+            project_write(env, id, |tx| project::set_status(tx, &a.text, a.version))
+        }
+        "project-add" => {
+            project_writer(id, req)?;
+            let a: Add = args(req)?;
+            let kind: ItemKind = a.kind.parse().map_err(Error::Refused)?;
+            project_write(env, id, |tx| project::add(tx, kind, &a.value))
         }
         other => Err(Error::Refused(format!("unknown mod verb {other:?}"))),
     }
@@ -234,5 +303,133 @@ mod tests {
         let (code, v) = call(&f, &["ping"], GOOD);
         assert_eq!(code, 1);
         assert!(v["error"].as_str().unwrap().contains("run crook open p"));
+    }
+
+    fn init_project(f: &Fixture) {
+        let env = |k: &str| f.vars.get(k).cloned();
+        crate::project::init(&env, "p").unwrap();
+    }
+
+    fn version(f: &Fixture) -> i64 {
+        let env = |k: &str| f.vars.get(k).cloned();
+        let s = Store::open(&env, "p", Mode::ReadOnly).unwrap();
+        s.read(|c| Ok(crate::project::get(c)?.version)).unwrap()
+    }
+
+    const USER: &str = r#""session_id":"s1","user_turn":true"#;
+
+    #[test]
+    fn mod_set_refuses_machine_turn() {
+        let f = fixture("orchestrator");
+        init_project(&f);
+        let v = version(&f);
+        for (verb, body) in [
+            (
+                "project-set-status",
+                format!(r#"{{"session_id":"s","user_turn":false,"text":"x","version":{v}}}"#),
+            ),
+            (
+                "project-set-what-why",
+                format!(
+                    r#"{{"session_id":"s","user_turn":false,"what":"a","why":"b","version":{v}}}"#
+                ),
+            ),
+            (
+                "project-add",
+                r#"{"session_id":"s","user_turn":false,"kind":"link","value":"https://x.test"}"#
+                    .to_string(),
+            ),
+        ] {
+            let (code, out) = call(&f, &[verb], &body);
+            assert_eq!(code, 1, "{verb}");
+            assert!(
+                out["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("only on a turn the user started; don't retry"),
+                "{verb}: {out}"
+            );
+        }
+        assert_eq!(version(&f), v, "nothing changed");
+    }
+
+    #[test]
+    fn mod_set_refuses_children() {
+        let f = fixture("child");
+        init_project(&f);
+        let v = version(&f);
+        let body = format!(r#"{{{USER},"text":"x","version":{v}}}"#);
+        let (code, out) = call(&f, &["project-set-status"], &body);
+        assert_eq!(code, 1);
+        assert!(
+            out["error"].as_str().unwrap().contains("orchestrator"),
+            "{out}"
+        );
+        let body = format!(r#"{{{USER},"kind":"link","value":"u"}}"#);
+        let (code, _) = call(&f, &["project-add"], &body);
+        assert_eq!(code, 1);
+        assert_eq!(version(&f), v);
+    }
+
+    #[test]
+    fn project_verbs_write_on_a_user_turn() {
+        let f = fixture("orchestrator");
+        init_project(&f);
+        let v = version(&f);
+        let body = format!(r#"{{{USER},"what":"w","why":"y","version":{v}}}"#);
+        let (code, out) = call(&f, &["project-set-what-why"], &body);
+        assert_eq!((code, out["version"].as_i64()), (0, Some(v + 1)), "{out}");
+        let body = format!(r#"{{{USER},"text":"st","version":{}}}"#, v + 1);
+        let (code, out) = call(&f, &["project-set-status"], &body);
+        assert_eq!((code, out["version"].as_i64()), (0, Some(v + 2)), "{out}");
+        let body = format!(r#"{{{USER},"kind":"notes","value":"/n/notes"}}"#);
+        let (code, out) = call(&f, &["project-add"], &body);
+        assert_eq!((code, out["version"].as_i64()), (0, Some(v + 3)), "{out}");
+        let env = |k: &str| f.vars.get(k).cloned();
+        let s = Store::open(&env, "p", Mode::ReadOnly).unwrap();
+        s.read(|c| {
+            let r = crate::project::get(c)?;
+            assert_eq!(
+                (r.what.as_str(), r.why.as_str(), r.status_text.as_str()),
+                ("w", "y", "st")
+            );
+            assert_eq!(
+                (r.notes, r.private),
+                (vec!["/n/notes".to_string()], vec!["/n/notes".to_string()])
+            );
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            std::fs::metadata(format!("{}/crook/p/gen", f.vars["XDG_DATA_HOME"])).is_ok(),
+            "a project write bumps gen"
+        );
+    }
+
+    #[test]
+    fn stale_version_is_refused_and_bad_args_are_json_errors() {
+        let f = fixture("orchestrator");
+        init_project(&f);
+        let v = version(&f);
+        let body = format!(r#"{{{USER},"text":"x","version":{}}}"#, v - 1);
+        let (code, out) = call(&f, &["project-set-status"], &body);
+        assert_eq!(code, 1);
+        assert!(out["error"].as_str().unwrap().contains("changed"), "{out}");
+        for (verb, body) in [
+            ("project-set-status", format!(r#"{{{USER}}}"#)),
+            (
+                "project-add",
+                format!(r#"{{{USER},"kind":"memory","value":"x"}}"#),
+            ),
+            (
+                "project-add",
+                format!(r#"{{{USER},"kind":"repo","value":"rel"}}"#),
+            ),
+        ] {
+            let (code, out) = call(&f, &[verb], &body);
+            assert_eq!(code, 1, "{verb} {body}");
+            assert_eq!(out["ok"], false);
+        }
+        assert_eq!(version(&f), v);
     }
 }

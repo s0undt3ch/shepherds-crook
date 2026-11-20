@@ -6,6 +6,8 @@ pub enum Error {
     InvalidSlug(String),
     #[error("refused: {0}")]
     Refused(String),
+    #[error("the project card changed since you read it: read it again and retry")]
+    Stale,
     #[error("run crook open {slug}")]
     Schema { slug: String },
     #[error("database error: {0}")]

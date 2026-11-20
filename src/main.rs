@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
+use crook::cli::{self, project::ProjectCmd};
 use crook::gate::{self, Entry};
 use crook::{Env, hook, modverb};
 
@@ -17,8 +18,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Start or attach to a project's orchestrator
+    /// Create a project record
     Init { slug: String },
+    /// Edit a project record
+    Project {
+        slug: String,
+        #[command(subcommand)]
+        action: ProjectCmd,
+    },
     /// Shell completions
     Completion {
         #[command(subcommand)]
@@ -72,12 +79,27 @@ fn run(args: &[OsString], env: Env) -> u8 {
             clap_complete::generate(shell, &mut cmd, "crook", &mut std::io::stdout());
             0
         }
-        Cmd::Init { slug } => {
-            if let Err(e) = gate::check(Entry::User, env) {
-                let _ = writeln!(std::io::stderr(), "crook: {e}");
-                return 2;
-            }
-            let _ = writeln!(std::io::stderr(), "crook: init {slug}: not implemented");
+        Cmd::Init { slug } => user_verb(env, |env| cli::init::run(env, &slug)),
+        Cmd::Project { slug, action } => user_verb(env, |env| {
+            let cwd = std::env::current_dir()?;
+            cli::project::run(env, &slug, action, &cwd, &mut std::io::stdin().lock())
+        }),
+    }
+}
+
+/// Runs a user verb behind the gate: exit 2 when refused, 1 on any other error.
+fn user_verb(env: Env, f: impl FnOnce(Env) -> Result<String, crook::Error>) -> u8 {
+    if let Err(e) = gate::check(Entry::User, env) {
+        let _ = writeln!(std::io::stderr(), "crook: {e}");
+        return 2;
+    }
+    match f(env) {
+        Ok(msg) => {
+            let _ = writeln!(std::io::stdout(), "{msg}");
+            0
+        }
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "crook: {e}");
             1
         }
     }

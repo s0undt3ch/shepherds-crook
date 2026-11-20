@@ -144,8 +144,12 @@ D starts, because it is the privacy boundary.
 - **`CLAUDECODE` counts only when its value is `1`.** Spike 9's fallback sets
   it to the empty string.
 - **Text goes over stdin.** Questions, tasks and briefs never go in argv.
-- **Worktrees** are `<repo>/.worktrees/<child>`, on branch `crook/<child>`
-  unless `branch` is given.
+- **Worktrees** are `<repo>/.worktrees/<slug>/<child>`, on branch
+  `crook/<slug>/<child>` unless `branch` is given (draft 8.8). Each is
+  linked as `<home>/<slug>/repos/<repo>/<child>`; crook never resolves a
+  worktree through the link.
+- **The home** is `config.home` (default `~/crook`), never inside the data
+  dir. The diary is `<home>/<slug>/diary`, or `<diary_root>/<slug>`.
 - **Addressing.** Sessions go by session id, never by name. herdr panes are
   looked up each time, never stored.
 - **Fixed strings, verbatim:**
@@ -1095,8 +1099,17 @@ the user before work continues.
     - `--plugin-dir <xdg>/crook-plugin/<version>-<hash>`
     - `--append-system-prompt <text>`
     - `--settings <file>`
-    - one `--add-dir` per notes folder
-    - cwd is the first repo
+    - one `--add-dir` per notes folder outside `<home>/<slug>`, and one per
+      record repo
+    - cwd is `<home>/<slug>`
+  - `home_config`: `config.toml` reads `home` (default `~/crook`) and
+    `diary_root`; a `home` inside the data dir is refused.
+  - `init_home`: `crook init demo` creates `<home>/demo/repos/` and the
+    diary (`<home>/demo/diary`, or `<diary_root>/demo`), and records the
+    diary as a notes folder. It refuses when the home or `repos/` falls
+    inside a private location. `init` is from Task 5; extend it here.
+  - `private_diaries`: the private set always holds `<home>/*/diary`, or
+    `<diary_root>/*` when set, so another project's diary is private.
   - `env_scrub`:
     - the result sets `CROOK_PROJECT`, `CROOK_ROLE` and an absolute
       `CROOK_BIN` (from `std::env::current_exe`, canonicalised)
@@ -1136,6 +1149,10 @@ the user before work continues.
   - the card appears in the session
   - `crook: orchestrator` is on the status line
   - `Read` on the data dir is denied
+  - spike 10: whether the new, non-git `<home>/demo` raises a trust dialog,
+    and where its auto memory is kept. Record the result in the design's
+    Spikes table. A trust dialog that would block a `--bg` start stops
+    the task and goes back to the user.
 - [ ] **Step 5: Commit.** Message: `feat: crook open and resume`.
 
 ### Task 14: Spike 7, the false-positive rate (a gate)
@@ -1364,8 +1381,12 @@ binary before any smoke test, because the mod is embedded.
   - `spawn_rows_first`: the rows are committed before the launch command
     runs. Use a launcher that fails, and check the rows remain for `open` to
     reconcile.
-  - `spawn_worktree`: `git worktree add <repo>/.worktrees/c1 -b crook/c1`
-    runs, or `-b <branch>` when a branch is given.
+  - `spawn_worktree`: `git worktree add <repo>/.worktrees/demo/c1 -b
+    crook/demo/c1` runs, or `-b <branch>` when a branch is given, then
+    `<home>/demo/repos/<repo>/c1` links to it. `children.worktree` holds
+    the real path, and the child's cwd is the real path.
+  - `spawn_two_projects`: projects `a` and `b` each spawning `c1` in one
+    repo get separate worktrees and branches.
   - `spawn_argv_child`:
     - the orchestrator's flags, plus `--permission-mode` from
       `settings::permission_mode`
@@ -1376,7 +1397,8 @@ binary before any smoke test, because the mod is embedded.
     upgraded mid-project still finds its own mod version.
   - `cli_stop_refuses_dirty`: `crook stop c1` refuses when
     `git -C <worktree> status --porcelain` isn't empty. Otherwise it archives
-    the child, stops the session and runs `git worktree remove`.
+    the child, stops the session, runs `git worktree remove` and removes
+    the child's `repos/` link.
   - `stop_kinds`: the `kind` of the child's row in `claude agents --json`
     (`Agent.kind`) tells a `--bg` child from an interactive (herdr) one. A
     `--bg` child is stopped with `claude stop <id>`. A herdr child is stopped
@@ -1395,6 +1417,37 @@ binary before any smoke test, because the mod is embedded.
   typing the answer through `claude attach`, then `done`, then the
   orchestrator's wake-up.
 - [ ] **Step 5: Commit.** Message: `feat: spawn, task and stop`.
+
+### Task 19b: `crook wipe`
+
+**Files:**
+
+- Create: `src/cli/wipe.rs`
+- Test: unit tests in it, with the injected `Launcher` for `git`
+
+**Interfaces:**
+
+- Consumes: `crew` rows, `agents::list`, `paths`, `config`
+- Produces: `wipe::run(env: Env, slug: &str, with_diary: bool) -> Result<Vec<String>, Error>`,
+  returning the leftover branch lines it prints
+- [ ] **Step 1: Write the failing tests.**
+  - `wipe_refuses_live`: a live orchestrator or child session refuses, naming it.
+  - `wipe_refuses_dirty`: any worktree with `git status --porcelain` output
+    refuses, naming every dirty one, and removes nothing.
+  - `wipe_removes`: removes each worktree by its real path, runs
+    `git worktree prune` per record repo, removes `<home>/<slug>` except
+    `diary/`, then the data dir `<slug>/`.
+  - `wipe_keeps_diary`: the diary stays without `--with-diary`;
+    `--with-diary` removes `<home>/<slug>/diary` but is refused for a
+    diary under `diary_root`.
+  - `wipe_branches`: prints the `crook/<slug>/*` branches left in each
+    repo, and deletes none.
+  - `wipe_gate`: a user verb, refused under `CLAUDECODE=1` or `CROOK_ROLE`.
+- [ ] **Step 2: Run them and check they fail.**
+- [ ] **Step 3: Implement.** Removal order is worktrees, home, data dir, so
+  a crash part-way leaves the record able to say what's left.
+- [ ] **Step 4: Run every check, then smoke-test** on `demo` from Task 19.
+- [ ] **Step 5: Commit.** Message: `feat: crook wipe`.
 
 ---
 

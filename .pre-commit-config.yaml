@@ -17,7 +17,7 @@ repos:
       - id: end-of-file-fixer
 
   - repo: https://github.com/s0undt3ch/pre-commit-hooks
-    rev: v1.4.0
+    rev: v1.6.0
     hooks:
       # Pins unpinned `uses:` refs to a SHA and verifies existing pins.
       # Needs `gh`.
@@ -26,6 +26,7 @@ repos:
       - id: shellcheck
       - id: gitleaks
       - id: typos
+      - id: sqruff-fix
 
       # git-cliff builds the changelog from commit subjects, so spell-check
       # the message too. Check-only: the message is never rewritten.
@@ -53,13 +54,6 @@ repos:
         language: system
         pass_filenames: false
         files: ^(Cargo\.toml|Cargo\.lock)$
-
-      # `sqruff fix` asks before writing and reads the answer from stdin.
-      - id: sqruff
-        name: sqruff
-        entry: sh -c 'yes | sqruff fix --nocolor "$@"' sqruff
-        language: system
-        types: [sql]
 
       - id: clippy
         name: clippy

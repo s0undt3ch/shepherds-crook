@@ -37,7 +37,35 @@ fn splits_token(c: char) -> bool {
 }
 
 fn has_glob_char(s: &str) -> bool {
-    s.contains(['*', '?', '[', '{'])
+    s.contains(['*', '?', '[', '{']) || ["@(", "+(", "!("].iter().any(|e| s.contains(e))
+}
+
+/// Bash extglob groups (`@(..)`, `+(..)`, `!(..)`, `?(..)`, `*(..)`) with their
+/// parentheses turned into braces, which the token splitter would otherwise
+/// cut at. `$(..)` is left alone. `None` when there is no group.
+fn fold_extglob(text: &str) -> Option<String> {
+    if !["@(", "+(", "!(", "?(", "*("]
+        .iter()
+        .any(|e| text.contains(e))
+    {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut open: Vec<bool> = Vec::new();
+    let mut prev = '\0';
+    for c in text.chars() {
+        match c {
+            '(' => {
+                let ext = matches!(prev, '@' | '+' | '!' | '?' | '*');
+                open.push(ext);
+                out.push(if ext { '{' } else { c });
+            }
+            ')' => out.push(if open.pop().unwrap_or(false) { '}' } else { c }),
+            _ => out.push(c),
+        }
+        prev = c;
+    }
+    Some(out)
 }
 
 /// The command with shell quotes dropped and `\<char>` unescaped. Detection
@@ -127,6 +155,9 @@ impl Finder<'_> {
             let n = normalise(text);
             if n != text {
                 self.pass(&n, true);
+            }
+            if let Some(g) = fold_extglob(&n) {
+                self.pass(&g, true);
             }
         }
     }
@@ -274,7 +305,6 @@ impl Finder<'_> {
             let hit = if shell && has_glob_char(&full) {
                 // The shell expands the glob, so the directory before it decides.
                 self.s.glob_reaches_private(self.r, &full)
-                    && !self.s.glob_inside_allow(self.r, &full)
             } else {
                 self.s.contains_with(self.r, &p) && !self.s.allowed_with(self.r, &p)
             };
@@ -732,14 +762,27 @@ mod tests {
     }
 
     #[test]
-    fn glob_into_an_allowed_directory_does_not_hit() {
+    fn globs_are_never_exempted_by_the_allow_list() {
         let f = fx();
         fs::create_dir_all(f.home.join("notes/public")).unwrap();
+        fs::create_dir_all(f.home.join("notes/secret")).unwrap();
+        symlink(f.home.join("notes/secret"), f.home.join("notes/public/lnk")).unwrap();
         let s = f.set(&["~/notes"], &["~/notes/public"]);
-        assert!(bash(&s, "cat ~/notes/public/*", &f.base).is_empty());
-        assert!(bash(&s, "cat ~/notes/public/a*.md", &f.base).is_empty());
-        assert!(!bash(&s, "cat ~/notes/*", &f.base).is_empty());
-        assert!(!bash(&s, "cat ~/notes/pub*", &f.base).is_empty());
+        for cmd in [
+            "cat ~/notes/public/*",
+            "cat ~/notes/public/a*.md",
+            "cat ~/notes/public/l*/a",
+            "cat ~/notes/public/*/a",
+            "cat ~/notes/public/.@(.)/secret/a",
+            "cat ~/notes/public/.+(.)/secret/a",
+            "cat ~/notes/public/!(x)/a",
+            "cat ~/notes/*",
+            "cat ~/notes/pub*",
+        ] {
+            assert!(!bash(&s, cmd, &f.base).is_empty(), "{cmd}");
+        }
+        // a plain path in the allowed directory stays allowed
+        assert!(bash(&s, "cat ~/notes/public/a.md", &f.base).is_empty());
     }
 
     #[test]
@@ -758,8 +801,6 @@ mod tests {
         ] {
             assert!(!bash(&s, cmd, &f.base).is_empty(), "{cmd}");
         }
-        assert!(bash(&s, "cat ~/notes/public/*", &f.base).is_empty());
-        assert!(bash(&s, "cat ~/notes/public/a*.md", &f.base).is_empty());
     }
 
     /// Run with `cargo nextest run --release --run-ignored only`.

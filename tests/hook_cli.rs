@@ -160,3 +160,50 @@ fn forced_panic_release() {
             .starts_with("crook: hook error")
     );
 }
+
+#[test]
+fn asks_write_timeout() {
+    let tmp = setup();
+    let notes = std::fs::canonicalize(tmp.path()).unwrap().join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    std::fs::write(notes.join("n.md"), "note\n").unwrap();
+    let x = tmp.path().display().to_string();
+    let env = move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone());
+    let env: Env = &env;
+    let mut s = Store::open(env, "p", Mode::ReadWrite).unwrap();
+    s.write(Touch::PROJECT, |tx| {
+        project::add(tx, project::ItemKind::Notes, &notes.display().to_string()).map(|_| ())
+    })
+    .unwrap();
+
+    // Another writer holds the database longer than the hook may wait.
+    let db = crook::paths::project_dir(env, "p")
+        .unwrap()
+        .join("crook.db");
+    let held = rusqlite::Connection::open(db).unwrap();
+    held.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let input = json!({
+        "session_id": "s", "tool_name": "Bash",
+        "tool_input": {"command": format!("cat {}", notes.join("n.md").display())},
+        "cwd": tmp.path().display().to_string(),
+    })
+    .to_string();
+    let orch = [("CROOK_ROLE", "orchestrator"), ("CROOK_PROJECT", "p")];
+    let started = std::time::Instant::now();
+    let o = hook("PreToolUse", tmp.path(), &input, &orch);
+    let took = started.elapsed();
+    assert!(took < std::time::Duration::from_secs(4), "{took:?}");
+    assert_eq!(o.status.code(), Some(0));
+    let v = json_out(&o);
+    assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "ask");
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("lost asks row"), "{err}");
+    assert!(err.contains("n.md"), "{err}");
+    held.execute_batch("ROLLBACK").unwrap();
+    let n: i64 = Store::open(env, "p", Mode::ReadOnly)
+        .unwrap()
+        .read(|c| Ok(c.query_row("SELECT count(*) FROM asks", [], |r| r.get(0))?))
+        .unwrap();
+    assert_eq!(n, 0, "the lost row stays lost");
+}

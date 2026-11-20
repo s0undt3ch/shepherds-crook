@@ -4,15 +4,18 @@
 
 mod output;
 mod park;
+mod privacy;
 mod sessionstart;
 
 use std::io::{Read, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::gate::{self, Entry, Identity, Role};
+use crate::project::{self, Record};
 use crate::store::{Mode, SCHEMA_VERSION, Store};
 use crate::{Env, Error, paths};
 
@@ -27,6 +30,7 @@ struct Input {
     #[serde(default)]
     tool_input: Value,
     source: Option<String>,
+    cwd: Option<String>,
 }
 
 pub fn main(event: &str, stdin: &mut dyn Read, env: Env, out: &mut dyn Write) -> i32 {
@@ -143,14 +147,32 @@ fn pre_tool_use(env: Env, id: &Identity, input: &Input) -> String {
         Err(e) => return output::ask(&error_line(&e, env)),
     };
     // A read-only open takes any version, so compare it here.
-    let result = store.read(|c| {
+    let step = store.read(|c| {
         let v: i32 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if v != SCHEMA_VERSION {
             return Err(Error::Schema {
                 slug: id.slug.clone(),
             });
         }
-        park::check(c, id, input.session_id.as_deref(), tool, &input.tool_input)
+        match park::check(c, id, input.session_id.as_deref(), tool, &input.tool_input)? {
+            Some(d) => Ok(Step::Decided(d)),
+            None if privacy::exempt_tool(tool) => Ok(Step::Done),
+            None => Ok(Step::Privacy(Box::new(project::get(c)?))),
+        }
+    });
+    drop(store);
+    let result = step.and_then(|step| match step {
+        Step::Decided(d) => Ok(Some(d)),
+        Step::Done => Ok(None),
+        Step::Privacy(rec) => {
+            let cwd = match &input.cwd {
+                Some(c) => PathBuf::from(c),
+                None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            };
+            let sid = input.session_id.as_deref();
+            privacy::check(env, &id.slug, sid, tool, &input.tool_input, &cwd, &rec)
+                .map(|r| r.map(park::Decision::Ask))
+        }
     });
     match result {
         Ok(None) => String::new(),
@@ -159,6 +181,14 @@ fn pre_tool_use(env: Env, id: &Identity, input: &Input) -> String {
         Err(Error::Schema { .. }) => broken_pre(env, tool),
         Err(e) => output::ask(&error_line(&e, env)),
     }
+}
+
+/// What the read-only phase of `PreToolUse` settled.
+enum Step {
+    Decided(park::Decision),
+    Done,
+    /// The privacy check is next, over this project record.
+    Privacy(Box<Record>),
 }
 
 #[cfg(test)]

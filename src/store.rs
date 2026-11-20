@@ -40,6 +40,16 @@ pub struct Store {
 
 impl Store {
     pub fn open(env: Env, slug: &str, mode: Mode) -> Result<Store, Error> {
+        Store::open_with_busy(env, slug, mode, Duration::from_secs(5))
+    }
+
+    /// `open` with its own busy timeout, for callers on a tighter budget.
+    pub fn open_with_busy(
+        env: Env,
+        slug: &str,
+        mode: Mode,
+        busy: Duration,
+    ) -> Result<Store, Error> {
         let dir = paths::project_dir(env, slug)?;
         let db = dir.join("crook.db");
         let schema_err = || Error::Schema {
@@ -57,7 +67,7 @@ impl Store {
             return Err(schema_err());
         }
         let mut conn = Connection::open_with_flags(&db, flags)?;
-        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.busy_timeout(busy)?;
         match mode {
             Mode::ReadOnly => {}
             Mode::ReadWrite => {

@@ -8,7 +8,7 @@ mod paths;
 mod set;
 mod subtract;
 
-pub use index::{ChunkHit, Index};
+pub use index::{ChunkHit, Index, MAX_FILES};
 pub use paths::{Hit, HitKind, find_paths};
 pub use set::Set;
 pub use subtract::subtract;

@@ -160,20 +160,29 @@ impl Finder<'_> {
             let ac = AhoCorasick::new(&names).ok();
             (names, ac)
         });
-        let Some(ac) = ac else { return };
-        // One pass over the text for all names; overlapping matches so a short
-        // name inside a longer one doesn't hide either.
         let mut first: Vec<Option<usize>> = vec![None; names.len()];
         let edge = |c: char, extra: char| ends_path(c) || splits_token(c) || c == '/' || c == extra;
-        for m in ac.find_overlapping_iter(text) {
-            let slot = &mut first[m.pattern().as_usize()];
-            if slot.is_some() {
-                continue;
+        let delimited = |start: usize, end: usize| {
+            let before = text[..start].chars().next_back();
+            let after = text[end..].chars().next();
+            before.is_none_or(|c| edge(c, '{')) && after.is_none_or(|c| edge(c, '}'))
+        };
+        if let Some(ac) = ac {
+            // One pass over the text for all names; overlapping matches so a short
+            // name inside a longer one doesn't hide either.
+            for m in ac.find_overlapping_iter(text) {
+                let slot = &mut first[m.pattern().as_usize()];
+                if slot.is_none() && delimited(m.start(), m.end()) {
+                    *slot = Some(m.start());
+                }
             }
-            let before = text[..m.start()].chars().next_back();
-            let after = text[m.end()..].chars().next();
-            if before.is_none_or(|c| edge(c, '{')) && after.is_none_or(|c| edge(c, '}')) {
-                *slot = Some(m.start());
+        } else {
+            // The automaton could not be built: scan name by name rather than skip.
+            for (slot, name) in first.iter_mut().zip(names.iter()) {
+                *slot = text
+                    .match_indices(name.as_str())
+                    .find(|(s, _)| delimited(*s, s + name.len()))
+                    .map(|(s, _)| s);
             }
         }
         let mut found: Vec<(usize, String)> = first
@@ -731,6 +740,26 @@ mod tests {
         assert!(bash(&s, "cat ~/notes/public/a*.md", &f.base).is_empty());
         assert!(!bash(&s, "cat ~/notes/*", &f.base).is_empty());
         assert!(!bash(&s, "cat ~/notes/pub*", &f.base).is_empty());
+    }
+
+    #[test]
+    fn allowed_glob_that_climbs_out_still_hits() {
+        let f = fx();
+        fs::create_dir_all(f.home.join("notes/public")).unwrap();
+        fs::create_dir_all(f.home.join("notes/secret")).unwrap();
+        let s = f.set(&["~/notes"], &["~/notes/public"]);
+        for cmd in [
+            "cat ~/notes/public/{..,x}/secret/a",
+            "cat ~/notes/public/{a,b}/../../secret",
+            "cat ~/notes/public/[.][.]/secret/a",
+            "cat ~/notes/public/.*/secret/a",
+            "cat ~/notes/public/.?/secret/a",
+            "cat ~/notes/public/../secret/*",
+        ] {
+            assert!(!bash(&s, cmd, &f.base).is_empty(), "{cmd}");
+        }
+        assert!(bash(&s, "cat ~/notes/public/*", &f.base).is_empty());
+        assert!(bash(&s, "cat ~/notes/public/a*.md", &f.base).is_empty());
     }
 
     /// Run with `cargo nextest run --release --run-ignored only`.

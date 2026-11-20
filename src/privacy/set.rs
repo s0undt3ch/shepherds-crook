@@ -121,6 +121,18 @@ impl Set {
         if dir.is_empty() {
             return false;
         }
+        // The tail must not be able to climb out: no `..`, no brace or bracket
+        // (they can spell `..`), no segment like `.*` or `.?` that can match it.
+        let tail = full.get(dir.len()..).unwrap_or_default();
+        let climbs = tail.contains("..")
+            || tail.contains(['{', '['])
+            || tail.split('/').any(|seg| {
+                let mut c = seg.chars();
+                c.next() == Some('.') && matches!(c.next(), Some('*' | '?'))
+            });
+        if climbs {
+            return false;
+        }
         let v = r.resolve(Path::new(&dir));
         self.allow_roots.iter().any(|root| v.starts_with(root))
     }

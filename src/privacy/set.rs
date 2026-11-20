@@ -68,6 +68,11 @@ impl Set {
         self.allowed_with(&Resolver::default(), abs)
     }
 
+    /// Private directories and files, each as written and resolved.
+    pub(crate) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
     pub(crate) fn forms(&self) -> &[String] {
         &self.forms
     }

@@ -36,6 +36,15 @@ impl ItemKind {
     }
 
     /// Repo and notes values are directories, stored absolute and cleaned.
+    /// The kinds the orchestrator's tools may add. `private` and `allow` shape
+    /// the privacy check, so only the user writes them.
+    pub fn mod_addable(self) -> bool {
+        matches!(
+            self,
+            ItemKind::Repo | ItemKind::Notes | ItemKind::Link | ItemKind::Ticket
+        )
+    }
+
     fn is_dir(self) -> bool {
         matches!(self, ItemKind::Repo | ItemKind::Notes)
     }
@@ -246,16 +255,35 @@ pub fn add(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
     bump(c)
 }
 
-/// Removes one item of that kind and returns the new version. Removing a notes
-/// folder leaves its `private` entry, which is the safe side.
+/// Removes one item of that kind and returns the new version. Removing a
+/// notes folder also drops its `private` entry; a `private` entry that is a
+/// notes folder cannot be removed on its own.
 pub fn remove(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
     let value = normalise(kind, value)?;
+    if kind == ItemKind::Private {
+        let is_notes: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM project_item WHERE kind = 'notes' AND value = ?1)",
+            [&value],
+            |r| r.get(0),
+        )?;
+        if is_notes {
+            return Err(Error::Refused(format!(
+                "{value:?} is a notes folder, so it stays private: remove the notes folder instead"
+            )));
+        }
+    }
     let n = c.execute(
         "DELETE FROM project_item WHERE kind = ?1 AND value = ?2",
         (kind.as_str(), &value),
     )?;
     if n == 0 {
         return Err(Error::Refused(format!("no {kind} item {value:?}")));
+    }
+    if kind == ItemKind::Notes {
+        c.execute(
+            "DELETE FROM project_item WHERE kind = 'private' AND value = ?1",
+            [&value],
+        )?;
     }
     bump(c)
 }
@@ -458,6 +486,41 @@ mod tests {
             .unwrap_err();
         assert!(matches!(e, Error::Refused(_)));
         assert_eq!(version(&s), v + 1, "a refused remove changes nothing");
+    }
+
+    #[test]
+    fn private_notes_entry_cannot_be_removed_alone() {
+        let (_t, mut s) = fresh();
+        s.write(Touch::PROJECT, |tx| add(tx, ItemKind::Notes, "/n/x"))
+            .unwrap();
+        let v = version(&s);
+        let e = s
+            .write(Touch::PROJECT, |tx| remove(tx, ItemKind::Private, "/n/x"))
+            .unwrap_err();
+        assert!(e.to_string().contains("remove the notes folder"), "{e}");
+        assert_eq!(version(&s), v);
+        s.write(Touch::PROJECT, |tx| remove(tx, ItemKind::Notes, "/n/x"))
+            .unwrap();
+        s.read(|c| {
+            let r = get(c)?;
+            assert!(r.notes.is_empty() && r.private.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn mod_addable_kinds() {
+        for (k, want) in [
+            ("repo", true),
+            ("notes", true),
+            ("link", true),
+            ("ticket", true),
+            ("private", false),
+            ("allow", false),
+        ] {
+            assert_eq!(k.parse::<ItemKind>().unwrap().mod_addable(), want, "{k}");
+        }
     }
 
     #[test]

@@ -120,6 +120,11 @@ fn dispatch(verb: &str, id: &Identity, req: &Request, env: Env) -> Result<Value,
             project_writer(id, req)?;
             let a: Add = args(req)?;
             let kind: ItemKind = a.kind.parse().map_err(Error::Refused)?;
+            if !kind.mod_addable() {
+                return Err(Error::Refused(format!(
+                    "project-add takes repo, notes, link or ticket, not {kind}"
+                )));
+            }
             project_write(env, id, |tx| project::add(tx, kind, &a.value))
         }
         other => Err(Error::Refused(format!("unknown mod verb {other:?}"))),
@@ -424,6 +429,14 @@ mod tests {
             (
                 "project-add",
                 format!(r#"{{{USER},"kind":"repo","value":"rel"}}"#),
+            ),
+            (
+                "project-add",
+                format!(r#"{{{USER},"kind":"private","value":"/x"}}"#),
+            ),
+            (
+                "project-add",
+                format!(r#"{{{USER},"kind":"allow","value":"x"}}"#),
             ),
         ] {
             let (code, out) = call(&f, &[verb], &body);

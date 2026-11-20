@@ -15,6 +15,7 @@ pub mod launch;
 pub mod modverb;
 pub mod paths;
 pub mod project;
+pub mod settings;
 pub mod store;
 
 pub use error::Error;

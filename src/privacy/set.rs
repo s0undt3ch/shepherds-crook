@@ -89,20 +89,63 @@ impl Set {
             || self.allow_globs.iter().any(|g| g.is_match(&v))
     }
 
-    /// A glob starting with this literal prefix may expand into a private root:
-    /// the prefix is inside a root, or a root's path starts with it (`~/no*`
-    /// against `~/notes`). The directory part is canonicalised, the partial
-    /// segment kept as written.
+    /// A glob may expand into a private root. Walks the path segment by segment;
+    /// each branch is a literal directory plus a count of unknown names below it.
+    /// At a glob segment the directory is judged with the segment's literal
+    /// prefix (inside a root, or a root's path starts with it: `~/no*` against
+    /// `~/notes`), and a segment that can expand to `..` or `.` also continues
+    /// from the parent or the same directory. Every literal path reached is judged
+    /// at the end. Too many branches counts as a hit.
     pub(crate) fn glob_reaches_private(&self, r: &Resolver, full: &str) -> bool {
-        let end = full.find(GLOB_META).unwrap_or(full.len());
-        let dir = literal_dir(full);
-        let partial = full.get(dir.len()..end).unwrap_or_default();
-        if dir.is_empty() {
-            return false;
+        const MAX_BRANCHES: usize = 64;
+        let up = |dir: &PathBuf, wild: usize| match wild {
+            0 => (dir.join(".."), 0),
+            n => (dir.clone(), n - 1),
+        };
+        let mut front = vec![(
+            PathBuf::from(if full.starts_with('/') { "/" } else { "" }),
+            0,
+        )];
+        for seg in full.split('/').filter(|s| !s.is_empty() && *s != ".") {
+            let mut next = Vec::new();
+            for (dir, wild) in &front {
+                if seg == ".." {
+                    next.push(up(dir, *wild));
+                } else if !seg.contains(GLOB_META) {
+                    next.push(match wild {
+                        0 => (dir.join(seg), 0),
+                        n => (dir.clone(), n + 1),
+                    });
+                } else {
+                    if *wild == 0 && self.prefix_reaches(r, dir, literal_part(seg)) {
+                        return true;
+                    }
+                    next.push((dir.clone(), wild + 1));
+                    if segment_can_match(seg, "..") {
+                        next.push(up(dir, *wild));
+                    }
+                    if segment_can_match(seg, ".") {
+                        next.push((dir.clone(), *wild));
+                    }
+                }
+            }
+            next.sort();
+            next.dedup();
+            if next.len() > MAX_BRANCHES {
+                return true;
+            }
+            front = next;
         }
-        r.variants(Path::new(&dir)).iter().any(|v| {
+        front
+            .iter()
+            .any(|(dir, wild)| *wild == 0 && self.contains_with(r, dir))
+    }
+
+    /// A name in `dir` starting with `partial` may be or lead into a private root.
+    fn prefix_reaches(&self, r: &Resolver, dir: &Path, partial: &str) -> bool {
+        r.variants(dir).iter().any(|v| {
             let pre = format!(
-                "{}{}",
+                "{}/{}",
                 v.display().to_string().trim_end_matches('/'),
                 partial
             );
@@ -201,6 +244,39 @@ pub(crate) fn literal_dir(pattern: &str) -> String {
         Some(0) => "/".to_string(),
         Some(i) => pattern[..i].to_string(),
         None => String::new(),
+    }
+}
+
+/// The text of a glob segment before its first metacharacter, without an
+/// extglob marker (`@`, `+`, `!`) left in front of a folded group.
+fn literal_part(seg: &str) -> &str {
+    let end = seg.find(GLOB_META).unwrap_or(seg.len());
+    let lit = &seg[..end];
+    if seg[end..].starts_with('{') {
+        lit.trim_end_matches(['@', '+', '!'])
+    } else {
+        lit
+    }
+}
+
+/// Whether one glob segment can expand to `name` (`.` or `..`). Bash never
+/// matches either with a leading `*` or `?`; extglob groups (folded to braces)
+/// are widened, and anything globset cannot read counts as a match.
+fn segment_can_match(seg: &str, name: &str) -> bool {
+    let mut chars = seg.chars();
+    if matches!(chars.next(), Some('*' | '?')) && chars.next() != Some('{') {
+        return false;
+    }
+    if seg.contains("!{") {
+        return true;
+    }
+    let pat = seg
+        .replace("@{", "{")
+        .replace("?{", "*{")
+        .replace("+{", "*{");
+    match GlobBuilder::new(&pat).literal_separator(true).build() {
+        Ok(g) => g.compile_matcher().is_match(name),
+        Err(_) => true,
     }
 }
 

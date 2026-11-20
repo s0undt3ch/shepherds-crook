@@ -41,8 +41,8 @@ fn has_glob_char(s: &str) -> bool {
 }
 
 /// Bash extglob groups (`@(..)`, `+(..)`, `!(..)`, `?(..)`, `*(..)`) with their
-/// parentheses turned into braces, which the token splitter would otherwise
-/// cut at. `$(..)` is left alone. `None` when there is no group.
+/// parentheses turned into braces and `|` into `,`, which the token splitter
+/// would otherwise cut at. `$(..)` is left alone. `None` when there is no group.
 fn fold_extglob(text: &str) -> Option<String> {
     if !["@(", "+(", "!(", "?(", "*("]
         .iter()
@@ -61,6 +61,7 @@ fn fold_extglob(text: &str) -> Option<String> {
                 out.push(if ext { '{' } else { c });
             }
             ')' => out.push(if open.pop().unwrap_or(false) { '}' } else { c }),
+            '|' if open.last() == Some(&true) => out.push(','),
             _ => out.push(c),
         }
         prev = c;
@@ -800,6 +801,34 @@ mod tests {
             "cat ~/notes/public/../secret/*",
         ] {
             assert!(!bash(&s, cmd, &f.base).is_empty(), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn glob_segments_that_can_expand_to_dotdot_are_followed() {
+        let f = fx();
+        fs::create_dir_all(f.home.join("proj")).unwrap();
+        fs::create_dir_all(f.home.join("notes/public")).unwrap();
+        let s = f.set(&["~/notes"], &["~/notes/public"]);
+        let cwd = f.home.join("proj");
+        for cmd in [
+            "cat {..,x}/notes/a",
+            "cat .@(.)/notes/a",
+            "cat .[.]/notes/a",
+            "cat ./.?/notes/a",
+            "cat ~/proj/.@(.)/notes/a",
+            "cat ~/proj/{..,x}/notes/a",
+            "cat ~/proj/.@(.)/notes/public/a",
+            "cat ~/proj/.@(.|x)/notes/a",
+            "cat ~/@(notes)/a",
+            "cat ~/proj/a*/../../notes/a",
+            "cat ../notes/a",
+            "cat ../*/a",
+        ] {
+            assert!(!bash(&s, cmd, &cwd).is_empty(), "{cmd}");
+        }
+        for cmd in ["cat {a,b}.txt", "cat ~/proj/*.md", "ls */*"] {
+            assert!(bash(&s, cmd, &cwd).is_empty(), "{cmd}");
         }
     }
 

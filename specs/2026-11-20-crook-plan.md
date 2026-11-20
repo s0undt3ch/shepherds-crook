@@ -35,7 +35,7 @@ checks) is toolr commands in `tools/`, as in toolr itself.
   toolr with Python commands in `tools/`, git-cliff, Renovate, packslip
 - herdr 0.9.5, optional
 
-**Spec:** [2026-11-19-crook-design.md](2026-11-19-crook-design.md), draft 8.7.
+**Spec:** [2026-11-19-crook-design.md](2026-11-19-crook-design.md), draft 8.10.
 Executors read both documents. Section names in this plan refer to the spec.
 
 **Calls this plan makes** (the spec leaves them to the builder):
@@ -74,7 +74,6 @@ Executors read both documents. Section names in this plan refer to the spec.
 - **The code lives in this repo**, package name `crook`, repository
   `https://github.com/s0undt3ch/shepherds-crook`. Pushes, tags and release
   dispatches are confirm-first.
-- **Minimum chunk length:** 8 words.
 - **No `PostToolUse` hook.** `asks` logs hits only, not the user's answer
   (user's call, 2026-11-20): a denied call never reaches `PostToolUse`, so it
   could only ever record "allowed", at one extra process per tool call.
@@ -113,7 +112,7 @@ D starts, because it is the privacy boundary.
   `~/Library/Application Support` on macOS). An empty variable counts as
   unset:
   - state: `${XDG_STATE_HOME:-~/.local/state}/crook/<slug>/` holds
-    `crook.db`, `gen`, `index/` and `settings-<role>.json`. The state dir is
+    `crook.db`, `gen` and `settings-<role>.json`. The state dir is
     `<state>/crook`, and the Read/Edit/Write deny covers `<state>/crook/**`.
     Tasks 1 to 10 were built with this under `XDG_DATA_HOME`; Task 10b moves
     it.
@@ -207,11 +206,14 @@ D starts, because it is the privacy boundary.
 3. **The hook never crashes.** With `onFailure: "block"`, a panic or a
    non-zero exit blocks every tool call in every crook session. The hook gives
    a defined answer, not a crash, for: malformed stdin, a missing database, an
-   older schema, a missing or corrupt index, and a forced panic inside a
-   handler (caught by `catch_unwind` in the release-profile binary). Test in
-   Tasks 9, 11 and 12.
-4. **Large inputs.** A 5 MB `Write` with a 7 MB index is checked in under
-   500 ms in a release build. Test in Task 12; CI runs it in Task 21.
+   older schema, and a forced panic inside a handler (caught by
+   `catch_unwind` in the release-profile binary). If the hook can't write its
+   decision to stdout it exits 2, which blocks the call (Task 12b). Test in
+   Tasks 9, 12 and 12b.
+4. **Large inputs.** Path detection on a 5 MB `Write` finishes in under
+   500 ms in a release build, and the whole check has one 400 ms deadline:
+   past it the hook asks `crook: private reference check: input too large to
+   check` (Task 12b). Test in Tasks 12 and 12b; CI runs them in Task 21.
 5. **Missing or old database for a mod verb.** The verb prints
    `run crook open <slug>`, changes nothing, and creates no file. Test in
    Task 3.
@@ -1002,7 +1004,7 @@ tasks is unchanged.
     `${XDG_STATE_HOME:-~/.local/state}/crook`. An empty variable counts as
     unset. It replaces `paths::data_dir`.
   - `paths::project_dir(env: Env, slug: &str) -> Result<PathBuf, Error>`:
-    `<state_dir>/<slug>`, for `crook.db`, `gen`, `index/` and
+    `<state_dir>/<slug>`, for `crook.db`, `gen` and
     `settings-<role>.json`
   - `settings::Opts.state_dir: PathBuf`, the whole `<state>/crook`, not one
     project's directory. It replaces `data_dir`.
@@ -1052,72 +1054,13 @@ tasks is unchanged.
   there and nowhere under `XDG_DATA_HOME`.
 - [ ] **Step 5: Commit.** Message: `refactor: move crook state to XDG_STATE_HOME`.
 
-### Task 11: The verbatim index and subtraction
+### Task 11: The verbatim index and subtraction (built, then removed by Task 12b: user decision after the security review)
 
-**Files:**
-
-- Create: `src/privacy/index.rs`, `src/privacy/chunks.rs`,
-  `src/privacy/subtract.rs`
-- Test: unit tests in each
-
-**Interfaces:**
-
-- Produces:
-  - `privacy::Index::refresh(dir: &Path, s: &Set) -> Result<Index, Error>`.
-    It re-indexes changed files only.
-  - `Index::lookup(&self, text: &str) -> Vec<ChunkHit>`, where
-    `ChunkHit { chunk: String, file: PathBuf }`
-  - `privacy::subtract(hits: Vec<ChunkHit>, public: &[String], file_content: &str, old_string: &str, repos: &[PathBuf], s: &Set) -> Vec<ChunkHit>`
-- [ ] **Step 1: Write the failing tests.**
-  - `shingles`:
-    - normalisation lowercases nothing, collapses whitespace within a line,
-      and doesn't cross lines
-    - a line of fewer than 8 words gives no shingles
-  - `refresh_by_mtime`:
-    - a file edited after the first refresh is re-indexed, and a deleted file
-      drops out
-    - writes go to a temp file, then `rename`
-    - no lock file is left behind
-  - `corrupt_index`: a truncated `index/index.bin` makes `refresh`
-    rebuild, with no error. This is Review Focus 3.
-  - `index_scope`: `.git/` is skipped, a file over 1 MiB is skipped, and a
-    file with a NUL byte in its first 8 KiB (binary) is skipped.
-  - `subtract_repo_per_chunk`: two overlapping chunks taken from one
-    9-word line of a tracked public file are both dropped, and a chunk
-    found nowhere is kept, in the same call.
-  - `lookup_names_file`: a hit reports the private file it came from.
-  - `subtract_public`: a chunk equal to a ticket title from the record's
-    tickets is dropped.
-  - `subtract_edit_context`: a chunk already in the target file, or in
-    `old_string`, is dropped.
-  - `subtract_repo`:
-    - a chunk that appears in a tracked file of a project repo, outside every
-      private location, is dropped
-    - a chunk only in a private folder tracked in that same repo is kept
-    - a repo wholly inside a private location isn't searched
-- [ ] **Step 2: Run them and check they fail.**
-- [ ] **Step 3: Implement.**
-  - The index shape is spike 5's, in **one** file, so a single `rename`
-    replaces it and a concurrent hook never reads a torn pair:
-    - 8-word shingles, hashed with FNV-1a 64 (a dozen lines; no crate)
-    - `<state>/crook/<slug>/index/index.bin`: a header (magic `CRKI`, format version, entry
-      count), then the manifest (file id, mtime, path), then sorted
-      `(u64 hash, u32 file id)` records, little-endian. Read with
-      `std::fs::read` and binary search.
-  - Any header, length or count mismatch means corrupt: rebuild.
-  - Scope: regular files under each private root, skipping `.git/`, files
-    over 1 MiB and binary files (a NUL in the first 8 KiB). Over 20 000
-    files, `crook open` and `crook resume` refuse, naming the root, until it
-    is narrowed or `--allow-partial-index` is passed for that launch. A hook
-    that finds the cap exceeded indexes the first 20 000 in path order and
-    prints one stderr line. Paths still hit beyond the cap.
-  - The repo search returns whole matching lines:
-    `git -C <repo> grep -h -F -f <chunks file> -- . ':(exclude)<each private path inside repo>'`.
-    Normalise each line as chunks are, and drop every chunk that is a
-    substring of one. (`-o` would print only the first of overlapping
-    shingles and keep the rest as false hits.)
-- [ ] **Step 4: Run every check and confirm it passes.**
-- [ ] **Step 5: Commit.** Message: `feat: verbatim index and public subtraction`.
+Task 11 built a verbatim index of private files and the subtraction of public
+text. After the Milestone C security review the user dropped both, on
+2026-11-20: the privacy check looks for private paths only, and Task 12b
+removes the code. Task 12's check is path-only, and the numbering is
+unchanged.
 
 ### Task 12: Wiring the privacy check into `PreToolUse`, with the `asks` log
 
@@ -1128,15 +1071,15 @@ tasks is unchanged.
 
 **Interfaces:**
 
-- Consumes: Tasks 9 to 11
+- Consumes: Tasks 9 and 10
 - [ ] **Step 1: Write the failing tests.**
   - `exempt_tools`: these get no decision:
-    - `Read`, `Glob`, `Grep`, `mcp__crook__*`, `Agent`, `Skill`, `TodoWrite`
-      and `ToolSearch`
+    - `Read`, `Glob`, `Grep`, `mcp__crook__*`, `Skill`, `TodoWrite` and
+      `ToolSearch`
+    - `Agent` (Task 12b narrows this to local, built-in subagent types)
     - `Write` or `Edit` whose `file_path` is private
-  - `write_into_repo_asks`: a `Write` into a repo whose `content` quotes an
-    8-word line of a private note gets `ask`, reason
-    `crook: private reference: <file>`.
+  - `write_into_repo_asks`: a `Write` into a repo whose `content` names a
+    private path gets `ask`, reason `crook: private reference: <path>`.
   - `mcp_and_webfetch_checked`: `mcp__linear__save_comment` with a private
     path in `body` gets `ask`, and so does `WebFetch` with a private path in
     the URL.
@@ -1148,9 +1091,8 @@ tasks is unchanged.
   - `asks_write_timeout`: with the database held by an IMMEDIATE transaction
     for 6 s, the hook still answers `ask` within the timeout, and writes the
     lost line to stderr.
-  - `missing_index`: a deleted `index/` rebuilds and the check still answers.
   - `tests/hook_budget.rs::large_write_budget`, for Review Focus 4: a 5 MB
-    `content` against a 7 MB index finishes in under 500 ms. Mark it
+    `content` is path-checked in under 500 ms. Mark it
     `#[ignore]`; it runs with
     `cargo nextest run --release --run-ignored only` (this also runs Task 9's forced-panic test),
     locally now and in CI from Task 21.
@@ -1158,17 +1100,111 @@ tasks is unchanged.
 - [ ] **Step 3: Implement the order.**
   - park denial and the parked-target asks on `mcp__crook__stop` and
     `mcp__crook__spawn` (Task 9), then the exempt tools (which include the
-    other `mcp__crook__*`), then paths, then the verbatim lookup, then
-    subtraction
+    other `mcp__crook__*`), then paths
   - `PreToolUse` reads through a `ReadOnly` store. The `asks` insert opens
     its own short-lived `ReadWrite` connection with a 1 s busy timeout, so a
     held lock can't push the hook past its budget
 - [ ] **Step 4: Run every check, plus the release budget test, and confirm they pass.**
 - [ ] **Step 5: Commit.** Message: `feat: privacy check on every outbound tool call`.
 
+### Task 12b: Security review fixes, and the verbatim index dropped
+
+The Fable security review of Milestone C (at `2434f26`) gave two user
+decisions on 2026-11-20, and this task applies them with the review's other
+fixes. The decisions:
+
+- **Drop the verbatim index now.** The privacy check covers private *paths*
+  only. A note pasted into a PR or ticket no longer asks; the protocol tells
+  sessions not to quote private material.
+- **Narrow the `Agent` exemption** to built-in subagent types run locally.
+
+**Files:**
+
+- Remove: `src/privacy/chunks.rs`, `src/privacy/index.rs`,
+  `src/privacy/subtract.rs`, `src/privacy/fixture.rs` (if only they use it),
+  and their tests; the verbatim lookup and subtraction in
+  `src/hook/privacy.rs`; any index-only test in `tests/hook_budget.rs` (keep
+  a path-only budget test). Keep the `aho-corasick` dependency: Task 10's
+  entry-name pass uses it.
+- Modify: `src/hook/privacy.rs`, `src/hook/sessionstart.rs`,
+  `src/hook/mod.rs`, `src/privacy/paths.rs`, `src/privacy/set.rs`,
+  `src/cli/project.rs`, `src/project.rs` (if needed), tests beside each.
+- Test: as listed per change below.
+
+**Steps:**
+
+- [ ] **Step 1: Write the failing test for each change, then make it pass.**
+  One change at a time:
+  1. **Remove the verbatim index** (user decision). The hook's privacy check
+     is: park denial and parked-target asks, then exempt tools, then
+     `find_paths`; on hits, `ask` with `crook: private reference: <first hit>`
+     plus `(+N more)`; log to `asks`. Remove the cap logic (`Index::capped`,
+     the cap stderr line) with it. Tests: a Write whose content quotes a
+     private line but names no private path gives no decision (documents the
+     decision); every path test still passes.
+  2. **Relative spelling of a root with a space** (review #2,
+     `paths.rs:286-298`). With cwd = a repo and private root
+     `<base>/My Notes`, these must ask: Bash
+     `gh pr create --body-file "../My Notes/plan.md"`,
+     `../My\ Notes/plan.md`, and `mcp__x__upload {"path":"../My Notes/plan.md"}`.
+     Fix: in `find_paths`, add each root's spelling relative to `cwd` (and
+     its normalised form) to the forms the root-substring pass scans.
+  3. **Relative `private` entries** (review #3).
+     `crook project <slug> add-private <rel>` resolves the value against the
+     CLI's cwd and stores it absolute and cleaned, as `add-notes` does. A
+     non-absolute `private` entry in the record or in `config.toml` makes
+     the hook answer the hook-error `ask`
+     (`crook: hook error: private entry is not absolute: <entry>`), not
+     silently ignore it. Tests for both.
+  4. **Narrow the `Agent` exemption** (review #4, user decision). Exempt
+     `Agent` only when `isolation` is absent or not `"remote"` AND
+     `subagent_type` is absent or one of the built-in local types:
+     `general-purpose`, `Explore`, `Plan`, `claude-code-guide`,
+     `statusline-setup`, `fork`. Every other `Agent` call (another
+     provider's type such as `llmtrim-grok`, a plugin agent type,
+     `isolation: "remote"`) is checked like any tool. Put the list in one
+     `const`. Tests: `llmtrim-grok` with a private path in `prompt` asks;
+     `isolation: "remote"` with `general-purpose` asks; `Explore` locally
+     gets no decision.
+  5. **Forged SessionStart must not lift a park** (review #5,
+     `sessionstart.rs:46`, `park.rs:46`). For a child's non-fork
+     `SessionStart`, refuse to replace `children.session_id` when the
+     recorded `claude_pid` is alive (`kill(pid, 0)`) and differs from the
+     hook's parent pid; leave the row unchanged and add context
+     `crook: this session is not the child; the child is session <id>`.
+     Test: child parked with `claude_pid` = a live process (spawn a
+     `sleep`), forged `{"session_id":"decoy","source":"startup"}` from a
+     different ppid gives an unchanged row, and PreToolUse for the real id is
+     still denied. A dead recorded pid still lets a real restart record
+     itself (test it).
+  6. **Write/Edit exemption must use the resolved target** (review #7,
+     `hook/privacy.rs:64-70`). Exempt a Write/Edit/NotebookEdit only when the
+     *resolved* target (canonical, existing-prefix resolution as `Set` does)
+     is inside a private location. Test: `<notes>/repolink -> <repo>`, Write
+     to `<notes>/repolink/PR.md` with a private path in `content` asks.
+  7. **Percent- and plus-encoded strings** (review #9). For any input string
+     containing `%` or `+`, also scan its percent-decoded form (and with `+`
+     as space). Test: `WebFetch` with the note path URL-encoded asks.
+  8. **Failed stdout write** (review #11, `hook/mod.rs:48-52`). If writing or
+     flushing the decision fails, exit 2 (Claude Code treats a non-zero exit
+     with `onFailure: "block"` as a block). Test with stdout closed.
+  9. **Deadline for path scanning** (review #13). One deadline for the whole
+     check (`CHECK_BY` const, 400 ms). Past it, `ask` with
+     `crook: private reference check: input too large to check`. Test: a
+     Bash command of 200,000 distinct relative tokens answers that ask in
+     under 500 ms (release, `#[ignore]`).
+- [ ] **Step 2: Run the checks.** Privacy and hook tests, the release
+  ignored tests (`cargo nextest run --release --run-ignored only`), then
+  once: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo nextest run`, `prek run --all-files`, `npm test`,
+  `npm run typecheck`.
+- [ ] **Step 3: Commit.** Message: `fix: security review fixes; drop the verbatim index`
+  (more than one commit is fine).
+
 Before Milestone D: a Fable security review of Milestone C's diff (Tasks
 9–12), briefed with the spec's Threat model and Known gaps. Findings go to
-the user before work continues.
+the user before work continues. The review ran at `2434f26`; Task 12b holds
+the user's two decisions and the fixes.
 
 ---
 
@@ -1281,11 +1317,9 @@ the user before work continues.
 - [ ] **Step 3: Apply the gate.**
   - If any class of false positive goes over one false ask per session,
     stop and report it to the user.
-  - Report the verbatim index's false asks separately from the path
-    check's. The user leans towards dropping the index (keeping only path
-    detection) if it proves annoying, so put that option first in the
-    report, with its cost: a note pasted into a PR body or ticket would no
-    longer ask. Don't drop it without the user's yes.
+  - The check is path-only (Task 12b dropped the verbatim index), so the
+    count is of false path asks. A note pasted into a PR body or ticket
+    doesn't ask; that is a Known gap, not a false negative to count.
 - [ ] **Step 4: Commit.** Message: `spike: privacy false positives (spike 7)`.
 
 ---

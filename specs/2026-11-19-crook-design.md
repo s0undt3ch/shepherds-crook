@@ -1,6 +1,6 @@
 # crook: design
 
-Status: draft 8.9, 2026-11-20. After seventeen adversarial reviews, two builder
+Status: draft 8.10, 2026-11-20. After eighteen adversarial reviews, two builder
 checks and live tests. Draft 7 moved wake-ups, parking and the session verbs
 into a crook mod. Draft 8 dropped the egress firewall at the user's call,
 kept one privacy check, and gave every child a project card. Drafts 8.1 to
@@ -22,7 +22,11 @@ home directory with a private diary and links to its worktrees, adds
 in one repo. Draft 8.9 (2026-11-20) drops the home's `repos/` links, records
 every worktree in a `worktrees` table, lets a child make more with a
 `worktree()` tool, and splits crook's state (`$XDG_STATE_HOME/crook`) from the
-project home (`$XDG_DATA_HOME/crook`).
+project home (`$XDG_DATA_HOME/crook`). Draft 8.10 (2026-11-20) answers the
+Milestone C security review: at the user's call it drops the verbatim index,
+so the privacy check looks for private paths only, and it narrows the
+`Agent` exemption to built-in local subagent types, with the review's other
+fixes.
 
 ## Intent
 
@@ -64,7 +68,7 @@ user.
 
 | Tier | Example | crook's stance |
 |---|---|---|
-| **A. Natural tool calls** by a mistaken or prompt-injected model | a PR body quoting a vault note, written to a file and passed with `--body-file`. A Linear comment with a local path. A child calling `need` as a sibling. | **Private references are closed:** the call that carries them out asks. **Everything else is the user's config**, as in any session. |
+| **A. Natural tool calls** by a mistaken or prompt-injected model | a `--body-file` pointing at a vault note. A Linear comment with a local path. A child calling `need` as a sibling. | **Private references are closed:** the call that carries them out asks. **Everything else is the user's config**, as in any session. |
 | **B. Evasion** by a model trying to get round the hooks | paraphrasing a private note, encoding it, a script that reads and posts it | **Best-effort.** Paraphrase is not caught. The gaps are listed. |
 | **C. A hostile local process** | malware running as the user | **Out of scope.** This needs a separate OS user or a container per project. |
 
@@ -329,13 +333,19 @@ on by this change" (strings in the loam v0.4.8 binary).
 
 - **Which calls:** every tool call except:
   - `Read`, `Glob` and `Grep`, which only bring data in
-  - `Write` and `Edit` whose target is inside a private location
-  - crook's own tools, `Agent`, `Skill`, `TodoWrite` and `ToolSearch`,
-    whose inputs stay in this machine's sessions
+  - `Write` and `Edit` whose resolved target (symlinks followed) is inside a
+    private location
+  - crook's own tools, `Skill`, `TodoWrite` and `ToolSearch`, whose inputs
+    stay in this machine's sessions
+  - `Agent` calls with no `isolation: "remote"` and a built-in local
+    `subagent_type` (`general-purpose`, `Explore`, `Plan`,
+    `claude-code-guide`, `statusline-setup`, `fork`, or none). Every other
+    `Agent` call is checked like any tool, because some subagent types route
+    to other providers
 
   That covers every MCP tool, including ones the user adopts later, plus
   Bash, Monitor and `WebFetch`, and `Write` and `Edit` into a repo, so
-  private text can't reach a commit or a `--body-file` unasked.
+  a private path can't reach a commit or a `--body-file` unasked.
 
 - **What it looks for** in the call's input (`content` and `new_string` for
   file writes):
@@ -350,22 +360,25 @@ on by this change" (strings in the loam v0.4.8 binary).
     persists between calls, so `--body-file plan.md` from inside a notes
     folder names a private file without a slash. Whether the hook's `cwd`
     follows the shell is checked in spike 9.
-  - a verbatim chunk of a private file's text, at least a minimum length.
-    A chunk doesn't count when it also appears in the record's public links
-    and tickets (notes quote ticket titles and PR URLs), in the edited file's
-    current content or `old_string`, or in a project repo's tracked files
-    outside every private location, because notes quote code, diffs and
-    error text too. The repo search excludes private paths and returns the
-    whole matching lines (`git grep -h -F -f <chunks> -- .
-    ':(exclude)<private path>'`); only chunks found in those lines are
-    dropped, overlapping ones included. A repo that sits wholly
-    inside a private location isn't searched. Otherwise notes tracked in a
-    repo would cancel themselves out. Chunks are compared line by line after
-    whitespace normalisation.
+  - a private path in percent-encoded form, or with `+` for a space (a
+    URL): any string holding `%` or `+` is scanned decoded too
+  - a private root's spelling relative to `cwd`, so `../My Notes/plan.md`
+    asks even when the root has a space
+
+  The check looks for paths only. It doesn't look for the text of private
+  files: draft 8.10 dropped the verbatim index (see Known gaps).
+
+- **Limits.** Relative `private` entries are resolved against the CLI's
+  `cwd` by `crook project <slug> add-private` and stored absolute. A
+  non-absolute entry in the record or in `config.toml` makes the hook ask
+  with `crook: hook error: private entry is not absolute: <entry>`. One
+  deadline (400 ms) covers the whole check; past it the hook asks with
+  `crook: private reference check: input too large to check`. If the hook
+  can't write its decision to stdout, it exits 2, which blocks the call.
 
 - **No Bash exemption.** Bash and Monitor are checked like every other
-  tool, so a command that names a private path or quotes private text asks,
-  even a plain `cat` of a note. Reading notes needs no Bash: `Read`, `Grep`
+  tool, so a command that names a private path asks, even a plain `cat` of a
+  note. Reading notes needs no Bash: `Read`, `Grep`
   and `Glob` are exempt, and `Write` and `Edit` into a private location are
   exempt, so the protocol tells sessions to use those tools for notes. A
   per-command exemption read by a shell lexer (drafts 8 to 8.7) leaked in
@@ -383,13 +396,11 @@ on by this change" (strings in the loam v0.4.8 binary).
 - Every hit goes to the `asks` table. The user's answer isn't logged: a
   denied call never reaches a later hook, so it could only ever say "allowed".
 
-The verbatim index lives in its own files under `<slug>/index/`, not in
-`crook.db`, keyed by file and mtime: the tested shape (spike 5). It's the
-biggest and most-churned data, and in `crook.db` its writes would hold the
-project's one write lock and wake every watcher. Each hook run refreshes
-the entries for files that changed, so a note written ten minutes ago is
-covered. Index writes are write-then-atomic-rename, with no lock, so a crashed hook
-leaves nothing held.
+There is no index of private text. Earlier drafts kept a verbatim index
+(8-word shingles, with public text subtracted). The Milestone C security
+review found that it missed quoted lines, cost about 270 ms per call at
+vault scale and left files unindexed past its caps, and the user dropped it
+on 2026-11-20. `crook.db` and the state dir hold no copy of private text.
 
 ### Session tools
 
@@ -571,7 +582,7 @@ The home is the diary plus room for later additions.
    reports any worktree under `<repo>/.worktrees/<slug>/` that isn't
    recorded. It never removes one.
 4. Removes `<home>/<slug>/` except `diary/`, then the project's state dir
-   (`crook.db`, `gen`, `index/`, settings files).
+   (`crook.db`, `gen`, settings files).
 5. Keeps the diary unless `--with-diary` is given. `--with-diary` is
    refused for a diary under `diary_root`, which is the user's own repo:
    they remove it by hand.
@@ -598,7 +609,6 @@ unset:
     notified       last done seq the orchestrator was woken for, per child
     asks           every privacy hit: time, session, tool, hit
   gen              rewritten after each coordination commit; the watchers stat it
-  index/           the verbatim index of private files, by file and mtime
   settings-<role>.json   the generated `--settings`, written at every launch
 ```
 
@@ -669,7 +679,9 @@ User-wide settings live in `$XDG_CONFIG_HOME/crook/config.toml` (default `~/.con
   mod's cached state, never from a `crook` run inside `ui.render`.
 - The `SessionStart` hook records the current session id on `startup`,
   `resume`, `clear` and `compact`, so `crook resume` resumes the right one.
-  It doesn't record on `fork`.
+  It doesn't record on `fork`. For a child it doesn't replace the recorded
+  id while the recorded `claude_pid` is alive and differs from the hook's
+  parent pid (see Known gaps, forged hook input).
 
 **Forks.** A fork (`/branch`, the `/fork` background copy, moving a
 conversation to the background, `--fork-session`, `hooks.md:1299`) is never
@@ -819,8 +831,8 @@ Borrowed ideas, credited:
 
 ### Known gaps, accepted
 
-- **Paraphrase.** The check catches paths and verbatim text, not a summary of
-  a private note. The project card's rule is the only defence.
+- **Paraphrase.** The check catches paths, not a summary of a private note.
+  The project card's rule is the only defence.
 - **Indirection.** A script that reads a private file and posts it shows the
   script's path, not the content. If the script lives in a private location,
   its path is a hit; otherwise it isn't.
@@ -828,16 +840,22 @@ Borrowed ideas, credited:
   path assembled in a script. Only `~`, `$HOME`, `${HOME}`, `$PWD` and
   `$(pwd)` are resolved.
 - **Encoded content**, such as base64 of a private file.
-- **Short fragments** below the minimum chunk length.
+- **Quoting private text.** A private note quoted or pasted into a PR body,
+  ticket or message is not caught; the protocol tells sessions not to, and
+  the card's rule is the defence. A short fragment of a note is the same case.
 - **A private repo pushed to its own remote.** With the shell inside a
-  private git repo, a bare `git push` has no path operand and no verbatim
-  text, so it doesn't ask. That's the repo going where it already goes (for
-  example the vault to its own remote), which is the user's setup, so it's
-  intended.
+  private git repo, a bare `git push` has no path operand, so it doesn't
+  ask. That's the repo going where it already goes (for example the vault to
+  its own remote), which is the user's setup, so it's intended.
 - **Forged hook input through Bash.** The model can pipe made-up
   `SessionStart` JSON into `crook hook SessionStart`, for example to record a fork.
-  The `children` id stays park-denied whatever `forks` holds, so this can't
-  lift a park. Tier B, like the next item.
+  The `children` id stays park-denied whatever `forks` holds. A non-fork
+  `SessionStart` can't replace the recorded session id of a child while the
+  recorded `claude_pid` is alive and differs from the hook's parent pid: the
+  row is unchanged and the hook adds the context `crook: this session is not
+  the child; the child is session <id>`. So a forged `startup` with a decoy
+  id can't lift a park. If the recorded pid is dead, a real restart records
+  itself. Tier B, like the next item.
 - **A script writing straight into `crook.db`**, another child's inbox
   for example, with `sqlite3`. The Edit/Write deny covers the file tools,
   not Bash.
@@ -990,6 +1008,7 @@ Twelve adversarial reviews and two builder checks. Rounds 1–3 are summarised.
 | User, 2026-11-20 | Drop `cd` tracking | Any `cd`, `pushd` or `popd` makes a command not exempt; `cd` leaves the readers list. Reverses part of review 9's answer. |
 | User, 2026-11-20 | A home per project: a private diary, the repos in use, and one wipe when done; clone or worktree? | Draft 8.8: `<home>/<slug>/` with `diary/` and `repos/` links; worktrees stay under `<repo>/.worktrees/<slug>/<child>`, keeping the user's worktree rule; no clones; `crook wipe`. Quiz and clones moved to Later. Also fixes a collision: `<repo>/.worktrees/<child>` and `crook/<child>` clashed across projects. |
 | User, 2026-11-20 | Links duplicate metadata; children make more worktrees; XDG | Draft 8.9: no links; a worktrees table and worktree() tool; state to XDG_STATE_HOME, home to XDG_DATA_HOME/crook. |
+| 18 (Fable, Milestone C code) | Verbatim misses quoted lines, index ~270 ms per call at vault scale, relative root with a space, relative private entries, Agent exemption to other providers, forged SessionStart lifts a park, plus minors | User: drop the verbatim index, narrow the Agent exemption. Task 12b fixes the rest. |
 | 17 | A path written with `$HOME` wasn't detected; the spike 9 `cwd` probe used a directory Claude Code doesn't keep; the bare-name rule also fired on non-shell input | `$HOME`/`${HOME}` root forms, `$PWD`/`$(pwd)` in a private `cwd`; probe a kept directory; bare names for Bash and Monitor only. Other variables listed as a gap. |
 | 16 | A bare file name, `.` or a glob in a private working directory (`--body-file plan.md` after `cd` into notes) was never checked; nothing confirmed the hook's `cwd` follows the shell | Bare names, `.` and globs count when `cwd` is private. Spike 9 checks `cwd` follows the shell. |
 | 15 | A failed `cd` still leaked one separator further on (`cd x && true; cp …`); `ack` signature, hook store mode, turn latch and spike-9 fallback list left stale | First answered with an `&&`-only rule, then superseded by dropping `cd` tracking (the user row above). The rest fixed in the plan. |
@@ -1018,10 +1037,10 @@ measurements.
 | 2. Idle tracking | Pass. `turn.start`/`turn.complete` carry `agentId` for subagents and none for the main loop. An interrupt gives `turn.complete` with `reason: "aborted"`. A save mid-turn reloaded the mod only after the turn ended, and the old module heard the end. |
 | 3. Resume, forks, `$.fs`, floor | Resume: `SessionStart` `resume` with the same id, and the mod started again. `/branch`: the user moves into the fork in the same process, so the design adopts it automatically. The mod's `$.fs` reads and writes the data dir under the Read and Edit/Write deny rules. Floor 2.1.318, from the changelog. Not tested: moving a conversation to the background, and the `/fork` background copy. |
 | 4. Project card | Pass. The model quoted the `SessionStart` context on `startup`, `clear` and `compact`, and the hook fired on `resume`. |
-| 5. Privacy check | Matcher `*` saw `Write`, Bash and mod-tool inputs. `ask` held in `auto` mode for `Write` and for a mod tool. The mod-tool dialog showed crook's reason; the `Write` dialog showed the file's content but not the reason. A sorted, merged hash index of 700 notes (6.8 MB) answers a lookup in about 5 ms, plus about 20 ms of Python start-up. |
+| 5. Privacy check | Matcher `*` saw `Write`, Bash and mod-tool inputs. `ask` held in `auto` mode for `Write` and for a mod tool. The mod-tool dialog showed crook's reason; the `Write` dialog showed the file's content but not the reason. A sorted, merged hash index of 700 notes (6.8 MB) answered a lookup in about 5 ms, plus about 20 ms of Python start-up. That index was dropped in draft 8.10; only the hook's inputs and the `ask` result still stand. |
 | 6. Auto memory | Shared across a repo's worktrees (changelog, 2.1.63). `autoMemoryDirectory` from `--settings` is honoured: the model wrote its memory there. |
 | Extra: subagents under `refuse` | Pass. With `crossSessionInbound: "refuse"`, a background subagent's report was still delivered. |
-| 7. False positives | Not run: needs a working build. |
+| 7. False positives | Not run: needs a working build. It measures false asks of the path-only check. |
 | 8. Shared project memory | Dropped with project memory (deferred to Later, 2026-11-20). |
 | 10. The home as cwd | Not run; part of Task 13's smoke test. Does a new `<home>/<slug>` (not a git repo) raise a trust dialog that would hang the orchestrator, and where is its auto memory kept? |
 | 9. The mod running `crook` | Not run. From a mod in a pane and in `--bg`: `$.process.run([CROOK_BIN, …])` inside `prompt.submit`, `tool.run` and the 2 s tick, with `CROOK_*` inherited; whether `CLAUDECODE` is set there; `$.fs.stat` on `gen` under the Read deny; latency per call. `$.process` is CLI only (`claude-code.d.ts:4190`). |
@@ -1032,10 +1051,6 @@ measurements.
   compiles it), Rust for the binary and the hook, with `rusqlite`. The
   mod's logic is plain TypeScript under `plugin/hooks/core/`, unit-tested
   outside the engine.
-- How verbatim chunks are matched, the minimum chunk length, and the index
-  format. Tested shape: 8-word shingles hashed to 8 bytes, one sorted merged
-  file plus a per-file mtime manifest, kept outside `crook.db`. The build
-  keeps both in one file, so one rename replaces them.
 - The fork rule needs the hook to know its Claude Code process, for example
   its parent pid recorded next to the session id.
 - The inbox poll interval (2 s tested).

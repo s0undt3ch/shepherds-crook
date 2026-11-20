@@ -1,5 +1,6 @@
 //! Subtracting chunks that are public anyway.
 
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -27,18 +28,25 @@ pub fn subtract(
     deadline: Instant,
 ) -> Vec<ChunkHit> {
     let original = hits.clone();
-    let mut known: Vec<String> = Vec::new();
+    // A chunk is public when its words are a run of words on some public line.
+    // The chunks are the keys and each text is read once, so the work is linear
+    // in the text however many chunks there are.
+    let mut seen: HashMap<String, bool> = hits.iter().map(|h| (h.chunk.clone(), false)).collect();
+    let sizes: BTreeSet<usize> = seen
+        .keys()
+        .map(|c| c.split_whitespace().count())
+        .filter(|&n| n > 0)
+        .collect();
     for text in public
         .iter()
         .map(String::as_str)
         .chain([file_content, old_string])
     {
-        known.extend(text.lines().map(padded));
+        if !mark_covered(text.lines(), &sizes, &mut seen, deadline) {
+            return original;
+        }
     }
-    let mut kept: Vec<ChunkHit> = hits
-        .into_iter()
-        .filter(|h| !covered(&h.chunk, &known))
-        .collect();
+    let mut kept: Vec<ChunkHit> = hits.into_iter().filter(|h| !seen[&h.chunk]).collect();
     for repo in repos {
         if kept.is_empty() {
             break;
@@ -52,23 +60,53 @@ pub fn subtract(
         let Some(lines) = repo_lines(repo, &kept, s, deadline) else {
             return original;
         };
-        kept.retain(|h| !covered(&h.chunk, &lines));
+        if !mark_covered(
+            lines.iter().map(String::as_str),
+            &sizes,
+            &mut seen,
+            deadline,
+        ) {
+            return original;
+        }
+        kept.retain(|h| !seen[&h.chunk]);
     }
     kept
 }
 
-/// A line as `normalise_line` makes it, padded with a space each side so a
-/// chunk matches whole words only.
-fn padded(line: &str) -> String {
-    format!(" {} ", normalise_line(line))
+/// Flags every chunk in `seen` that is a run of consecutive words on one of
+/// `lines` (whitespace-normalised, never spanning lines). `sizes` are the word
+/// counts the chunks have. `false` when `deadline` passed before the end.
+fn mark_covered<'a>(
+    lines: impl Iterator<Item = &'a str>,
+    sizes: &BTreeSet<usize>,
+    seen: &mut HashMap<String, bool>,
+    deadline: Instant,
+) -> bool {
+    for (i, line) in lines.enumerate() {
+        if i % 512 == 0 && Instant::now() >= deadline {
+            return false;
+        }
+        let norm = normalise_line(line);
+        let mut bounds: Vec<(usize, usize)> = Vec::new();
+        let mut at = 0;
+        for w in norm.split(' ').filter(|w| !w.is_empty()) {
+            bounds.push((at, at + w.len()));
+            at += w.len() + 1;
+        }
+        for &n in sizes {
+            for win in bounds.windows(n) {
+                if let (Some(first), Some(last)) = (win.first(), win.last())
+                    && let Some(flag) = seen.get_mut(&norm[first.0..last.1])
+                {
+                    *flag = true;
+                }
+            }
+        }
+    }
+    true
 }
 
-fn covered(chunk: &str, lines: &[String]) -> bool {
-    let needle = format!(" {chunk} ");
-    lines.iter().any(|l| l.contains(&needle))
-}
-
-/// Whole lines of tracked files that contain any of the chunks, padded. The
+/// Whole lines of tracked files that contain any of the chunks. The
 /// chunks go in on stdin, so private text never reaches a file or a command line.
 /// Lines from a file that is private by any rule (glob included) are dropped.
 /// A repo that cannot be searched gives no lines. `None` means the search did
@@ -128,7 +166,7 @@ fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set, deadline: Instant) -> Opt
         };
         let path = repo.join(OsStr::from_bytes(&row[..nul]));
         if !s.contains(&path) {
-            lines.push(padded(&String::from_utf8_lossy(&row[nul + 1..])));
+            lines.push(String::from_utf8_lossy(&row[nul + 1..]).into_owned());
         }
         row.clear();
     }

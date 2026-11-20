@@ -207,3 +207,74 @@ fn asks_write_timeout() {
         .unwrap();
     assert_eq!(n, 0, "the lost row stays lost");
 }
+
+#[test]
+fn stuck_git_is_killed_and_the_hit_stands() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = setup();
+    let base = std::fs::canonicalize(tmp.path()).unwrap();
+    let notes = base.join("notes");
+    let repo = base.join("repo");
+    for d in [&notes, &repo] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let line = "the quarterly migration plan moves billing onto the new ledger";
+    std::fs::write(notes.join("n.md"), format!("{line}\n")).unwrap();
+    let x = base.display().to_string();
+    let env = move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone());
+    let env: Env = &env;
+    let mut s = Store::open(env, "p", Mode::ReadWrite).unwrap();
+    s.write(Touch::PROJECT, |tx| {
+        project::add(tx, project::ItemKind::Notes, &notes.display().to_string())?;
+        project::add(tx, project::ItemKind::Repo, &repo.display().to_string()).map(|_| ())
+    })
+    .unwrap();
+
+    // A `git` that never answers; `exec` keeps its pid, so it can be checked afterwards.
+    let bin = base.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let pidfile = base.join("git.pid");
+    let script = bin.join("git");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\necho $$ > {}\nexec sleep 5\n", pidfile.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let input = json!({
+        "session_id": "s", "tool_name": "Write", "cwd": repo.display().to_string(),
+        "tool_input": {"file_path": repo.join("o.md").display().to_string(), "content": line},
+    })
+    .to_string();
+    let orch = [
+        ("CROOK_ROLE", "orchestrator"),
+        ("CROOK_PROJECT", "p"),
+        ("PATH", path.as_str()),
+    ];
+    let started = std::time::Instant::now();
+    let o = hook("PreToolUse", tmp.path(), &input, &orch);
+    let took = started.elapsed();
+    assert!(took < std::time::Duration::from_secs(3), "{took:?}");
+    let v = json_out(&o);
+    assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "ask");
+    assert!(
+        v["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("n.md")
+    );
+    let pid: i32 = std::fs::read_to_string(&pidfile)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // Killed and reaped by the hook, so the pid is gone.
+    let alive = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok();
+    assert!(!alive, "the stuck git child is still running");
+}

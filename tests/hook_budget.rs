@@ -143,10 +143,14 @@ impl World {
     /// One `Write` into the working directory through the real binary: how long
     /// it took, and the hook's answer.
     fn write(&self, content: &str) -> (Duration, Value) {
+        let file_path = self.repo.join("out.md").display().to_string();
+        self.call("Write", json!({"file_path": file_path, "content": content}))
+    }
+
+    fn call(&self, tool: &str, tool_input: Value) -> (Duration, Value) {
         let input = json!({
-            "session_id": "s", "tool_name": "Write", "cwd": self.repo.display().to_string(),
-            "tool_input": {"file_path": self.repo.join("out.md").display().to_string(),
-                "content": content},
+            "session_id": "s", "tool_name": tool, "cwd": self.repo.display().to_string(),
+            "tool_input": tool_input,
         })
         .to_string();
         let mut c = crook();
@@ -219,6 +223,47 @@ fn quoting_write_with_big_repo_budget() {
     eprintln!(
         "{} byte quote of private notes, {REPO_FILES}-file repo: {took:?}",
         content.len()
+    );
+    assert_asks_about_secret(&v, took);
+}
+
+/// An `Edit` of a large existing file (its content is public text to subtract
+/// against, and does not hold the quoted lines) quoting 20,000 private lines, all
+/// of which a tracked repo file also holds, plus one that nothing public holds.
+#[test]
+#[ignore = "release-only budget test"]
+fn edit_of_large_file_budget() {
+    let w = World::new();
+    w.track_repo();
+    let mut quoted = String::new();
+    for i in 0..2 {
+        let text = std::fs::read_to_string(w.notes.join(format!("n{i}.md"))).unwrap();
+        quoted.extend(text.lines().take(10_000).flat_map(|l| [l, "\n"]));
+    }
+    std::fs::write(w.repo.join("public-copy.txt"), &quoted).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&w.repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    git(&["add", "public-copy.txt"]);
+    git(&["commit", "-q", "-m", "copy"]);
+    let target = w.repo.join("big.md");
+    std::fs::write(&target, prose(6 << 20, 99, 6)).unwrap();
+    w.write("hello");
+    let new_string = format!("{quoted}{SECRET}\n");
+    let input = json!({"file_path": target.display().to_string(), "old_string": "x",
+        "new_string": new_string});
+    let (took, v) = w.call("Edit", input);
+    eprintln!(
+        "Edit of a 6 MB file quoting {} bytes: {took:?}",
+        new_string.len()
     );
     assert_asks_about_secret(&v, took);
 }

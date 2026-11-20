@@ -24,9 +24,9 @@ const EXEMPT: [&str; 7] = [
     "TodoWrite",
     "ToolSearch",
 ];
-/// The `asks` insert gives up after this, so a held lock cannot push the hook
-/// past its budget.
-const ASKS_BUSY: Duration = Duration::from_secs(1);
+/// The `asks` insert gives up after this, so a held lock cannot push the hook past
+/// its budget. A lost row never changes the decision and is reported on stderr.
+const ASKS_BUSY: Duration = Duration::from_millis(100);
 /// References counted and listed per call; the rest of a huge input is not worth the work.
 const MAX_REFS: usize = 512;
 /// The repo searches of the subtraction stop this long after the check starts,

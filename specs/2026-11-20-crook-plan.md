@@ -1598,17 +1598,21 @@ exec = ["crook", "completion", "print", "{shell}"]
       (verified release asset, `cmp` against mise's copy), then
       `toolr ci packslip-check "$RUNNER_TEMP/archives" --packslip "$PACKSLIP"`
     - `set-pipeline-exit-status`: the pipeline gate over every job
+
   - `_build-binary-archive.yml`: toolr's, changed to build from the checkout
     (no source tarball), with `cargo build --release --locked --target <triple>`.
     Stage `crook`, `LICENSE`, `README.md` and `CHANGELOG.md` if present into
     `crook-<v>-<triple>/`. The mod isn't staged: it is embedded in the
     binary (user's call, 2026-11-20). Keep `musl-tools`, the sha256 files, attestation
     and upload. Don't copy toolr's sdist comment about `--locked`.
+
   - Whether `claude plugin validate` and `claude plugin test` run in CI
     without a login isn't checked. Try them in one CI run. If they need
     auth, keep them local-only and say so in `CONTRIBUTING.md`.
+
   - `.pre-commit-config.yaml` gains local hooks: `check-gate-needs` (on
     workflow changes), `private-words` (always), `tsc` (on `plugin/**/*.ts`).
+
   - `.codecov.yml`: toolr's, with `manual_trigger: true`, project
     `target: auto` and `threshold: 0%`, and patch `target: 99%`. Components,
     each with its own `auto` project status, so the privacy boundary can't
@@ -1627,10 +1631,12 @@ exec = ["crook", "completion", "print", "{shell}"]
     `.codecov.yml`, `codecov.notify.manual_trigger: true` holds the statuses
     until `codecov-notify` runs, and `comment.after_n_builds: 4` (one Rust
     report per OS, the mod and the tools) holds the PR comment.
+
   - Codecov upload auth: toolr's jobs use `id-token: write`; copy its
     `codecov-action` inputs. A private repo may also need a
     `CODECOV_TOKEN` secret. That secret is the user's to create; list it in
     the task report.
+
   - `renovate.json5`, copied from toolr's and trimmed:
     - top level: `extends` (`config:recommended`,
       `helpers:pinGitHubActionDigestsToSemver`), `timezone`, the weekly
@@ -1655,6 +1661,7 @@ exec = ["crook", "completion", "print", "{shell}"]
       `.github/**`), with `schedule: ["at any time"]` and
       `recreateWhen: "always"`
     - `package.json` keeps exact pins
+
   - `tests/tools/precommit/test_toolr_pins.py`: the mise ToolR pin, `TOOLR_VERSION`,
     the setup-toolr action's version comment and `toolr-py` in
     `tools/uv.lock` are all equal.

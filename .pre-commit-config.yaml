@@ -1,0 +1,62 @@
+---
+minimum_pre_commit_version: 3.0.0
+# Install both the pre-commit and commit-msg git hooks on `prek install`.
+# `default_stages` keeps `pass_filenames: false` hooks (clippy) from running
+# a second time at the commit-msg stage.
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: end-of-file-fixer
+
+  - repo: https://github.com/s0undt3ch/pre-commit-hooks
+    rev: v1.4.0
+    hooks:
+      # Pins unpinned `uses:` refs to a SHA and verifies existing pins.
+      # Needs `gh`.
+      - id: pin-github-actions
+      - id: jactionlint-fix
+      - id: shellcheck
+      - id: gitleaks
+      - id: typos
+
+      # git-cliff builds the changelog from commit subjects, so spell-check
+      # the message too. Check-only: the message is never rewritten.
+      - id: system-tool
+        alias: typos-commit-msg
+        name: typos (commit message)
+        args: [typos]
+        stages: [commit-msg]
+
+      - id: system-tool
+        alias: rustfmt
+        name: rustfmt
+        args: [rustfmt]
+        types: [rust]
+
+      - id: rumdl
+
+  - repo: local
+    hooks:
+      # Keeps Cargo.lock in step with Cargo.toml. No compilation: the
+      # clippy hook picks that up on `.rs` changes.
+      - id: cargo-lock
+        name: Sync Cargo.lock with Cargo.toml
+        entry: cargo fetch
+        language: system
+        pass_filenames: false
+        files: ^(Cargo\.toml|Cargo\.lock)$
+
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false

@@ -314,6 +314,7 @@ on by this change" (strings in the loam v0.4.8 binary).
   That covers every MCP tool, including ones the user adopts later, plus
   Bash, Monitor and `WebFetch`, and `Write` and `Edit` into a repo, so
   private text can't reach a commit or a `--body-file` unasked.
+
 - **What it looks for** in the call's input (`content` and `new_string` for
   file writes):
   - a private path, absolute, `~`-relative, or relative to the hook's `cwd`
@@ -339,6 +340,7 @@ on by this change" (strings in the loam v0.4.8 binary).
     inside a private location isn't searched. Otherwise notes tracked in a
     repo would cancel themselves out. Chunks are compared line by line after
     whitespace normalisation.
+
 - **No Bash exemption.** Bash and Monitor are checked like every other
   tool, so a command that names a private path or quotes private text asks,
   even a plain `cat` of a note. Reading notes needs no Bash: `Read`, `Grep`
@@ -352,8 +354,10 @@ on by this change" (strings in the loam v0.4.8 binary).
 
 - **On a hit:** `ask`, with the reason `crook: private reference: <first
   hit>` and the number of others. The dialog shows the call itself.
+
 - **Otherwise:** no decision. The user's config and mode handle the call as
   usual.
+
 - Every hit goes to the `asks` table. The user's answer isn't logged: a
   denied call never reaches a later hook, so it could only ever say "allowed".
 
@@ -436,7 +440,7 @@ stored.
 
 ### Launching
 
-```
+```text
 crook open <slug>
   if the `orchestrator` row names a live orchestrator for <slug>: start
     nothing; focus its herdr pane, or print its pid and session id
@@ -489,7 +493,7 @@ The generated `--settings` contain:
 One SQLite database per project, in WAL mode, under
 `${XDG_DATA_HOME:-~/.local/share}/crook/`:
 
-```
+```text
 <slug>/
   crook.db         schema version in PRAGMA user_version
     project        the record: what/why, where it stands, repos, links, tickets, notes folders, private, allow; card version, time and done count at the last update
@@ -856,7 +860,7 @@ Twelve adversarial reviews and two builder checks. Rounds 1–3 are summarised.
 | 7 | Stale index and card; auto memory may mix projects | mtime index. Card holds slow facts only; live state via `status()`. Per-project `autoMemoryDirectory`. |
 | 7 | The orchestrator didn't carry on after `done` | Fixed-text wake-up on `done`. |
 | 7 | Simplify: Bash `crook` deny, `SendMessage` deny, the lock, the toast | All cut. |
-| 8 | A reader with a redirect (`cat note > /tmp/body.md`) was exempt, reopening the file route | Exempt only with no redirect or `tee`, every command in the whole list a reader, no writing flags; `awk` dropped; unparseable means not exempt. |
+| 8 | A reader with a redirect (`cat note > /tmp/body.md`) was exempt, reopening the file route | Exempt only with no redirect or `tee`, every command in the whole list a reader, no writing flags; `awk` dropped; unparsable means not exempt. |
 | 8 | Wake-ups could loop forever, one per task, and `take_task` could stop at a prompt | One wake-up per inbox, three backed-off re-offers, then the status line. Child tools allowed in `--settings`. `take_task()` takes the oldest. |
 | 8 | The `done` wake-up carried child text into unprompted turns, and could loop | The hook skips fixed wake-up text. `status()` labels questions. `stop` on a parked child asks. `notified.json`. Five machine turns in a row, then the status line. |
 | 8 | The per-project memory folder clashed with the data-dir deny and the full config | Dropped from v1. Spike 6 decides. |

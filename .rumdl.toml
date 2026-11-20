@@ -1,0 +1,35 @@
+# rumdl: markdown lint config. https://github.com/rvben/rumdl
+
+[global]
+disable = [
+    "MD033",  # inline HTML
+    "MD041",  # first-line H1
+]
+
+exclude = [
+    ".git",
+    "node_modules",
+    "target",
+    "CHANGELOG.md",
+    # Archived designs are immutable records (see specs/README.md).
+    "specs/archive",
+]
+
+respect-gitignore = true
+flavor = "gfm"
+
+[MD013]
+line_length = 120
+code_blocks = false
+tables = false
+headings = false
+
+[MD024]
+siblings_only = true
+
+[MD029]
+style = "ordered"
+
+[per-file-ignores]
+# Plans quote long commands and fixed strings verbatim.
+"specs/*-plan.md" = ["MD013"]

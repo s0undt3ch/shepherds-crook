@@ -114,6 +114,17 @@ impl Set {
         })
     }
 
+    /// The glob's literal directory lies inside an allow root, so it can only
+    /// reach allowed paths.
+    pub(crate) fn glob_inside_allow(&self, r: &Resolver, full: &str) -> bool {
+        let dir = literal_dir(full);
+        if dir.is_empty() {
+            return false;
+        }
+        let v = r.resolve(Path::new(&dir));
+        self.allow_roots.iter().any(|root| v.starts_with(root))
+    }
+
     /// `~`, `$HOME` and `${HOME}` for the home directory, as a prefix only.
     pub(crate) fn expand_home(&self, text: &str) -> Option<PathBuf> {
         for pre in ["${HOME}", "$HOME", "~"] {

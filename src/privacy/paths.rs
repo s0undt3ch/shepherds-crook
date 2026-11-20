@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use aho_corasick::AhoCorasick;
 use serde_json::Value;
 
 use super::Set;
@@ -107,7 +108,7 @@ struct Finder<'a> {
     /// Tokens already judged, so a repeated one costs nothing.
     tokens: HashSet<(String, bool)>,
     /// Names in a private `cwd`, read once.
-    entries: Option<Vec<String>>,
+    entries: Option<(Vec<String>, Option<AhoCorasick>)>,
 }
 
 impl Finder<'_> {
@@ -148,31 +149,40 @@ impl Finder<'_> {
     /// names with spaces however the shell quoted them.
     fn entry_names(&mut self, text: &str) {
         let cwd = self.cwd;
-        let names = self.entries.get_or_insert_with(|| {
-            std::fs::read_dir(cwd)
+        let (names, ac) = self.entries.get_or_insert_with(|| {
+            let names: Vec<String> = std::fs::read_dir(cwd)
                 .map(|d| {
                     d.filter_map(Result::ok)
                         .filter_map(|e| e.file_name().into_string().ok())
                         .collect()
                 })
-                .unwrap_or_default()
+                .unwrap_or_default();
+            let ac = AhoCorasick::new(&names).ok();
+            (names, ac)
         });
-        let mut found = Vec::new();
-        for name in names.iter() {
-            for (start, _) in text.match_indices(name.as_str()) {
-                let end = start + name.len();
-                let before = text[..start].chars().next_back();
-                let after = text[end..].chars().next();
-                let edge = |c: char, extra: char| {
-                    ends_path(c) || splits_token(c) || c == '/' || c == extra
-                };
-                if before.is_none_or(|c| edge(c, '{')) && after.is_none_or(|c| edge(c, '}')) {
-                    found.push(name.clone());
-                    break;
-                }
+        let Some(ac) = ac else { return };
+        // One pass over the text for all names; overlapping matches so a short
+        // name inside a longer one doesn't hide either.
+        let mut first: Vec<Option<usize>> = vec![None; names.len()];
+        let edge = |c: char, extra: char| ends_path(c) || splits_token(c) || c == '/' || c == extra;
+        for m in ac.find_overlapping_iter(text) {
+            let slot = &mut first[m.pattern().as_usize()];
+            if slot.is_some() {
+                continue;
+            }
+            let before = text[..m.start()].chars().next_back();
+            let after = text[m.end()..].chars().next();
+            if before.is_none_or(|c| edge(c, '{')) && after.is_none_or(|c| edge(c, '}')) {
+                *slot = Some(m.start());
             }
         }
-        for name in found {
+        let mut found: Vec<(usize, String)> = first
+            .iter()
+            .zip(names.iter())
+            .filter_map(|(at, n)| at.map(|a| (a, n.clone())))
+            .collect();
+        found.sort();
+        for (_, name) in found {
             if !self.s.allowed_with(self.r, &self.cwd.join(&name)) {
                 self.push(&name, HitKind::Bare);
             }
@@ -255,6 +265,7 @@ impl Finder<'_> {
             let hit = if shell && has_glob_char(&full) {
                 // The shell expands the glob, so the directory before it decides.
                 self.s.glob_reaches_private(self.r, &full)
+                    && !self.s.glob_inside_allow(self.r, &full)
             } else {
                 self.s.contains_with(self.r, &p) && !self.s.allowed_with(self.r, &p)
             };
@@ -708,6 +719,45 @@ mod tests {
                 "/abs/notes/3",
                 "/abs/notes/4"
             ]
+        );
+    }
+
+    #[test]
+    fn glob_into_an_allowed_directory_does_not_hit() {
+        let f = fx();
+        fs::create_dir_all(f.home.join("notes/public")).unwrap();
+        let s = f.set(&["~/notes"], &["~/notes/public"]);
+        assert!(bash(&s, "cat ~/notes/public/*", &f.base).is_empty());
+        assert!(bash(&s, "cat ~/notes/public/a*.md", &f.base).is_empty());
+        assert!(!bash(&s, "cat ~/notes/*", &f.base).is_empty());
+        assert!(!bash(&s, "cat ~/notes/pub*", &f.base).is_empty());
+    }
+
+    /// Run with `cargo nextest run --release --run-ignored only`.
+    #[test]
+    #[ignore]
+    fn timing_entry_names_in_a_large_command() {
+        let f = fx();
+        let notes = f.home.join("notes");
+        fs::create_dir_all(&notes).unwrap();
+        for i in 0..2000 {
+            fs::write(notes.join(format!("note number {i}.md")), "x").unwrap();
+        }
+        let s = f.set(&["~/notes"], &[]);
+        let body = "word another-word and 'quoted \\ text' ".repeat(140_000);
+        assert!(body.len() > 5_000_000);
+        let cmd = format!("echo '{body}'");
+        let start = std::time::Instant::now();
+        let h = bash(&s, &cmd, &notes);
+        let took = start.elapsed();
+        eprintln!("TIMING entry names, 5 MB command, 2000 entries: {took:?}");
+        assert!(took.as_millis() < 500, "{took:?}");
+        assert!(h.iter().all(|x| x.kind != HitKind::Bare), "{}", h.len());
+        let cmd = format!("{cmd} cp 'note number 1999.md' /tmp");
+        assert!(
+            bash(&s, &cmd, &notes)
+                .iter()
+                .any(|x| x.text == "note number 1999.md")
         );
     }
 

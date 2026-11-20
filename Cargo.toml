@@ -8,6 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/s0undt3ch/shepherds-crook"
 
 [dependencies]
+aho-corasick = "1.1.5"
 bitflags = "2.13.2"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"

@@ -98,6 +98,9 @@ impl Set {
     /// at the end. Too many branches counts as a hit.
     pub(crate) fn glob_reaches_private(&self, r: &Resolver, full: &str) -> bool {
         const MAX_BRANCHES: usize = 64;
+        if brace_climbs(full) {
+            return true;
+        }
         let up = |dir: &PathBuf, wild: usize| match wild {
             0 => (dir.join(".."), 0),
             n => (dir.clone(), n - 1),
@@ -121,10 +124,8 @@ impl Set {
                         return true;
                     }
                     next.push((dir.clone(), wild + 1));
-                    if segment_can_match(seg, "..") {
+                    if segment_can_be_dot(seg) {
                         next.push(up(dir, *wild));
-                    }
-                    if segment_can_match(seg, ".") {
                         next.push((dir.clone(), *wild));
                     }
                 }
@@ -259,25 +260,46 @@ fn literal_part(seg: &str) -> &str {
     }
 }
 
-/// Whether one glob segment can expand to `name` (`.` or `..`). Bash never
-/// matches either with a leading `*` or `?`; extglob groups (folded to braces)
-/// are widened, and anything globset cannot read counts as a match.
-fn segment_can_match(seg: &str, name: &str) -> bool {
+/// Whether one glob segment may expand to `.` or `..`, judged by its first
+/// character and erring towards yes. A literal other than `.` rules both out,
+/// and so does a plain `*` or `?`: bash never matches `.` or `..` with them,
+/// even with dotglob. An extglob group (folded to braces) or anything else may.
+fn segment_can_be_dot(seg: &str) -> bool {
     let mut chars = seg.chars();
-    if matches!(chars.next(), Some('*' | '?')) && chars.next() != Some('{') {
-        return false;
+    match chars.next() {
+        Some('*' | '?') => matches!(chars.next(), Some('(' | '{')),
+        Some('.' | '[' | '{' | '@' | '+' | '!' | '\\') | None => true,
+        Some(_) => false,
     }
-    if seg.contains("!{") {
-        return true;
+}
+
+/// A brace group holding both `/` and `..` (`{x/../..,y}`), which the
+/// segment walk cannot follow. An unclosed group runs to the end.
+fn brace_climbs(full: &str) -> bool {
+    let mut rest = full;
+    while let Some(open) = rest.find('{') {
+        let mut depth = 0usize;
+        let mut close = rest.len();
+        for (i, c) in rest[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = open + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let inner = &rest[open + 1..close];
+        if inner.contains('/') && inner.contains("..") {
+            return true;
+        }
+        rest = &rest[open + 1..];
     }
-    let pat = seg
-        .replace("@{", "{")
-        .replace("?{", "*{")
-        .replace("+{", "*{");
-    match GlobBuilder::new(&pat).literal_separator(true).build() {
-        Ok(g) => g.compile_matcher().is_match(name),
-        Err(_) => true,
-    }
+    false
 }
 
 fn escape_glob(s: &str) -> String {

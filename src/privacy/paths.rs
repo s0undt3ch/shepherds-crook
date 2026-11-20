@@ -824,10 +824,22 @@ mod tests {
             "cat ~/proj/a*/../../notes/a",
             "cat ../notes/a",
             "cat ../*/a",
+            "cat ~/proj/.[[:punct:]]/notes/a",
+            "cat ~/proj/.{.,x}{,y}/notes/a",
+            "cat ~/proj/.{.,x}{y,}/notes/a",
+            "cat ~/proj/.{x,}{.,y}/notes/a",
+            "cat ~/proj/?(.).?(.)/notes/a",
+            "cat ~/proj/{x/../..,y}/notes/a",
         ] {
             assert!(!bash(&s, cmd, &cwd).is_empty(), "{cmd}");
         }
-        for cmd in ["cat {a,b}.txt", "cat ~/proj/*.md", "ls */*"] {
+        for cmd in [
+            "cat {a,b}.txt",
+            "cat ~/proj/*.md",
+            "ls */*",
+            "cat ~/proj/src/*.rs",
+            "cat ~/proj/.git*/config",
+        ] {
             assert!(bash(&s, cmd, &cwd).is_empty(), "{cmd}");
         }
     }

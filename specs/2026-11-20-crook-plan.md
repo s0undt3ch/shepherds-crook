@@ -67,7 +67,7 @@ Executors read both documents. Section names in this plan refer to the spec.
     `vitest.config.ts` sit at the repo root, so `node_modules/` never lands
     in `plugin/`.
 - **The mod is unpacked to `${XDG_DATA_HOME:-~/.local/share}/crook-plugin/<version>-<hash>/`**,
-  outside the `crook/` data dir, so the data-dir Read deny can't touch it.
+  outside the `crook/` state dir, so the state-dir Read deny can't touch it.
 - **macOS and Linux only.** crook uses `exec`, `kill(pid, 0)`, the parent pid
   and herdr. Release archives: `x86_64`/`aarch64` Linux musl and
   `x86_64`/`aarch64` macOS. No Windows.
@@ -108,10 +108,17 @@ D starts, because it is the privacy boundary.
 - **Claude Code versions.** The floor is 2.1.318 and the tested version is
   2.1.329. `crook open` refuses older versions and warns on newer ones.
 - **Slugs** match `^[a-z0-9-]+$`.
-- **Paths** (built from `XDG_DATA_HOME` and `HOME` by hand, never with the
-  `dirs` crate, which gives `~/Library/Application Support` on macOS):
-  - data: `${XDG_DATA_HOME:-~/.local/share}/crook/<slug>/` holds `crook.db`,
-    `gen`, `index/` and the generated settings files
+- **Paths** (built from `XDG_STATE_HOME`, `XDG_DATA_HOME` and `HOME` by
+  hand, never with the `dirs` crate, which gives
+  `~/Library/Application Support` on macOS). An empty variable counts as
+  unset:
+  - state: `${XDG_STATE_HOME:-~/.local/state}/crook/<slug>/` holds
+    `crook.db`, `gen`, `index/` and `settings-<role>.json`. The state dir is
+    `<state>/crook`, and the Read/Edit/Write deny covers `<state>/crook/**`.
+    Tasks 1 to 10 were built with this under `XDG_DATA_HOME`; Task 10b moves
+    it.
+  - home: `${XDG_DATA_HOME:-~/.local/share}/crook/<slug>/` by default (Task
+    13)
   - mod: `${XDG_DATA_HOME:-~/.local/share}/crook-plugin/<version>-<hash>/`
   - config: `~/.config/crook/config.toml`
   - Claude Code's config: `${CLAUDE_CONFIG_DIR:-~/.claude}`, never a
@@ -145,10 +152,16 @@ D starts, because it is the privacy boundary.
   it to the empty string.
 - **Text goes over stdin.** Questions, tasks and briefs never go in argv.
 - **Worktrees** are `<repo>/.worktrees/<slug>/<child>`, on branch
-  `crook/<slug>/<child>` unless `branch` is given (draft 8.8). Each is
-  linked as `<home>/<slug>/repos/<repo>/<child>`; crook never resolves a
-  worktree through the link.
-- **The home** is `config.home` (default `~/crook`), never inside the data
+  `crook/<slug>/<child>` unless `branch` is given (draft 8.8). A child's
+  extra worktrees are `<repo>/.worktrees/<slug>/<child>.<name>`, on
+  `crook/<slug>/<child>.<name>` (draft 8.9). Every one is a row in the
+  `worktrees` table (Task 19), the spawn worktree included, and there are
+  no links under the home. `children.worktree` stays as the child's cwd.
+- **Worktree removal safety.** `stop` and `wipe` only ever run
+  `git worktree remove` on paths that are both in the `worktrees` table and
+  under `<repo>/.worktrees/<slug>/`.
+- **The home** is `config.home`, by default `${XDG_DATA_HOME:-~/.local/share}/crook`,
+  so a project's home is `<home>/<slug>/`. It is never inside the state
   dir. The diary is `<home>/<slug>/diary`, or `<diary_root>/<slug>`.
 - **Addressing.** Sessions go by session id, never by name. herdr panes are
   looked up each time, never stored.
@@ -246,7 +259,8 @@ D starts, because it is the privacy boundary.
 - Produces:
   - `pub type Env<'a> = &'a dyn Fn(&str) -> Option<String>;`
   - `paths::valid_slug(s: &str) -> Result<(), Error>`
-  - `paths::data_dir(env: Env) -> PathBuf`
+  - `paths::data_dir(env: Env) -> PathBuf` (Task 10b turns this into
+    `state_dir`)
   - `paths::project_dir(env: Env, slug: &str) -> Result<PathBuf, Error>`
   - `paths::plugin_dir(env: Env) -> PathBuf`: `<version>-<hash>` (Task 3
     defines the hash)
@@ -260,7 +274,8 @@ D starts, because it is the privacy boundary.
 - [ ] **Step 1: Write the failing tests.**
   - `valid_slug`: accepts `foo` and `a-1`. Rejects `Foo`, `a/b`, `..`, and
     the empty string.
-  - `data_dir_xdg`: `XDG_DATA_HOME=/x` gives `/x/crook`. With it unset and
+  - `data_dir_xdg` (Task 10b turns it into `state_dir_xdg`):
+    `XDG_DATA_HOME=/x` gives `/x/crook`. With it unset and
     `HOME=/h`, the result is `/h/.local/share/crook`, on macOS too.
   - `plugin_dir`: `<xdg>/crook-plugin/<pkg version>-<hash>`.
   - `claude_config_dir`: `CLAUDE_CONFIG_DIR=/c` gives `/c`; unset gives
@@ -429,6 +444,7 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
 | `need` | `question` | none |
 | `done` | `outcome`, `pr_url?` | none |
 | `spawn` | `child`, `repo`, `brief`, `branch?` | `session_id` |
+| `worktree` | `name`, `branch?` | `path` |
 | `task` | `child`, `text` | `seq` |
 | `stop` | `child` | none |
 | `project-set-what-why` | `what`, `why`, `version` | `version` |
@@ -464,11 +480,11 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
     reads its environment and what `$.process.run` resolves to.
   - Later tasks add `core/` modules; each takes a `Ports`, never `$`.
 - [ ] **Step 1: Write the failing tests.**
-  - `mod_ping`: in a temp `XDG_DATA_HOME`, after `Store::open(Migrate)`,
+  - `mod_ping`: in a temp `XDG_STATE_HOME`, after `Store::open(Migrate)`,
     `crook mod ping` gives
-    `{"ok":true,"slug":"p","role":"child","child":"c1","schema":1,"gen":"<data>/crook/p/gen"}`.
+    `{"ok":true,"slug":"p","role":"child","child":"c1","schema":1,"gen":"<state>/crook/p/gen"}`.
   - `mod_missing_db`: `ping` on a missing project exits 1 with `error`
-    containing `run crook open p`. Nothing appears under the data dir. This
+    containing `run crook open p`. Nothing appears under the state dir. This
     is Review Focus 5.
   - `mod_bad_json`: invalid stdin exits 1 with a JSON error, and doesn't
     panic.
@@ -514,8 +530,8 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
   - Add one call that passes `env: { CLAUDECODE: "" }` and logs whether
     `CROOK_PROJECT` still reaches `crook`. This says whether `$.process.run`'s
     `env` merges with the inherited environment or replaces it.
-  - Also record `$.fs.stat(<data dir>/<slug>/gen)` under a `--settings` file
-    that denies Read and Edit on the data dir. Task 8 isn't built yet, so
+  - Also record `$.fs.stat(<state dir>/<slug>/gen)` under a `--settings` file
+    that denies Read and Edit on the state dir (`<state>/crook`). Task 8 isn't built yet, so
     write that file by hand.
 - [ ] **Step 2: Run it in a herdr pane and under `claude --bg`.**
   Use Haiku, with `CROOK_PROJECT`, `CROOK_ROLE=child` and `CROOK_CHILD=c1`
@@ -542,7 +558,7 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
     `env: { CLAUDECODE: "" }`, as the spec allows.
   - If `env` replaces, pass these through explicitly as well:
     `CROOK_PROJECT`, `CROOK_ROLE`, `CROOK_CHILD`, `CROOK_BIN`, `HOME`,
-    `PATH` (for `git`, `claude` and `herdr`), `XDG_DATA_HOME`,
+    `PATH` (for `git`, `claude` and `herdr`), `XDG_STATE_HOME`, `XDG_DATA_HOME`,
     `CLAUDE_CONFIG_DIR`, `HERDR_ENV` and `HERDR_PANE_ID`.
   - If `$.process.run` fails from any call site, or `stat` is denied, stop.
     Report to the user before going on. Don't edit the spec.
@@ -590,7 +606,8 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
     both `notes` and `private`.
   - `card_contents`:
     - the card has what/why, the status, links and tickets
-    - it has one line per child as `id · repo · goal`
+    - it has one line per child as `id · repo · goal` (Task 19 adds its
+      worktrees)
     - it has the private locations, with the card's private rule verbatim
     - the child-only parts show only when `me` is `Some`
     - it is at most 40 lines
@@ -742,8 +759,8 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
     - a child whose agent row is `waiting` or `blocked`
 - [ ] **Step 2: Run them and check they fail.**
 - [ ] **Step 3: Implement.**
-  - `list` globs `<data>/crook/*/crook.db` and opens each `ReadOnly`, one at a
-    time.
+  - `list` globs `<state>/crook/*/crook.db` and opens each `ReadOnly`, one at
+    a time.
   - Its columns are: slug, what, working/parked/done counts, `card stale`,
     and the orchestrator's state (`live` or `-`). The orchestrator is live
     when `nix::sys::signal::kill(pid, None)` succeeds and the pid's session
@@ -766,21 +783,23 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
 
 - Produces:
   - `settings::build(o: &Opts) -> Result<Vec<u8>, Error>`. `Opts` holds
-    `role: Role`, `data_dir: PathBuf`, `crook_bin: PathBuf`.
+    `role: Role`, `state_dir: PathBuf` (`<state>/crook`; Task 10b renames it
+    from `data_dir`), `crook_bin: PathBuf`.
   - `settings::permission_mode(user_default: &str) -> &'static str`
   - `settings::user_default_mode(env: Env) -> String`, which reads
     `permissions.defaultMode` from `<claude_config_dir>/settings.json`
 - [ ] **Step 1: Write the failing tests.**
   - `settings_core`: the JSON has:
     - `disableAllHooks:false` and `crossSessionInbound:"refuse"`
-    - Read, Edit and Write deny rules on `<data_dir>/**`
+    - Read, Edit and Write deny rules on `<state_dir>/**`
     - `PreToolUse` (matcher `*`) and `SessionStart` hooks, and no
       `PostToolUse` hook
     - each hook in exec form:
       `{"type":"command","command":"<crook_bin>","args":["hook","<Event>"],"onFailure":"block"}`
   - `settings_child`:
-    - allow `mcp__crook__take_task`, `mcp__crook__need`, `mcp__crook__done`
-      and `mcp__crook__status`
+    - allow `mcp__crook__take_task`, `mcp__crook__need`, `mcp__crook__done`,
+      `mcp__crook__status` and `mcp__crook__worktree` (Task 8 is built
+      without `worktree`; Task 10b adds the allow)
     - deny `CronCreate`, `ScheduleWakeup` and `RemoteTrigger`
     - deny `/loop`. Check the permissions doc for a deny-rule syntax for a
       slash command. If none exists, the mod refuses `/loop` from
@@ -947,6 +966,91 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
 - [ ] **Step 4: Run every check and confirm it passes.**
 - [ ] **Step 5: Commit.** Message: `feat: private set and path detection`.
 
+### Task 10b: crook's state moves to XDG_STATE_HOME
+
+Tasks 1 to 10 are built with crook's state under `XDG_DATA_HOME`. Draft 8.9
+moves it to `XDG_STATE_HOME` and denies sessions the state tree instead of
+the data tree. This task changes the built code; the numbering of the other
+tasks is unchanged.
+
+**Files:**
+
+- Modify: `src/paths.rs`: `data_dir` becomes `state_dir`, and `project_dir`
+  uses it. `data_home` stays for `plugin_dir`.
+- Modify: `src/settings.rs`: the deny rules cover `<state>/crook/**`, and
+  the child allow list gains `mcp__crook__worktree` (a follow-up to Task 8,
+  which is built without it)
+- Modify: `src/cli/list.rs` and `src/cli/address.rs`, where `all_slugs`
+  holds the `crook list` glob
+- Modify: every other caller of `paths::data_dir`, and every test helper
+  that builds the old path from `XDG_DATA_HOME`: `src/project.rs`,
+  `src/store.rs`, `src/crew.rs`, `src/modverb.rs`, `src/hook/mod.rs`,
+  `src/cli/project.rs`, and `tests/*.rs` (`cli_project`, `hook_cli`,
+  `modverb_cli`, `modverb_verbs`, `store_concurrency`, `cli_unpark`,
+  `cli_list`). `src/launch/plugin_dir.rs` keeps `XDG_DATA_HOME`.
+- Modify: `plugin/hooks/adapter.ts`, only if Task 4 found that `env`
+  replaces the inherited environment: add `XDG_STATE_HOME` to the passed
+  list
+- Test: the unit tests in `src/paths.rs` and `src/settings.rs`,
+  `tests/cli_list.rs`, and the helpers above
+
+**Interfaces:**
+
+- Produces:
+  - `paths::state_dir(env: Env) -> PathBuf`:
+    `${XDG_STATE_HOME:-~/.local/state}/crook`. An empty variable counts as
+    unset. It replaces `paths::data_dir`.
+  - `paths::project_dir(env: Env, slug: &str) -> Result<PathBuf, Error>`:
+    `<state_dir>/<slug>`, for `crook.db`, `gen`, `index/` and
+    `settings-<role>.json`
+  - `settings::Opts.state_dir: PathBuf`, the whole `<state>/crook`, not one
+    project's directory. It replaces `data_dir`.
+- Unchanged: `paths::plugin_dir` (`<xdg data>/crook-plugin/<version>-<hash>`)
+  and `paths::config_file`.
+- [ ] **Step 1: Write the failing tests.**
+  - `state_dir_xdg` (replaces `data_dir_xdg`):
+    - `XDG_STATE_HOME=/x` gives `/x/crook`
+    - with it unset and `HOME=/h`, the result is `/h/.local/state/crook`, on
+      macOS too
+    - `XDG_STATE_HOME=` (empty) gives the same fallback
+    - `XDG_DATA_HOME=/d` alone doesn't change it
+  - `project_dir_validates_slug` (now a state-dir test): with
+    `XDG_STATE_HOME=/x`, `foo` gives `/x/crook/foo` and `../etc` is an
+    error. With only `XDG_DATA_HOME=/x` set and `HOME=/h`, `foo` gives
+    `/h/.local/state/crook/foo`.
+  - `plugin_dir_has_version_and_hash`: still `<XDG_DATA_HOME>/crook-plugin/…`,
+    and `XDG_STATE_HOME` doesn't move it.
+  - `settings_core`: the deny rules name `<state>/crook/**` for Read, Edit
+    and Write (fixture `/s/crook`). No rule names the data tree
+    (`<XDG_DATA_HOME>/crook` or `~/.local/share/crook`).
+  - `settings_child`: the allow list holds `mcp__crook__worktree` beside
+    `take_task`, `need`, `done` and `status`. The orchestrator's doesn't.
+  - `list_state_glob` (`tests/cli_list.rs`): with a temp `XDG_STATE_HOME`,
+    `crook list` finds `<state>/crook/<slug>/crook.db`. A database under
+    `<XDG_DATA_HOME>/crook/<slug>/` isn't listed.
+  - Every existing test that built the old path now sets `XDG_STATE_HOME`
+    and asserts the same behaviour. `grep -rn data_dir src tests` finds
+    nothing, and `grep -rn XDG_DATA_HOME src tests` finds only the
+    `plugin_dir` tests.
+- [ ] **Step 2: Run them and check they fail.**
+  Run `cargo nextest run`. Expected: compile errors and failures on the new
+  names.
+- [ ] **Step 3: Implement.**
+  - Rename `data_dir` to `state_dir`, reading `XDG_STATE_HOME` through the
+    same empty-is-unset helper, with the `.local/state` fallback.
+  - `project_dir` joins the slug onto `state_dir`.
+  - In `settings::build`, deny `Read`, `Edit` and `Write` on
+    `//<state_dir>/**`, and add `mcp__crook__worktree` to the child allow
+    list.
+  - `all_slugs` reads `state_dir`.
+  - No data migration: no database has shipped. A developer's old
+    `<xdg data>/crook/` can be deleted.
+- [ ] **Step 4: Run every check and confirm it passes.**
+  The Global Constraints checks, then `crook init x` and `crook list` in a
+  shell with `XDG_STATE_HOME` set to a temp directory: the database appears
+  there and nowhere under `XDG_DATA_HOME`.
+- [ ] **Step 5: Commit.** Message: `refactor: move crook state to XDG_STATE_HOME`.
+
 ### Task 11: The verbatim index and subtraction
 
 **Files:**
@@ -995,7 +1099,7 @@ CREATE TABLE asks(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, session_id TEXT, 
   - The index shape is spike 5's, in **one** file, so a single `rename`
     replaces it and a concurrent hook never reads a torn pair:
     - 8-word shingles, hashed with FNV-1a 64 (a dozen lines; no crate)
-    - `index/index.bin`: a header (magic `CRKI`, format version, entry
+    - `<state>/crook/<slug>/index/index.bin`: a header (magic `CRKI`, format version, entry
       count), then the manifest (file id, mtime, path), then sorted
       `(u64 hash, u32 file id)` records, little-endian. Read with
       `std::fs::read` and binary search.
@@ -1102,12 +1206,15 @@ the user before work continues.
     - one `--add-dir` per notes folder outside `<home>/<slug>`, and one per
       record repo
     - cwd is `<home>/<slug>`
-  - `home_config`: `config.toml` reads `home` (default `~/crook`) and
-    `diary_root`; a `home` inside the data dir is refused.
-  - `init_home`: `crook init demo` creates `<home>/demo/repos/` and the
+  - `home_config`: `config.toml` reads `home` and `diary_root`. The default
+    `home` is `${XDG_DATA_HOME:-~/.local/share}/crook` (an empty variable
+    counts as unset), so `<home>/demo` is `$XDG_DATA_HOME/crook/demo`. A
+    `home` inside the state dir (`<state>/crook`) is refused.
+  - `init_home`: `crook init demo` creates `<home>/demo/` and the
     diary (`<home>/demo/diary`, or `<diary_root>/demo`), and records the
-    diary as a notes folder. It refuses when the home or `repos/` falls
-    inside a private location. `init` is from Task 5; extend it here.
+    diary as a notes folder. It creates no `repos/`. It refuses when the
+    home falls inside a private location. `init` is from Task 5; extend it
+    here.
   - `private_diaries`: the private set always holds `<home>/*/diary`, or
     `<diary_root>/*` when set, so another project's diary is private.
   - `env_scrub`:
@@ -1134,7 +1241,7 @@ the user before work continues.
 - [ ] **Step 3: Implement.**
   - `open` migrates with `Store::open(Migrate)`, calls
     `plugin_dir::ensure`, writes the settings into
-    `<data>/<slug>/settings-<role>.json`, prints warnings, then `exec`s
+    `<state>/crook/<slug>/settings-<role>.json`, prints warnings, then `exec`s
     `claude` (`std::os::unix::process::CommandExt::exec`).
   - The warnings always include one line saying that MCP tools able to read
     other projects (a loam plot reader, say) aren't closed.
@@ -1148,7 +1255,7 @@ the user before work continues.
   `--model haiku`. Check that:
   - the card appears in the session
   - `crook: orchestrator` is on the status line
-  - `Read` on the data dir is denied
+  - `Read` on the state dir is denied
   - spike 10: whether the new, non-git `<home>/demo` raises a trust dialog,
     and where its auto memory is kept. Record the result in the design's
     Spikes table. A trust dialog that would block a `--bg` start stops
@@ -1217,8 +1324,8 @@ binary before any smoke test, because the mod is embedded.
     only` and `registers orchestrator tools only` below, and `serves at
     tool.run`. The rest are vitest specs on `core/`.
   - `registers child tools only`: with `CROOK_ROLE=child`, exactly
-    `take_task`, `need`, `done` and `status` are registered, each with
-    `isDeferred:false`.
+    `take_task`, `need`, `done`, `status` and `worktree` are registered, each
+    with `isDeferred:false`.
   - `registers orchestrator tools only`: `status`, `spawn`, `task`, `stop`,
     `project_set_what_why`, `project_set_status` and the four
     `project_add_*`.
@@ -1242,7 +1349,8 @@ binary before any smoke test, because the mod is embedded.
 - [ ] **Step 2: Run them and check they fail.**
 - [ ] **Step 3: Implement.**
   - The input schemas are the spec's argument lists. `done.outcome` is an
-    enum.
+    enum. `worktree` takes `name` and `branch?` and never a path; the mod
+    runs the `worktree` verb (Task 19).
   - Register at `session.start`, after `ping` succeeds. If `ping` fails,
     every tool returns `crook: binary not found`.
 - [ ] **Step 4: Run the three checks and confirm they pass.**
@@ -1362,8 +1470,16 @@ binary before any smoke test, because the mod is embedded.
 **Files:**
 
 - Create: `src/launch/child.rs`, `src/cli/stop.rs`
-- Modify: `src/modverb.rs`, adding `spawn`, `task` and `stop`
-- Create: `plugin/prompts/child.md`
+- Modify: `src/modverb.rs`, adding `spawn`, `task`, `stop` and `worktree`
+- Modify: `src/store/schema.sql`, adding the `worktrees` table. This amends
+  schema v1 in place: no database has shipped (spec, "Left to the
+  builder"), so there is no version bump. Databases made by earlier smoke
+  tests lack it; delete them.
+- Modify: `src/crew.rs` (`worktrees` rows) and `src/card.rs` (each child's
+  line lists its worktrees)
+- Create: `plugin/prompts/child.md`, which says to make extra worktrees only
+  with `worktree()` and never `git worktree add`. That is protocol only, not
+  enforced.
 - Test: unit tests in `src/launch/child.rs`
 
 **Interfaces:**
@@ -1373,8 +1489,18 @@ binary before any smoke test, because the mod is embedded.
 - Produces:
   - `launch::spawn_child(store: &mut Store, req: &SpawnReq, run: &dyn Launcher) -> Result<String, Error>`,
     returning the session id
-  - `pub trait Launcher { fn worktree_add(&self, …) -> Result<(), Error>; fn start(&self, …) -> Result<(), Error>; }`,
-    injected so tests don't run `git` or `claude`
+  - `pub trait Launcher { fn worktree_add(&self, …) -> Result<(), Error>; fn worktree_remove(&self, …) -> Result<(), Error>; fn worktree_list(&self, …) -> Result<Vec<PathBuf>, Error>; fn start(&self, …) -> Result<(), Error>; }`,
+    injected so tests don't run `git` or `claude`. `worktree_list` parses
+    `git worktree list --porcelain`; Task 19b uses it.
+  - `launch::add_worktree(store: &mut Store, req: &WorktreeReq, run: &dyn Launcher) -> Result<PathBuf, Error>`:
+    the `worktree` verb. The caller is the child, taken from the
+    environment.
+  - `crew::add_worktree`, `crew::worktrees(c, child: Option<&str>)` and
+    `crew::remove_worktree_row` over this table, added to schema v1:
+    `worktrees(child TEXT NOT NULL, repo TEXT NOT NULL, path TEXT PRIMARY KEY, branch TEXT NOT NULL, created_at INTEGER NOT NULL)`
+  - `children.worktree` stays as the child's cwd. `spawn` also writes the
+    spawn worktree as a `worktrees` row, so the table is the one list `stop`
+    and `wipe` read.
 - [ ] **Step 1: Write the failing tests.**
   - `spawn_checks`: a repo not in the record, a brief over 4000 characters,
     more than 8 live children, or a slug-unsafe child id are each refused.
@@ -1382,11 +1508,24 @@ binary before any smoke test, because the mod is embedded.
     runs. Use a launcher that fails, and check the rows remain for `open` to
     reconcile.
   - `spawn_worktree`: `git worktree add <repo>/.worktrees/demo/c1 -b
-    crook/demo/c1` runs, or `-b <branch>` when a branch is given, then
-    `<home>/demo/repos/<repo>/c1` links to it. `children.worktree` holds
-    the real path, and the child's cwd is the real path.
+    crook/demo/c1` runs, or `-b <branch>` when a branch is given. The path
+    is in `children.worktree` and in a `worktrees` row, and it is the
+    child's cwd. No link is made under the home.
   - `spawn_two_projects`: projects `a` and `b` each spawning `c1` in one
     repo get separate worktrees and branches.
+  - `worktree_creates_and_records`: `worktree` with `name` `fix` from child
+    `c1` of `demo` runs `git worktree add <repo>/.worktrees/demo/c1.fix -b
+    crook/demo/c1.fix` (or `-b <branch>`) in the child's repo, returns that
+    path, and records it. The row is committed before the launcher runs: a
+    launcher that fails leaves the row for `open` to reconcile. A second
+    call with the same `name` is refused. A call from an orchestrator
+    session is refused.
+  - `worktree_rejects_bad_name`: `Fix`, `a/b`, `../x`, `a.b`, `a b` and the
+    empty string are refused. An input that carries a `path` field has it
+    ignored: the path is always built by crook. Nothing is run or written.
+  - `card_lists_worktrees`: a child with its spawn worktree and two from
+    `worktree` has one card line listing all three paths, and the card
+    stays within 40 lines.
   - `spawn_argv_child`:
     - the orchestrator's flags, plus `--permission-mode` from
       `settings::permission_mode`
@@ -1396,9 +1535,15 @@ binary before any smoke test, because the mod is embedded.
   - `spawn_ensures_plugin`: `spawn` calls `plugin_dir::ensure`, so a binary
     upgraded mid-project still finds its own mod version.
   - `cli_stop_refuses_dirty`: `crook stop c1` refuses when
-    `git -C <worktree> status --porcelain` isn't empty. Otherwise it archives
-    the child, stops the session, runs `git worktree remove` and removes
-    the child's `repos/` link.
+    `git -C <path> status --porcelain` isn't empty for any of the child's
+    recorded worktrees, naming each dirty one, and changes nothing.
+    Otherwise it archives the child, stops the session and runs
+    `git worktree remove` on each recorded worktree.
+  - `stop_removes_all_child_worktrees`: a child with its spawn worktree and
+    two from `worktree` has all three removed by their recorded paths and
+    their `worktrees` rows deleted. Another child's worktrees stay. A
+    recorded path that isn't under `<repo>/.worktrees/demo/` is refused and
+    never passed to `worktree_remove`: the safety invariant.
   - `stop_kinds`: the `kind` of the child's row in `claude agents --json`
     (`Agent.kind`) tells a `--bg` child from an interactive (herdr) one. A
     `--bg` child is stopped with `claude stop <id>`. A herdr child is stopped
@@ -1427,16 +1572,24 @@ binary before any smoke test, because the mod is embedded.
 
 **Interfaces:**
 
-- Consumes: `crew` rows, `agents::list`, `paths`, `config`
+- Consumes: `crew` rows (`worktrees` included), `agents::list`, `paths`,
+  `config`, `Launcher` (`worktree_remove`, `worktree_list`)
 - Produces: `wipe::run(env: Env, slug: &str, with_diary: bool) -> Result<Vec<String>, Error>`,
   returning the leftover branch lines it prints
 - [ ] **Step 1: Write the failing tests.**
   - `wipe_refuses_live`: a live orchestrator or child session refuses, naming it.
-  - `wipe_refuses_dirty`: any worktree with `git status --porcelain` output
-    refuses, naming every dirty one, and removes nothing.
-  - `wipe_removes`: removes each worktree by its real path, runs
-    `git worktree prune` per record repo, removes `<home>/<slug>` except
-    `diary/`, then the data dir `<slug>/`.
+  - `wipe_refuses_dirty`: any recorded worktree with `git status --porcelain`
+    output refuses, naming every dirty one, and removes nothing.
+  - `wipe_removes`: removes every worktree recorded for the project by its
+    recorded path, runs `git worktree prune` per record repo, removes
+    `<home>/<slug>` except `diary/`, then the state dir `<state>/crook/<slug>/`.
+  - `wipe_reports_unrecorded`: `worktree_list` shows a worktree under
+    `<repo>/.worktrees/demo/` that has no `worktrees` row. `wipe` reports it
+    and never removes it. A worktree outside `.worktrees/demo/` isn't
+    reported.
+  - `wipe_only_removes_recorded`: only paths that are both in `worktrees` and
+    under `<repo>/.worktrees/demo/` reach `worktree_remove`. A recorded path
+    outside that prefix makes `wipe` refuse, naming it, and remove nothing.
   - `wipe_keeps_diary`: the diary stays without `--with-diary`;
     `--with-diary` removes `<home>/<slug>/diary` but is refused for a
     diary under `diary_root`.
@@ -1444,7 +1597,7 @@ binary before any smoke test, because the mod is embedded.
     repo, and deletes none.
   - `wipe_gate`: a user verb, refused under `CLAUDECODE=1` or `CROOK_ROLE`.
 - [ ] **Step 2: Run them and check they fail.**
-- [ ] **Step 3: Implement.** Removal order is worktrees, home, data dir, so
+- [ ] **Step 3: Implement.** Removal order is worktrees, home, state dir, so
   a crash part-way leaves the record able to say what's left.
 - [ ] **Step 4: Run every check, then smoke-test** on `demo` from Task 19.
 - [ ] **Step 5: Commit.** Message: `feat: crook wipe`.
@@ -1485,9 +1638,9 @@ binary before any smoke test, because the mod is embedded.
   - `spawn_pane_argv`:
     `herdr pane split --current --direction right --cwd <worktree> --no-focus`,
     then `herdr pane run <pane-id> "env -u CLAUDECODE -u CROOK_PROJECT -u CROOK_ROLE -u CROOK_CHILD '<CROOK_BIN>' launch '<slug>/<child>'"`.
-    When the orchestrator's `XDG_DATA_HOME` is set, the command also sets
-    it (`env … XDG_DATA_HOME='<path>' …`), so `launch` finds the same data
-    dir; it is a path, not a secret. Nothing else is typed into the pane: no
+    When the orchestrator's `XDG_STATE_HOME` or `XDG_DATA_HOME` is set, the
+    command also sets it (`env … XDG_STATE_HOME='<path>' …`), so `launch`
+    finds the same state dir and home; each is a path, not a secret. Nothing else is typed into the pane: no
     other environment values (tokens would land on screen and in shell
     history) and no system prompt.
   - `launch_env`: `crook launch p/c1` execs `claude` with `CROOK_PROJECT=p`,
@@ -1807,6 +1960,8 @@ exec = ["crook", "completion", "print", "{shell}"]
   - work on notes with `Read`, `Grep`, `Glob`, `Write` and `Edit`, not Bash:
     a Bash command that names a note asks
   - `done` outcomes
+  - make extra worktrees only with `worktree()`, never `git worktree add`
+    (protocol only; crook doesn't enforce it)
 - [ ] **Step 2: Write the README.**
   - Credit the four idea sources: herdr-quartermaster, bermuda and loam with
     their public links; claude-snooze by name only, as "a private Claude

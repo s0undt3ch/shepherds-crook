@@ -1,6 +1,6 @@
 # crook: design
 
-Status: draft 8.8, 2026-11-20. After seventeen adversarial reviews, two builder
+Status: draft 8.9, 2026-11-20. After seventeen adversarial reviews, two builder
 checks and live tests. Draft 7 moved wake-ups, parking and the session verbs
 into a crook mod. Draft 8 dropped the egress firewall at the user's call,
 kept one privacy check, and gave every child a project card. Drafts 8.1 to
@@ -19,7 +19,10 @@ private working directory, and the CLI addresses children by
 `<slug>/<child>` when needed. Draft 8.8 (2026-11-20) gives each project a
 home directory with a private diary and links to its worktrees, adds
 `crook wipe`, and nests worktrees by project so two projects can't collide
-in one repo.
+in one repo. Draft 8.9 (2026-11-20) drops the home's `repos/` links, records
+every worktree in a `worktrees` table, lets a child make more with a
+`worktree()` tool, and splits crook's state (`$XDG_STATE_HOME/crook`) from the
+project home (`$XDG_DATA_HOME/crook`).
 
 ## Intent
 
@@ -83,9 +86,8 @@ not because it's secret, so it's handled at tier A only.
 - Each project holds its own record, as [loam](https://github.com/GregorMcC/loam) does: what and why, where it
   stands, repos, links, tickets, private locations, worktrees. It's
   independent of loam.
-- Each project has one home directory: the orchestrator runs there, the
-  private diary lives there, and links show every worktree. A finished
-  project is removed with one command.
+- Each project has one home directory: the orchestrator runs there and the
+  private diary lives there. A finished project is removed with one command.
 
 ## Non-goals
 
@@ -136,10 +138,12 @@ These would make crook a failure even if it works:
 - **Worktrees** live under `<repo>/.worktrees/<name>`. crook uses
   `<repo>/.worktrees/<slug>/<child>`, nested by project because child ids
   are unique only within a project. A flat `<slug>-<child>` would be
-  ambiguous (`a-b` + `c`, `a` + `b-c`). The project home links to them
-  and never holds them (user's call, 2026-11-20).
-- **The home is not crook's data dir.** Sessions are denied the whole data
-  dir, so a worktree or diary under it would be unusable.
+  ambiguous (`a-b` + `c`, `a` + `b-c`). The project home never holds them
+  (user's call, 2026-11-20). A child's extra worktrees, made with
+  `worktree()`, are `<repo>/.worktrees/<slug>/<child>.<name>`.
+- **The home is not crook's state dir.** Sessions are denied the whole state
+  tree (`<state>/crook/**`), so a worktree or diary under it would be
+  unusable.
 - **herdr is optional.** crook counts herdr as present when it runs inside a
   herdr pane (`HERDR_ENV=1`); herdr installed but unused counts as absent.
   With herdr, each child gets a pane and crook raises
@@ -231,7 +235,7 @@ One repo holds:
   with `CROOK_*` set is easy to spot.
 - **`plugin/`**, embedded in the binary and unpacked at launch into
   `${XDG_DATA_HOME:-~/.local/share}/crook-plugin/<version>-<hash>/`, outside
-  the data dir, then loaded with `--plugin-dir` in every crook session:
+  the state dir, then loaded with `--plugin-dir` in every crook session:
   - **the crook mod** (`hooks/register.ts`): the session tools, the inbox
     watcher, the park filter and the orchestrator's status line
   - a small skill with the protocol text
@@ -254,8 +258,8 @@ lines. It holds only facts that change slowly:
 - where it stands
 - public links and tickets
 - the child's own brief (children only)
-- every child in the project, one line each: id, repo, goal. An infra child
-  knows what the feature child is doing.
+- every child in the project, one line each: id, repo, goal and its
+  worktrees. An infra child knows what the feature child is doing.
 - the private locations, with the rule: "use freely for work; anything from
   these leaving through a tool call raises a prompt; never reference them in
   public without asking"
@@ -313,11 +317,10 @@ on by this change" (strings in the loam v0.4.8 binary).
   the project's notes folders, and the diary is one of them.
 - Every project's diary is private in every session: crook adds
   `<home>/*/diary` (or `<diary_root>/*` when set) to the private set, so a
-  sibling project's diary one `../` away still asks. The home and
-  `repos/` are never private. If they were, writes into worktrees would be
-  exempt, the bare-name rule would fire on every command, and the repo
-  search would be skipped. `crook init` refuses a home or `repos/` that
-  falls inside a private location.
+  sibling project's diary one `../` away still asks. The home is never
+  private. If it were, writes into worktrees would be exempt, the bare-name
+  rule would fire on every command, and the repo search would be skipped.
+  `crook init` refuses a home that falls inside a private location.
 - `~/.config/crook/config.toml` has a user-wide `private` list for every
   project, for example the vault, so it's declared once.
 - The same files hold `allow` entries for known false positives.
@@ -398,27 +401,37 @@ tools.
 
 | Role | Tools |
 |---|---|
-| child | `take_task()`, `need(question)`, `done(outcome, pr_url?)`, `status()` |
+| child | `take_task()`, `need(question)`, `done(outcome, pr_url?)`, `status()`, `worktree(name, branch?)` |
 | orchestrator | `status()`, `spawn(child, repo, brief_text, branch?)`, `task(child, text)`, `stop(child)`, `project_set_what_why(what, why, version)`, `project_set_status(text, version)`, `project_add_link`, `project_add_ticket`, `project_add_repo`, `project_add_notes` |
 
 - `take_task` returns the oldest untaken task's text and marks it taken.
   This is the acknowledgement, and it means the model never reads crook's
-  data dir. A taken task without a `done` after it is the child's current
+  state dir. A taken task without a `done` after it is the child's current
   task: `status()` returns it, and the card carries it after `/clear` or
   compaction.
 - `status()` labels open questions "waiting on the user: don't answer or
   work around it".
 - `spawn` creates `<repo>/.worktrees/<slug>/<child>` on branch
-  `crook/<slug>/<child>` (or `branch`), links it as
-  `<home>/<slug>/repos/<repo>/<child>`, then starts the child in the real
-  worktree path, never through the link, so git, auto memory and the
-  privacy check see the same path as today.
+  `crook/<slug>/<child>` (or `branch`), records it in `worktrees`, then
+  starts the child in that path, so git, auto memory and the privacy check
+  see the same path as today. `children.worktree` holds the same path: the
+  child's cwd.
 - `task` adds a row to the child's inbox. Text goes to `crook` on stdin,
   never in argv.
 - `stop` stops a child and marks it archived.
+- `worktree(name, branch?)` makes an extra worktree for the calling child, in
+  the child's own repo.
+  - `name` matches `^[a-z0-9-]+$`.
+  - crook runs `git worktree add <repo>/.worktrees/<slug>/<child>.<name> -b
+    crook/<slug>/<child>.<name>`, or `-b <branch>` when `branch` is given.
+  - It writes the `worktrees` row first, as `spawn` does: rows, then the
+    action, and `crook open` reconciles the rest.
+  - It returns the path.
+  - crook builds the path itself and never takes a path from the model. A
+    `name` the child already used is refused.
 - `done` URLs must match a PR URL pattern.
-- The generated `--settings` allow `take_task`, `need`, `done` and
-  `status`, so a child never stops at a permission prompt just to take its
+- The generated `--settings` allow `take_task`, `need`, `done`, `status` and
+  `worktree`, so a child never stops at a permission prompt just to take its
   task or ask its question. Whether the orchestrator's tools prompt is the
   user's config, like any MCP tool, with two exceptions. The settings hook
   asks on `stop` when the target child is parked, and on `spawn` when a
@@ -440,16 +453,16 @@ Everything here is for the user, outside any session.
 
 | Command | Does |
 |---|---|
-| `crook init <slug>` | creates the project record, `<home>/<slug>/` and its `repos/`, and the diary (`<home>/<slug>/diary/`, or `<diary_root>/<slug>/` when set), which it adds as a notes folder |
+| `crook init <slug>` | creates the project record, `<home>/<slug>/`, and the diary (`<home>/<slug>/diary/`, or `<diary_root>/<slug>/` when set), which it adds as a notes folder |
 | `crook wipe <slug>` | removes a finished project, see The project home |
-| `crook list` | one line per project, found by globbing `crook/*/crook.db`: slug, what, children working, parked and done, card stale, orchestrator live or not. It opens each database read-only, one at a time, reads older schema versions without migrating them, and prints a broken database as an error line without stopping. |
+| `crook list` | one line per project, found by globbing `<state>/crook/*/crook.db`: slug, what, children working, parked and done, card stale, orchestrator live or not. It opens each database read-only, one at a time, reads older schema versions without migrating them, and prints a broken database as an error line without stopping. |
 | `crook project <slug> …` | edits the record: `add-repo`, `add-notes`, `add-private`, `add-allow`, `add-link`, `add-ticket`, `remove`, `set-what`, `set-why`, `set-status` |
 | `crook open <slug>` | starts or attaches to the orchestrator |
 | `crook status [<slug>]` | one line per child, merging crook state, `claude agents --json` and herdr when present |
 | `crook next` | jumps to the oldest child waiting on the user, across every project, either parked on a question or at a permission prompt: focuses its herdr pane, or runs `claude attach` |
 | `crook unpark <child>` | lifts a park by hand, for when the mod's filter is skipped or broken |
 | `crook resume <child>` | resumes the child's current session id with crook's flags |
-| `crook stop <child>` | as the tool, plus worktree and link removal, refused if the worktree has uncommitted changes |
+| `crook stop <child>` | as the tool, plus removal of all of that child's recorded worktrees, refused if any has uncommitted changes, naming them |
 | `crook launch <slug>/<child>` | hidden; what a herdr pane runs to start a spawned child: builds its environment and argv from the rows and execs `claude`. Refuses a child whose session is already running |
 | `crook completion print <shell>` | prints shell completions; it touches no state, so it skips the user-verb gate, as `--version` and `--help` do |
 
@@ -506,8 +519,8 @@ The generated `--settings` contain:
   remove messaging to subagents (`cross-session-messaging.md:291, 304`).
 - **In children, a deny on `CronCreate`, `ScheduleWakeup`, `RemoteTrigger` and
   `/loop`.** Tasks come from the inbox only.
-- **Read deny rules** on the whole crook data dir, this project's included,
-  and an **Edit/Write deny** on it. Sessions reach crook state only through
+- **Read deny rules** on the whole crook state tree (`<state>/crook/**`),
+  this project's included, and an **Edit/Write deny** on it. Sessions reach crook state only through
   crook's tools, so `status()` hiding question text can't be sidestepped by
   reading `crook.db`.
 - **The crook hook**, with `onFailure: "block"`.
@@ -515,14 +528,18 @@ The generated `--settings` contain:
 ### The project home
 
 The user's view of a project, in one directory. `home` is set in
-`config.toml` (default `~/crook`) and must not be inside crook's data dir.
+`config.toml`. The default is `$XDG_DATA_HOME/crook` (`~/.local/share/crook`
+when the variable is unset or empty), so a project's home is
+`$XDG_DATA_HOME/crook/<slug>/`. `home` stays as an override, and crook
+refuses one inside crook's state dir.
 
 ```text
 <home>/<slug>/                  the orchestrator's cwd
   diary/                        private notes: brain-dumps, investigations,
                                 spikes, discussions. Absent when diary_root is set.
-  repos/<repo>/<child>          symlink to <repo>/.worktrees/<slug>/<child>
 ```
+
+The home is the diary plus room for later additions.
 
 - **The diary** is the project's default notes folder, so it is private
   and children get it with `--add-dir`. With `diary_root` set in
@@ -530,11 +547,14 @@ The user's view of a project, in one directory. `home` is set in
   `<diary_root>/<slug>/` instead, in the user's own repo and structure.
   If the vault is already in the user-wide `private` list, nothing else
   changes. The private-repo push gap (Known gaps) applies to it.
-- **Links, not worktrees.** The worktrees stay under each repo's
-  `.worktrees/`. The links are only for the user and the orchestrator to
-  see the project in one place. crook never resolves a worktree through
-  its link: `children.worktree` holds the real path. A link whose target
-  is gone is flagged by `crook status` and is otherwise harmless.
+- **Worktrees are rows, not links.** They stay under each repo's
+  `.worktrees/<slug>/`, and the home holds neither them nor links to them.
+  Every worktree crook makes, the spawn one included, is a row in
+  `worktrees(child, repo, path, branch, created_at)`. That table is the one
+  list `stop` and `wipe` read. `children.worktree` stays as the child's cwd.
+- **Safety invariant.** `stop` and `wipe` only ever run `git worktree
+  remove` on paths that are both in the `worktrees` table and under
+  `<repo>/.worktrees/<slug>/`.
 - **Clones are not used.** A worktree keeps the `crook/<slug>/<child>`
   branch in the user's checkout, so removing it loses no commits. A clone
   loses unpushed commits on removal, costs disk and network, and starts
@@ -544,10 +564,13 @@ The user's view of a project, in one directory. `home` is set in
 
 1. Refuses while the orchestrator or any child session is live; run
    `crook stop` on each first.
-2. Refuses if any child's worktree has uncommitted changes, naming them.
-3. Runs `git worktree remove` on each child's worktree (the real path from
-   `children`), then `git worktree prune` in each record repo.
-4. Removes `<home>/<slug>/` except `diary/`, then the project's data dir
+2. Refuses if any recorded worktree has uncommitted changes, naming them.
+3. Runs `git worktree remove` on every worktree recorded for the project, by
+   its recorded path, then `git worktree prune` in each record repo. It
+   also runs `git worktree list --porcelain` in each record repo and
+   reports any worktree under `<repo>/.worktrees/<slug>/` that isn't
+   recorded. It never removes one.
+4. Removes `<home>/<slug>/` except `diary/`, then the project's state dir
    (`crook.db`, `gen`, `index/`, settings files).
 5. Keeps the diary unless `--with-diary` is given. `--with-diary` is
    refused for a diary under `diary_root`, which is the user's own repo:
@@ -558,14 +581,16 @@ The user's view of a project, in one directory. `home` is set in
 ### State
 
 One SQLite database per project, in WAL mode, under
-`${XDG_DATA_HOME:-~/.local/share}/crook/`:
+`${XDG_STATE_HOME:-~/.local/state}/crook/`. An empty variable counts as
+unset:
 
 ```text
 <slug>/
   crook.db         schema version in PRAGMA user_version
     project        the record: what/why, where it stands, repos, links, tickets, notes folders, private, allow; card version, time and done count at the last update
     orchestrator   current session id, pid; `crook open` refuses while it names a live process
-    children       per child: repo, worktree, branch, brief, current session id, archived
+    children       per child: repo, worktree (the child's cwd), branch, brief, current session id, archived
+    worktrees      every worktree crook made, the spawn one included: child, repo, path, branch, created_at
     inbox          tasks: child, seq, text, taken
     status         per child: state (working|parked|done), seq, question, outcome, pr_url
     forks          session ids of each child's forks
@@ -574,6 +599,7 @@ One SQLite database per project, in WAL mode, under
     asks           every privacy hit: time, session, tool, hit
   gen              rewritten after each coordination commit; the watchers stat it
   index/           the verbatim index of private files, by file and mtime
+  settings-<role>.json   the generated `--settings`, written at every launch
 ```
 
 Slugs match `[a-z0-9-]+`, because the slug is a path component.
@@ -600,9 +626,10 @@ User-wide settings live in `~/.config/crook/config.toml`: the `private` and
 | `init`, `project …` | user | `project` |
 | `open` | user | `orchestrator`, `children` (reconcile) |
 | `unpark` | user | that child's `status` |
-| `stop` (CLI or tool) | user, orchestrator | sets `archived` on that child's `children` row; rows stay, so counts don't move |
-| `spawn` | orchestrator | new `children`, `status` rows |
+| `stop` (CLI or tool) | user, orchestrator | sets `archived` on that child's `children` row; rows stay, so counts don't move. The CLI also deletes that child's `worktrees` rows as it removes each worktree |
+| `spawn` | orchestrator | new `children`, `status` and `worktrees` rows |
 | `task` | orchestrator | `inbox` insert |
+| `worktree` | that child | its `worktrees` rows |
 | `project_set_*`, `project_add_*` | orchestrator, user turn only | `project` |
 | wake-up bookkeeping | orchestrator's mod | `seen`, `notified` |
 | `take_task` | that child | its `inbox` rows (taken) and its current task |
@@ -624,7 +651,7 @@ User-wide settings live in `~/.config/crook/config.toml`: the `private` and
   run during a write, so `crook status` never blocks a child, and the
   settings hook's park check never waits on a writer.
 - **A crash mid-transaction rolls back**, including when `$.process.run`
-  kills `crook` on timeout. `spawn` and `stop` also touch a worktree and a
+  kills `crook` on timeout. `spawn`, `worktree` and `stop` also touch a worktree and a
   session, which aren't atomic with the rows: rows first, then the launch
   or teardown, and `crook open` reconciles the rest.
 - **An `asks` write that times out** doesn't change the hook's decision. The
@@ -830,10 +857,10 @@ Borrowed ideas, credited:
 | Messages | none sent by crook, inbound refused |
 | crook tools | scoped by the session's `CROOK_*` environment |
 | The crook CLI | user verbs refuse with `CLAUDECODE=1` or any `CROOK_ROLE`; mod verbs refuse with `CLAUDECODE=1` and take the slug only from `CROOK_PROJECT` |
-| The Read tool on crook's data dir | Read deny rules, generated at every launch |
+| The Read tool on crook's state dir | Read deny rules, generated at every launch |
 | Other projects' notes folders | only this project's folders are passed with `--add-dir` |
 | Other projects' diaries, one `../` from the orchestrator's cwd | every diary is in the private set (`<home>/*/diary` or `<diary_root>/*`), so a reference asks; reading them is tier B, as `cat` |
-| crook's data | Edit/Write denied, and only crook writes it |
+| crook's state | Edit/Write denied, and only crook writes it |
 | Other projects' state | one `crook.db` per project; crook opens only the one named by `CROOK_PROJECT` |
 | Auto memory | Per repo, as in the user's other sessions: crook sets no `autoMemoryDirectory`. It has been "shared across git worktrees of the same repository" since 2.1.63 (the changelog), so a child in a worktree shares its repo's memory, with the user's own sessions there too. That keeps the full config. A memory shared across a project's repos (draft 8.5's `memory = "project"`) is deferred: see Later. |
 | `cat` through Bash | not closed (tier B). The protocol says don't. |
@@ -854,8 +881,8 @@ Borrowed ideas, credited:
 
 - the CLI: `init`, `list`, `project`, `open`, `status`, `next`, `unpark`,
   `resume`, `stop`, `wipe`
-- the project home: the diary (or `diary_root`), `repos/` links, the
-  orchestrator's cwd
+- the project home: the diary (or `diary_root`) and the orchestrator's cwd
+- the `worktrees` table and the child's `worktree()` tool
 - the mod: session tools, inbox watcher, park filter, orchestrator wake-up
   on `done` and status line, the stale flag and the card nudge on user turns
 - auto memory per repo (crook sets no `autoMemoryDirectory`)
@@ -962,6 +989,7 @@ Twelve adversarial reviews and two builder checks. Rounds 1–3 are summarised.
 | User, 2026-11-20 | Drop the Bash exemption | No shell lexer: Bash and Monitor are checked like every tool; notes are worked through `Read`, `Grep`, `Glob`, `Write` and `Edit`. Supersedes reviews 8–10's exemption rules and the `cd` row below. |
 | User, 2026-11-20 | Drop `cd` tracking | Any `cd`, `pushd` or `popd` makes a command not exempt; `cd` leaves the readers list. Reverses part of review 9's answer. |
 | User, 2026-11-20 | A home per project: a private diary, the repos in use, and one wipe when done; clone or worktree? | Draft 8.8: `<home>/<slug>/` with `diary/` and `repos/` links; worktrees stay under `<repo>/.worktrees/<slug>/<child>`, keeping the user's worktree rule; no clones; `crook wipe`. Quiz and clones moved to Later. Also fixes a collision: `<repo>/.worktrees/<child>` and `crook/<child>` clashed across projects. |
+| User, 2026-11-20 | Links duplicate metadata; children make more worktrees; XDG | Draft 8.9: no links; a worktrees table and worktree() tool; state to XDG_STATE_HOME, home to XDG_DATA_HOME/crook. |
 | 17 | A path written with `$HOME` wasn't detected; the spike 9 `cwd` probe used a directory Claude Code doesn't keep; the bare-name rule also fired on non-shell input | `$HOME`/`${HOME}` root forms, `$PWD`/`$(pwd)` in a private `cwd`; probe a kept directory; bare names for Bash and Monitor only. Other variables listed as a gap. |
 | 16 | A bare file name, `.` or a glob in a private working directory (`--body-file plan.md` after `cd` into notes) was never checked; nothing confirmed the hook's `cwd` follows the shell | Bare names, `.` and globs count when `cwd` is private. Spike 9 checks `cwd` follows the shell. |
 | 15 | A failed `cd` still leaked one separator further on (`cd x && true; cp …`); `ack` signature, hook store mode, turn latch and spike-9 fallback list left stale | First answered with an `&&`-only rule, then superseded by dropping `cd` tracking (the user row above). The rest fixed in the plan. |
@@ -995,7 +1023,7 @@ measurements.
 | Extra: subagents under `refuse` | Pass. With `crossSessionInbound: "refuse"`, a background subagent's report was still delivered. |
 | 7. False positives | Not run: needs a working build. |
 | 8. Shared project memory | Dropped with project memory (deferred to Later, 2026-11-20). |
-| 10. The home as cwd | Not run; part of Task 13's smoke test. Does a new `<home>/<slug>` (not a git repo) raise a trust dialog that would hang the orchestrator, and where is its auto memory kept? Does `Read` through a `repos/` link resolve to the worktree and stay outside the data-dir deny? |
+| 10. The home as cwd | Not run; part of Task 13's smoke test. Does a new `<home>/<slug>` (not a git repo) raise a trust dialog that would hang the orchestrator, and where is its auto memory kept? |
 | 9. The mod running `crook` | Not run. From a mod in a pane and in `--bg`: `$.process.run([CROOK_BIN, …])` inside `prompt.submit`, `tool.run` and the 2 s tick, with `CROOK_*` inherited; whether `CLAUDECODE` is set there; `$.fs.stat` on `gen` under the Read deny; latency per call. `$.process` is CLI only (`claude-code.d.ts:4190`). |
 
 ## Left to the builder
@@ -1012,6 +1040,9 @@ measurements.
   its parent pid recorded next to the session id.
 - The inbox poll interval (2 s tested).
 - The stale-card thresholds. 3 `done`s and 7 days are starting guesses.
+- `children.worktree` stays as the child's cwd, and the `worktrees` table is
+  added to schema v1: decided 2026-11-20 (draft 8.9), because no database
+  has shipped.
 - The `crook.db` schema, the card's wording, the protocol wording and the
   `crook status` and `crook list` formats.
 - The herdr layout, as long as each project has one workspace.

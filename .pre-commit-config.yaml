@@ -54,6 +54,13 @@ repos:
         pass_filenames: false
         files: ^(Cargo\.toml|Cargo\.lock)$
 
+      # `sqruff fix` asks before writing and reads the answer from stdin.
+      - id: sqruff
+        name: sqruff
+        entry: sh -c 'yes | sqruff fix --nocolor "$@"' sqruff
+        language: system
+        types: [sql]
+
       - id: clippy
         name: clippy
         entry: cargo clippy --all-targets -- -D warnings

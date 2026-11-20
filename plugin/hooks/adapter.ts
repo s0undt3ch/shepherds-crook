@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Ports, VerbResult } from './core/ports.ts'
-import { BINARY_NOT_RUN, parseVerb } from './core/verb.ts'
+import { BINARY_NOT_RUN, DEFAULT_TIMEOUT_MS, parseRejected, parseVerb } from './core/verb.ts'
 
 /**
  * Builds the ports from `$`. `$.env.get` is async and takes a literal name, so
@@ -26,12 +26,13 @@ export function ports($: EngineInterface): Ports {
       await loaded
       const bin = cache.get('CROOK_BIN')
       if (bin === undefined || bin === '') return parseVerb(BINARY_NOT_RUN, '')
+      const started = Date.now()
       try {
         const r = await $.process.run([bin, 'mod', verb], { stdin: JSON.stringify(input), timeoutMs })
         return parseVerb(r.exitCode, r.stdout)
       } catch {
         // `process.run` rejects when the command cannot start, or outlives the timeout.
-        return parseVerb(BINARY_NOT_RUN, '')
+        return parseRejected(Date.now() - started, timeoutMs ?? DEFAULT_TIMEOUT_MS)
       }
     },
     async stat(path: string) {

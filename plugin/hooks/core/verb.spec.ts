@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { BINARY_NOT_RUN, parseVerb } from './verb.ts'
+import { BINARY_NOT_RUN, parseRejected, parseVerb } from './verb.ts'
 
 describe('parseVerb', () => {
   it('passes a good reply through', () => {
@@ -42,5 +42,16 @@ describe('parseVerb', () => {
     expect(parseVerb(126, '')).toEqual(missing)
     expect(parseVerb(127, 'sh: crook: not found')).toEqual(missing)
     expect(parseVerb(-1, '')).toEqual(missing)
+  })
+})
+
+describe('parseRejected', () => {
+  it('reports a rejection after the timeout as timed out', () => {
+    expect(parseRejected(5000, 5000)).toEqual({ ok: false, error: 'crook: timed out' })
+    expect(parseRejected(6000, 5000)).toEqual({ ok: false, error: 'crook: timed out' })
+  })
+
+  it('reports a quick rejection as a missing binary', () => {
+    expect(parseRejected(3, 5000)).toEqual({ ok: false, error: 'crook: binary not found' })
   })
 })

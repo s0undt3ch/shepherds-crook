@@ -23,3 +23,11 @@ export function parseVerb(exitCode: number, stdout: string): VerbResult {
   if (!reply.ok && typeof reply.error !== 'string') return { ...BAD_REPLY }
   return reply as VerbResult
 }
+
+/** The reply for a `process.run` that rejected: it timed out, or the command could not start. */
+export function parseRejected(elapsedMs: number, timeoutMs: number): VerbResult {
+  return elapsedMs >= timeoutMs ? { ok: false, error: 'crook: timed out' } : parseVerb(BINARY_NOT_RUN, '')
+}
+
+/** `$.process.run`'s timeout when the caller passes none. */
+export const DEFAULT_TIMEOUT_MS = 30_000

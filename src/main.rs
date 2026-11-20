@@ -65,7 +65,13 @@ fn run(args: &[OsString], env: Env) -> u8 {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         let code = if first == Some("hook") {
-            hook::main(&rest, env)
+            let event = rest.first().map_or("", String::as_str);
+            hook::main(
+                event,
+                &mut std::io::stdin().lock(),
+                env,
+                &mut std::io::stdout().lock(),
+            )
         } else {
             modverb::main(
                 &rest,

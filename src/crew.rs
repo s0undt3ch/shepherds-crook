@@ -255,6 +255,28 @@ pub fn parked(c: &Connection, child: &str) -> Result<bool, Error> {
     Ok(status_row(c, child)?.state == "parked")
 }
 
+/// Like `parked`, but a child that does not exist is simply not parked.
+pub fn parked_lenient(c: &Connection, child: &str) -> Result<bool, Error> {
+    let state: Option<String> = c
+        .query_row("SELECT state FROM status WHERE child = ?1", [child], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    Ok(state.as_deref() == Some("parked"))
+}
+
+/// A live parked child whose repo is `repo` (trailing slashes ignored).
+pub fn parked_in_repo(c: &Connection, repo: &str) -> Result<Option<String>, Error> {
+    Ok(c.query_row(
+        "SELECT c.child FROM children c JOIN status s USING (child)
+         WHERE c.archived = 0 AND s.state = 'parked'
+           AND rtrim(c.repo, '/') = rtrim(?1, '/') ORDER BY c.child LIMIT 1",
+        [repo],
+        |r| r.get(0),
+    )
+    .optional()?)
+}
+
 /// Sets `archived`; every row stays, so counts do not move.
 pub fn archive(c: &Connection, child: &str) -> Result<(), Error> {
     let n = c.execute("UPDATE children SET archived = 1 WHERE child = ?1", [child])?;
@@ -298,6 +320,34 @@ pub fn add_fork(c: &Connection, child: &str, session_id: &str) -> Result<(), Err
     c.execute(
         "INSERT OR IGNORE INTO forks(child, session_id) VALUES (?1, ?2)",
         (child, session_id),
+    )?;
+    Ok(())
+}
+
+pub fn is_fork(c: &Connection, child: &str, session_id: &str) -> Result<bool, Error> {
+    Ok(c.query_row(
+        "SELECT count(*) FROM forks WHERE child = ?1 AND session_id = ?2",
+        (child, session_id),
+        |r| r.get::<_, i64>(0),
+    )? > 0)
+}
+
+pub fn claude_pid(c: &Connection, child: &str) -> Result<Option<u32>, Error> {
+    let pid: Option<Option<i64>> = c
+        .query_row(
+            "SELECT claude_pid FROM children WHERE child = ?1",
+            [child],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(pid.flatten().and_then(|p| u32::try_from(p).ok()))
+}
+
+pub fn record_orchestrator(c: &Connection, session_id: &str, pid: u32) -> Result<(), Error> {
+    c.execute(
+        "INSERT INTO orchestrator(id, session_id, pid) VALUES (1, ?1, ?2)
+         ON CONFLICT(id) DO UPDATE SET session_id = excluded.session_id, pid = excluded.pid",
+        (session_id, pid),
     )?;
     Ok(())
 }

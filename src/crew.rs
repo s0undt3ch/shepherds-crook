@@ -219,10 +219,14 @@ pub fn done(
             "pr_url must look like https://host/owner/repo/pull/N, not {u:?}"
         )));
     }
-    if status_row(c, child)?.state == "parked" {
+    let row = status_row(c, child)?;
+    if row.state == "parked" {
         return Err(Error::Refused(
             "parked: the user has to answer first".into(),
         ));
+    }
+    if row.state == "done" && row.current_task.is_none() {
+        return Err(Error::Refused("no task open: already done".into()));
     }
     c.execute(
         "UPDATE status SET state = 'done', question = NULL, current_task = NULL,
@@ -336,7 +340,7 @@ fn task_text(c: &Connection, seq: Option<i64>) -> Result<Option<String>, Error> 
 }
 
 fn labelled(q: &str) -> String {
-    format!("{QUESTION_LABEL}: {q}")
+    format!("{QUESTION_LABEL}: {}", cap_question(q))
 }
 
 #[derive(Debug, Serialize)]
@@ -441,7 +445,11 @@ pub fn status(c: &Connection, id: &Identity, user_turn: bool) -> Result<StatusVi
             me_part = Some(SelfPart {
                 brief: k.brief.clone(),
                 current_task: v.task.clone(),
-                question: k.question.clone().filter(|_| user_turn),
+                question: k
+                    .question
+                    .as_deref()
+                    .filter(|_| user_turn)
+                    .map(cap_question),
             });
         }
         children.push(v);
@@ -605,8 +613,19 @@ fn orch_snap(c: &Connection, session_id: &str, now: i64, version: i64) -> Result
     })
 }
 
-fn flatten(s: &str) -> String {
-    s.replace(['\r', '\n'], " ")
+/// One line, at most `QUESTION_CAP` characters: control characters and the
+/// Unicode line and paragraph separators become spaces.
+fn cap_question(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{85}') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .take(QUESTION_CAP)
+        .collect()
 }
 
 /// One line per live child whose `seq` moved past `seen`, then marks them
@@ -635,7 +654,7 @@ pub fn orch_context(c: &Connection) -> Result<Vec<String>, Error> {
         let mut line = format!("{child} · {state}");
         match (state.as_str(), question, outcome) {
             ("parked", Some(q), _) => {
-                let q: String = flatten(&q).chars().take(QUESTION_CAP).collect();
+                let q = cap_question(&q);
                 line.push_str(&format!(" · [untrusted, from child {child}] {q}"));
             }
             ("done", _, Some(o)) => {
@@ -700,6 +719,12 @@ mod tests {
             )?)
         })
         .unwrap()
+    }
+
+    fn finish(s: &mut Store, child: &str) {
+        w(s, |c| task(c, child, "t")).unwrap();
+        w(s, |c| take_task(c, child)).unwrap();
+        w(s, |c| done(c, child, Outcome::Ok, None)).unwrap();
     }
 
     fn refused(r: Result<impl std::fmt::Debug, Error>) -> String {
@@ -777,6 +802,13 @@ mod tests {
         assert_eq!(dones(&s), 1, "a refused done counts nothing");
         w(&mut s, |c| done(c, "c1", Outcome::Failed, None)).unwrap();
         assert_eq!(dones(&s), 2);
+        let before = row(&s, "c1");
+        assert!(refused(w(&mut s, |c| done(c, "c1", Outcome::Ok, None))).contains("no task open"));
+        assert_eq!(
+            (row(&s, "c1"), dones(&s)),
+            (before, 2),
+            "a repeated done changes nothing"
+        );
         w(&mut s, |c| need(c, "c2", "q")).unwrap();
         assert!(refused(w(&mut s, |c| done(c, "c2", Outcome::Ok, None))).contains("parked"));
     }
@@ -940,10 +972,10 @@ mod tests {
         assert!(stale(&s, now + STALE_SECS + 5));
         assert!(!stale(&s, now + STALE_SECS - 100));
         for _ in 0..2 {
-            w(&mut s, |c| done(c, "c1", Outcome::Ok, None)).unwrap();
+            finish(&mut s, "c1");
         }
         assert!(!stale(&s, now));
-        w(&mut s, |c| done(c, "c1", Outcome::Ok, None)).unwrap();
+        finish(&mut s, "c1");
         assert!(stale(&s, now), "three dones");
         match s
             .read(|c| snapshot(c, &id, "s-c1", now, &BTreeMap::new()))
@@ -1003,5 +1035,37 @@ mod tests {
 
     fn guard_err(s: &Store, child: &str) -> Result<(), Error> {
         s.read(|c| guard(c, child, "s", false))
+    }
+
+    #[test]
+    fn question_is_one_line_and_capped() {
+        let q = format!(
+            "a\u{2028}b\u{2029}c\u{85}d\te\u{0}f\r\ng{}",
+            "é".repeat(400)
+        );
+        let out = cap_question(&q);
+        assert_eq!(out.chars().count(), QUESTION_CAP);
+        assert!(out.starts_with("a b c d e f  g"), "{out:?}");
+        assert!(
+            !out.chars()
+                .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+        );
+        let (_t, mut s) = fresh();
+        let long = "q".repeat(500);
+        w(&mut s, |c| need(c, "c1", &long)).unwrap();
+        let id = orch();
+        let v = s.read(|c| status(c, &id, true)).unwrap();
+        let shown = v.children[0].question.clone().unwrap();
+        assert_eq!(shown, format!("{QUESTION_LABEL}: {}", "q".repeat(300)));
+        let stored: String = s
+            .read(|c| {
+                Ok(
+                    c.query_row("SELECT question FROM status WHERE child = 'c1'", [], |r| {
+                        r.get(0)
+                    })?,
+                )
+            })
+            .unwrap();
+        assert_eq!(stored.len(), 500, "the stored question stays whole");
     }
 }

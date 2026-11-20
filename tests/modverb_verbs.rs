@@ -151,9 +151,14 @@ fn done_refuses_bad_outcome_and_bad_pr_url() {
     let (_, v) = fx.orch("status", false, json!({}));
     assert_eq!(v["children"][0]["state"], "working", "nothing changed: {v}");
     for outcome in ["ok", "failed", "dropped"] {
+        fx.orch("task", false, json!({"child":"c1","text":"t"}));
+        fx.c1("take-task", json!({}));
         let (code, v) = fx.c1("done", json!({"outcome": outcome}));
         assert_eq!(code, 0, "{outcome}: {v}");
     }
+    let (code, v) = fx.c1("done", json!({"outcome":"ok"}));
+    assert_eq!(code, 1, "a second done with no task: {v}");
+    assert!(err(&v).contains("no task open"), "{v}");
 }
 
 #[test]
@@ -447,6 +452,8 @@ fn card_version_and_staleness() {
         (Some(1), Some(false))
     );
     for _ in 0..3 {
+        fx.orch("task", false, json!({"child":"c1","text":"t"}));
+        fx.c1("take-task", json!({}));
         fx.c1("done", json!({"outcome":"ok"}));
     }
     let (_, v) = fx.orch("snapshot", false, json!({}));
@@ -511,6 +518,21 @@ fn orch_context_lines() {
         1,
         "lift moved seq: {v}"
     );
+}
+
+#[test]
+fn status_caps_a_long_question() {
+    let fx = Fx::new();
+    fx.c1("need", json!({"question": "q".repeat(500)}));
+    let (_, v) = fx.orch("status", true, json!({}));
+    let q = v["children"][0]["question"].as_str().unwrap();
+    assert_eq!(
+        q.chars().count(),
+        "waiting on the user: don't answer or work around it: ".len() + 300,
+        "{q}"
+    );
+    let (_, v) = fx.call("c1", "status", "s1", true, json!({}));
+    assert!(!v["card"].as_str().unwrap().contains(&"q".repeat(301)));
 }
 
 #[test]

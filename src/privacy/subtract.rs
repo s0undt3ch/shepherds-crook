@@ -1,6 +1,8 @@
 //! Subtracting chunks that are public anyway.
 
+use std::ffi::OsStr;
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -24,7 +26,7 @@ pub fn subtract(
         .map(String::as_str)
         .chain([file_content, old_string])
     {
-        known.extend(text.lines().map(normalise_line));
+        known.extend(text.lines().map(padded));
     }
     let mut kept: Vec<ChunkHit> = hits
         .into_iter()
@@ -43,22 +45,26 @@ pub fn subtract(
     kept
 }
 
-fn covered(chunk: &str, lines: &[String]) -> bool {
-    lines.iter().any(|l| l.contains(chunk))
+/// A line as `normalise_line` makes it, padded with a space each side so a
+/// chunk matches whole words only.
+fn padded(line: &str) -> String {
+    format!(" {} ", normalise_line(line))
 }
 
-/// Whole lines of tracked files that contain any of the chunks, normalised. The
+fn covered(chunk: &str, lines: &[String]) -> bool {
+    let needle = format!(" {chunk} ");
+    lines.iter().any(|l| l.contains(&needle))
+}
+
+/// Whole lines of tracked files that contain any of the chunks, padded. The
 /// chunks go in on stdin, so private text never reaches a file or a command line.
+/// Lines from a file that is private by any rule (glob included) are dropped.
 /// A repo that cannot be searched gives no lines.
 fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set) -> Vec<String> {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C")
+    let Ok(mut child) = Command::new("git")
+        .arg("-C")
         .arg(repo)
-        .args(["grep", "-h", "-F", "-f", "-", "--", "."]);
-    for rel in private_inside(repo, s) {
-        cmd.arg(format!(":(exclude,literal){}", rel.display()));
-    }
-    let Ok(mut child) = cmd
+        .args(["grep", "-F", "--null", "-f", "-", "--", "."])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -78,32 +84,18 @@ fn repo_lines(repo: &Path, hits: &[ChunkHit], s: &Set) -> Vec<String> {
     let Ok(out) = child.wait_with_output() else {
         return Vec::new();
     };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(normalise_line)
-        .collect()
-}
-
-/// Private roots inside the repo, relative to it.
-fn private_inside(repo: &Path, s: &Set) -> Vec<PathBuf> {
-    let mut bases = vec![repo.to_path_buf()];
-    if let Ok(real) = std::fs::canonicalize(repo) {
-        bases.push(real);
+    let mut lines = Vec::new();
+    for row in out.stdout.split(|&b| b == b'\n') {
+        // `--null` puts a NUL between the path and the line, and quotes nothing.
+        let Some(nul) = row.iter().position(|&b| b == 0) else {
+            continue;
+        };
+        let path = repo.join(OsStr::from_bytes(&row[..nul]));
+        if !s.contains(&path) {
+            lines.push(padded(&String::from_utf8_lossy(&row[nul + 1..])));
+        }
     }
-    let mut rels: Vec<PathBuf> = s
-        .roots()
-        .iter()
-        .filter_map(|root| {
-            bases
-                .iter()
-                .find_map(|b| root.strip_prefix(b).ok())
-                .filter(|rel| !rel.as_os_str().is_empty())
-                .map(Path::to_path_buf)
-        })
-        .collect();
-    rels.sort();
-    rels.dedup();
-    rels
+    lines
 }
 
 #[cfg(test)]
@@ -238,5 +230,47 @@ mod tests {
             &fx.set(&[]),
         );
         assert_eq!(got, hits);
+    }
+
+    #[test]
+    fn a_glob_private_file_tracked_in_a_repo_stays_a_hit() {
+        let fx = Fx::new();
+        let secret = "private words that only live in the folder";
+        let r = repo(
+            &fx,
+            "proj",
+            &[
+                ("pvt/x.md", secret),
+                ("pvt/y.txt", "other lines in the public file here ok\n"),
+            ],
+        );
+        let set = fx.set(&[&r.join("pvt/*.md")]);
+        let hits = vec![hit(secret), hit("other lines in the public file here")];
+        let got = subtract(hits, &[], "", "", &[r], &set);
+        assert_eq!(got, vec![hit(secret)]);
+    }
+
+    #[test]
+    fn a_chunk_starting_mid_word_is_not_covered() {
+        let fx = Fx::new();
+        let public = vec!["bathe cat sat on the mat and then left".to_string()];
+        let mid = hit("he cat sat on the mat and then");
+        let whole = hit("cat sat on the mat and then left");
+        let got = subtract(vec![mid.clone(), whole], &public, "", "", &[], &fx.set(&[]));
+        assert_eq!(got, vec![mid]);
+        let r = repo(
+            &fx,
+            "proj",
+            &[("a.txt", "bathe cat sat on the mat and then left\n")],
+        );
+        let got = subtract(
+            vec![hit("he cat sat on the mat and then")],
+            &[],
+            "",
+            "",
+            &[r],
+            &fx.set(&[]),
+        );
+        assert_eq!(got.len(), 1);
     }
 }

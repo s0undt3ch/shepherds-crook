@@ -241,6 +241,20 @@ fn scan(state: &Path, s: &Set, cap: usize) -> (Vec<(PathBuf, u64)>, Option<PathB
             }
         }
     }
+    let glob_dirs: BTreeSet<PathBuf> = s
+        .glob_dirs()
+        .iter()
+        .filter_map(|d| fs::canonicalize(d).ok())
+        .collect();
+    for dir in &glob_dirs {
+        let mut files = Vec::new();
+        walk(dir, &mut files);
+        for (path, mtime) in files {
+            if !path.starts_with(&state) && s.contains(&path) {
+                found.entry(path).or_insert((mtime, dir.clone()));
+            }
+        }
+    }
     let mut all: Vec<(PathBuf, (u64, PathBuf))> = found.into_iter().collect();
     all.sort_by(|a, b| a.0.cmp(&b.0));
     let capped = all.get(cap).map(|(_, (_, root))| root.clone());
@@ -248,11 +262,18 @@ fn scan(state: &Path, s: &Set, cap: usize) -> (Vec<(PathBuf, u64)>, Option<PathB
     (all.into_iter().map(|(p, (m, _))| (p, m)).collect(), capped)
 }
 
-/// Collects regular files, skipping `.git`, symlinks and files over the size cap.
+/// Collects regular files, skipping `.git`, symlinked directories and files over
+/// the size cap. A symlink to a regular file counts as that file.
 fn walk(path: &Path, out: &mut Vec<(PathBuf, u64)>) {
-    let Ok(meta) = fs::symlink_metadata(path) else {
+    let Ok(mut meta) = fs::symlink_metadata(path) else {
         return;
     };
+    if meta.is_symlink() {
+        match fs::metadata(path) {
+            Ok(target) if target.is_file() => meta = target,
+            _ => return,
+        }
+    }
     if meta.is_file() {
         if meta.len() <= MAX_FILE {
             let mtime = meta
@@ -454,5 +475,34 @@ mod tests {
         assert!(idx.lookup("p1 p2 p3 p4 p5 p6 p7 p8 p9").is_empty());
         let all = Index::refresh(&fx.project_dir(), &fx.set(&[])).expect("refresh");
         assert!(all.capped().is_none());
+    }
+
+    #[test]
+    fn glob_private_files_are_indexed() {
+        let fx = Fx::new();
+        let g = fx.base.join("g");
+        fx.write(&g.join("a.md"), A);
+        fx.write(&g.join("b.txt"), B);
+        let set = fx.set(&[&g.join("*.md")]);
+        let idx = Index::refresh(&fx.project_dir(), &set).expect("refresh");
+        let hits = idx.lookup(A);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert!(hits.iter().all(|h| h.file == g.join("a.md")));
+        assert!(idx.lookup(B).is_empty(), "not matched by the glob");
+    }
+
+    #[test]
+    fn a_symlinked_file_is_indexed_but_a_symlinked_dir_is_not_followed() {
+        let fx = Fx::new();
+        let (out, outdir) = (fx.base.join("outside.txt"), fx.base.join("outdir"));
+        fx.write(&out, B);
+        fx.write(&outdir.join("x.md"), A);
+        std::os::unix::fs::symlink(&out, fx.notes.join("link.md")).expect("symlink");
+        std::os::unix::fs::symlink(&outdir, fx.notes.join("dirlink")).expect("symlink");
+        let idx = Index::refresh(&fx.project_dir(), &fx.set(&[])).expect("refresh");
+        let hits = idx.lookup(B);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert!(hits.iter().all(|h| h.file == fx.notes.join("link.md")));
+        assert!(idx.lookup(A).is_empty());
     }
 }

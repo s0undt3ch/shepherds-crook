@@ -21,6 +21,8 @@ pub struct Set {
     roots: Vec<PathBuf>,
     /// Private globs, each written as given and with its literal prefix canonicalised.
     globs: Vec<GlobMatcher>,
+    /// The literal directory each private glob starts from, as written and resolved.
+    glob_dirs: Vec<PathBuf>,
     /// Every way a private root can be written inside a string.
     forms: Vec<String>,
     allow_roots: Vec<PathBuf>,
@@ -41,6 +43,7 @@ impl Set {
             home_variants,
             roots: Vec::new(),
             globs: Vec::new(),
+            glob_dirs: Vec::new(),
             forms: Vec::new(),
             allow_roots: Vec::new(),
             allow_globs: Vec::new(),
@@ -71,6 +74,11 @@ impl Set {
     /// Private directories and files, each as written and resolved.
     pub(crate) fn roots(&self) -> &[PathBuf] {
         &self.roots
+    }
+
+    /// Where files matching a private glob can be found.
+    pub(crate) fn glob_dirs(&self) -> &[PathBuf] {
+        &self.glob_dirs
     }
 
     pub(crate) fn forms(&self) -> &[String] {
@@ -193,7 +201,11 @@ impl Set {
         };
         if abs.contains(GLOB_META) {
             match r.glob(&abs) {
-                Some(mut g) => self.globs.append(&mut g),
+                Some(mut g) => {
+                    self.globs.append(&mut g);
+                    self.glob_dirs
+                        .extend(r.variants(Path::new(&literal_dir(&abs))));
+                }
                 // A broken glob still protects its directory, which errs towards asking.
                 None => self.add_root(r, entry, &literal_dir(&abs)),
             }

@@ -830,6 +830,8 @@ mod tests {
             "cat ~/proj/.{x,}{.,y}/notes/a",
             "cat ~/proj/?(.).?(.)/notes/a",
             "cat ~/proj/{x/../..,y}/notes/a",
+            "cat ~/proj/{x/.,.}./notes/a",
+            "cat ~/proj/{x/.,.}./notes/public/a",
         ] {
             assert!(!bash(&s, cmd, &cwd).is_empty(), "{cmd}");
         }

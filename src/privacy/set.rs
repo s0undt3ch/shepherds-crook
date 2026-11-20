@@ -273,8 +273,9 @@ fn segment_can_be_dot(seg: &str) -> bool {
     }
 }
 
-/// A brace group holding both `/` and `..` (`{x/../..,y}`), which the
-/// segment walk cannot follow. An unclosed group runs to the end.
+/// A brace group holding both `/` and a `.` (`{x/../..,y}`, `{x/.,.}.`), which
+/// may build a `..` the segment walk cannot follow. An unclosed group runs to
+/// the end.
 fn brace_climbs(full: &str) -> bool {
     let mut rest = full;
     while let Some(open) = rest.find('{') {
@@ -294,7 +295,7 @@ fn brace_climbs(full: &str) -> bool {
             }
         }
         let inner = &rest[open + 1..close];
-        if inner.contains('/') && inner.contains("..") {
+        if inner.contains('/') && inner.contains('.') {
             return true;
         }
         rest = &rest[open + 1..];

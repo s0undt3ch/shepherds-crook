@@ -1,6 +1,7 @@
 //! `crook hook <Event>`: the settings hook. With `onFailure: "block"` a crash
-//! or a non-zero exit blocks every tool call, so this always exits 0 and
-//! always gives a defined answer.
+//! or a non-zero exit blocks every tool call, so this exits 0 with a defined
+//! answer, and exits 2 only when that answer cannot be written: a block is
+//! safer than no answer, which lets the call through.
 
 mod output;
 mod park;
@@ -45,11 +46,19 @@ pub fn run(event: &str, stdin: &mut dyn Read, env: Env, ppid: u32, out: &mut dyn
     }));
     let text = catch_unwind(AssertUnwindSafe(|| handle(event, stdin, env, ppid)))
         .unwrap_or_else(|_| failure(event, "crook: hook error: internal error"));
-    if !text.is_empty() {
-        let _ = writeln!(out, "{text}");
-        let _ = out.flush();
+    if text.is_empty() {
+        return 0;
     }
-    0
+    match writeln!(out, "{text}").and_then(|()| out.flush()) {
+        Ok(()) => 0,
+        Err(e) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "crook hook: cannot write the answer: {e}"
+            );
+            2
+        }
+    }
 }
 
 /// The defined answer when the hook cannot do its job.
@@ -156,7 +165,7 @@ fn pre_tool_use(env: Env, id: &Identity, input: &Input) -> String {
         }
         match park::check(c, id, input.session_id.as_deref(), tool, &input.tool_input)? {
             Some(d) => Ok(Step::Decided(d)),
-            None if privacy::exempt_tool(tool) => Ok(Step::Done),
+            None if privacy::exempt_tool(tool, &input.tool_input) => Ok(Step::Done),
             None => Ok(Step::Privacy(Box::new(project::get(c)?))),
         }
     });
@@ -204,12 +213,43 @@ mod tests {
 
     struct Fixture {
         tmp: tempfile::TempDir,
+        /// The recorded `claude_pid` of every child: a process that has exited.
+        pid: u32,
+    }
+
+    /// A pid no process has: one that was spawned and reaped.
+    fn dead_pid() -> u32 {
+        let mut c = std::process::Command::new("true").spawn().unwrap();
+        c.wait().unwrap();
+        c.id()
+    }
+
+    /// A `sleep` that is killed when the guard drops, so a failed assert leaks nothing.
+    struct Live(std::process::Child);
+
+    impl Drop for Live {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn live() -> Live {
+        Live(
+            std::process::Command::new("sleep")
+                .arg("60")
+                .spawn()
+                .unwrap(),
+        )
     }
 
     impl Fixture {
         fn new() -> Fixture {
             let tmp = tempfile::tempdir().unwrap();
-            let f = Fixture { tmp };
+            let f = Fixture {
+                tmp,
+                pid: dead_pid(),
+            };
             project::init(&f.env_fn(&[]), "p").unwrap();
             let mut s = f.store();
             for (c, repo) in [("c1", "/r/a"), ("c2", "/r/b")] {
@@ -225,7 +265,7 @@ mod tests {
                             session_id: format!("s-{c}"),
                         },
                     )?;
-                    crew::record_session(tx, c, &format!("s-{c}"), 100)
+                    crew::record_session(tx, c, &format!("s-{c}"), f.pid)
                 })
                 .unwrap();
             }
@@ -430,12 +470,111 @@ mod tests {
         assert!(s.read(|c| crew::is_fork(c, "c1", "f1")).unwrap());
         assert!(!s.read(|c| crew::is_current(c, "c1", "f1")).unwrap().0);
         drop(s);
-        // Same pid as children.claude_pid (100): the /branch case.
+        // Same pid as children.claude_pid: the /branch case.
         let branch = json!({"session_id": "b1", "source": "fork"}).to_string();
-        f.call("SessionStart", &branch, &CHILD, 100);
+        f.call("SessionStart", &branch, &CHILD, f.pid);
         let s = f.store();
         assert!(s.read(|c| crew::is_current(c, "c1", "b1")).unwrap().0);
         assert!(!s.read(|c| crew::is_fork(c, "c1", "b1")).unwrap());
+    }
+
+    #[test]
+    fn forged_session_start_does_not_lift_a_park() {
+        let f = Fixture::new();
+        let claude = live();
+        let pid = claude.0.id();
+        f.store()
+            .write(Touch::CHILDREN, |tx| {
+                crew::record_session(tx, "c1", "s-c1", pid)
+            })
+            .unwrap();
+        f.park("c1");
+        let forged = json!({"session_id": "decoy", "source": "startup"}).to_string();
+        let (code, out) = f.call("SessionStart", &forged, &CHILD, pid + 1);
+        assert_eq!(code, 0);
+        assert_eq!(
+            context(&out),
+            "crook: this session is not the child; the child is session s-c1"
+        );
+        let s = f.store();
+        assert_eq!(
+            s.read(|c| crew::is_current(c, "c1", "s-c1")).unwrap(),
+            (true, "s-c1".into())
+        );
+        assert_eq!(s.read(|c| crew::claude_pid(c, "c1")).unwrap(), Some(pid));
+        drop(s);
+        for sid in ["s-c1", "decoy"] {
+            assert_eq!(
+                decision(&f.pre(&CHILD, sid, "Bash", json!({}))).0,
+                "deny",
+                "{sid}"
+            );
+        }
+        // The same claude process (a `/clear`) still records its new id.
+        let clear = json!({"session_id": "s-c1b", "source": "clear"}).to_string();
+        let (_, out) = f.call("SessionStart", &clear, &CHILD, pid);
+        assert!(context(&out).contains("Project card"), "{out}");
+        assert!(
+            f.store()
+                .read(|c| crew::is_current(c, "c1", "s-c1b"))
+                .unwrap()
+                .0
+        );
+    }
+
+    #[test]
+    fn restart_after_the_child_died_records_itself() {
+        let f = Fixture::new();
+        f.park("c1");
+        let input = json!({"session_id": "s-new", "source": "resume"}).to_string();
+        let (_, out) = f.call("SessionStart", &input, &CHILD, 4242);
+        assert!(context(&out).contains("Project card"), "{out}");
+        let s = f.store();
+        assert!(s.read(|c| crew::is_current(c, "c1", "s-new")).unwrap().0);
+        assert_eq!(s.read(|c| crew::claude_pid(c, "c1")).unwrap(), Some(4242));
+    }
+
+    /// Stands in for a closed stdout.
+    struct Closed;
+
+    impl Write for Closed {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    /// Writes fine, fails to flush.
+    struct NoFlush;
+
+    impl Write for NoFlush {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    #[test]
+    fn failed_stdout_write_exits_two() {
+        let f = Fixture::new();
+        let e = f.env_fn(&CHILD);
+        let bash = r#"{"session_id":"s","tool_name":"Bash"}"#;
+        assert_eq!(
+            run("PreToolUse", &mut "junk".as_bytes(), &e, 1, &mut Closed),
+            2
+        );
+        assert_eq!(
+            run("PreToolUse", &mut "junk".as_bytes(), &e, 1, &mut NoFlush),
+            2
+        );
+        // No decision means no output, so nothing can fail.
+        let ok = r#"{"session_id":"s-c1","tool_name":"Bash"}"#;
+        assert_eq!(run("PreToolUse", &mut ok.as_bytes(), &e, 1, &mut Closed), 0);
+        assert_eq!(run("Stop", &mut bash.as_bytes(), &e, 1, &mut Closed), 0);
     }
 
     #[test]

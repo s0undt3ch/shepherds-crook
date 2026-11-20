@@ -1,7 +1,8 @@
 //! Finds the private paths a tool call's input names.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::time::Instant;
 
 use aho_corasick::AhoCorasick;
 use serde_json::Value;
@@ -84,47 +85,156 @@ fn normalise(cmd: &str) -> String {
     out
 }
 
+/// Percent-decodes `text`, with `+` read as a space first when `plus` is set, so
+/// `%2B` stays a plus sign. A `%` without two hex digits after it stays as it is.
+fn percent_decode(text: &str, plus: bool) -> String {
+    let hex = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    };
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let pair = match (bytes.get(i + 1), bytes.get(i + 2)) {
+            (Some(&h), Some(&l)) if b == b'%' => hex(h).zip(hex(l)),
+            _ => None,
+        };
+        match pair {
+            Some((h, l)) => {
+                out.push(h << 4 | l);
+                i += 3;
+            }
+            None => {
+                out.push(if plus && b == b'+' { b' ' } else { b });
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `to` written relative to `from`, both absolute. `None` when `to` is `from`
+/// or above it, which would be only `..` steps.
+fn relative(from: &Path, to: &Path) -> Option<String> {
+    let from: Vec<Component> = from.components().collect();
+    let to: Vec<Component> = to.components().collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    if common == to.len() {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for _ in common..from.len() {
+        out.push("..");
+    }
+    out.extend(&to[common..]);
+    Some(out.display().to_string())
+}
+
 /// Every private path the call's input names, each text once, in document order.
 /// `tool` matters for the bare-name rule, which covers the `command` field of
 /// Bash and Monitor only: a markdown body with `*` or `[` must not ask.
 pub fn find_paths(tool: &str, input: &Value, cwd: &Path, s: &Set) -> Vec<Hit> {
     let r = Resolver::default();
-    let mut f = Finder {
-        s,
-        r: &r,
-        cwd,
-        cwd_private: cwd.is_absolute() && s.contains_with(&r, cwd),
-        hits: Vec::new(),
-        seen: HashSet::new(),
-        tokens: HashSet::new(),
-        entries: None,
-    };
-    // `command` of Bash and Monitor, found by identity so a nested field of the same name is not.
-    let command = matches!(tool, "Bash" | "Monitor")
-        .then(|| input.get("command").and_then(Value::as_str))
-        .flatten();
-    enum Item<'v> {
-        Val(&'v Value),
-        Key(&'v str),
-    }
-    let mut stack = vec![Item::Val(input)];
-    while let Some(item) = stack.pop() {
-        match item {
-            Item::Key(k) => f.scan(k, false),
-            Item::Val(Value::String(t)) => {
-                f.scan(t, command.is_some_and(|c| std::ptr::eq(c, t.as_str())));
-            }
-            Item::Val(Value::Array(a)) => stack.extend(a.iter().rev().map(Item::Val)),
-            Item::Val(Value::Object(o)) => {
-                for (k, v) in o.iter().rev() {
-                    stack.push(Item::Val(v));
-                    stack.push(Item::Key(k));
+    let mut f = Finder::new(s, &r, cwd, None);
+    f.walk(tool, input);
+    f.hits
+}
+
+/// `find_paths` that gives up at `deadline`: `None` when the input was too large
+/// to check in time.
+pub fn find_paths_by(
+    tool: &str,
+    input: &Value,
+    cwd: &Path,
+    s: &Set,
+    deadline: Instant,
+) -> Option<Vec<Hit>> {
+    let r = Resolver::default();
+    let mut f = Finder::new(s, &r, cwd, Some(deadline));
+    f.walk(tool, input);
+    (!f.late).then_some(f.hits)
+}
+
+impl<'a> Finder<'a> {
+    fn new(s: &'a Set, r: &'a Resolver, cwd: &'a Path, deadline: Option<Instant>) -> Self {
+        let cwd_private = cwd.is_absolute() && s.contains_with(r, cwd);
+        let mut rel_forms = Vec::new();
+        if cwd.is_absolute() {
+            for c in r.variants(cwd) {
+                for root in s.roots() {
+                    // Without a space or the like, the token pass finds a relative path.
+                    if let Some(rel) = relative(&c, root).filter(|f| f.contains(ends_path)) {
+                        rel_forms.push(rel);
+                    }
                 }
             }
-            Item::Val(_) => {}
+        }
+        rel_forms.sort();
+        rel_forms.dedup();
+        Finder {
+            s,
+            r,
+            cwd,
+            cwd_private,
+            rel_forms,
+            deadline,
+            late: false,
+            ticks: 0,
+            hits: Vec::new(),
+            seen: HashSet::new(),
+            tokens: HashSet::new(),
+            entries: None,
         }
     }
-    f.hits
+
+    /// Whether the deadline has passed, looking at the clock every few calls.
+    fn past_deadline(&mut self) -> bool {
+        if self.late {
+            return true;
+        }
+        self.ticks = self.ticks.wrapping_add(1);
+        if self.ticks.is_multiple_of(64)
+            && let Some(d) = self.deadline
+        {
+            self.late = Instant::now() >= d;
+        }
+        self.late
+    }
+
+    fn walk(&mut self, tool: &str, input: &Value) {
+        // `command` of Bash and Monitor, found by identity so a nested field of the same name is not.
+        let command = matches!(tool, "Bash" | "Monitor")
+            .then(|| input.get("command").and_then(Value::as_str))
+            .flatten();
+        enum Item<'v> {
+            Val(&'v Value),
+            Key(&'v str),
+        }
+        let mut stack = vec![Item::Val(input)];
+        while let Some(item) = stack.pop() {
+            match item {
+                Item::Key(k) => self.scan(k, false),
+                Item::Val(Value::String(t)) => {
+                    self.scan(t, command.is_some_and(|c| std::ptr::eq(c, t.as_str())));
+                }
+                Item::Val(Value::Array(a)) => stack.extend(a.iter().rev().map(Item::Val)),
+                Item::Val(Value::Object(o)) => {
+                    for (k, v) in o.iter().rev() {
+                        stack.push(Item::Val(v));
+                        stack.push(Item::Key(k));
+                    }
+                }
+                Item::Val(_) => {}
+            }
+            if self.late {
+                return;
+            }
+        }
+    }
 }
 
 struct Finder<'a> {
@@ -132,6 +242,12 @@ struct Finder<'a> {
     r: &'a Resolver,
     cwd: &'a Path,
     cwd_private: bool,
+    /// Private roots with a space or the like, written relative to `cwd`.
+    rel_forms: Vec<String>,
+    deadline: Option<Instant>,
+    /// The deadline passed: the hits are incomplete.
+    late: bool,
+    ticks: u32,
     hits: Vec<Hit>,
     seen: HashSet<String>,
     /// Tokens already judged, so a repeated one costs nothing.
@@ -150,7 +266,23 @@ impl Finder<'_> {
         }
     }
 
+    /// Every string once as written and, with a `%` or `+` in it, once decoded
+    /// as a URL would be.
     fn scan(&mut self, text: &str, is_command: bool) {
+        self.scan_as_written(text, is_command);
+        if text.contains(['%', '+']) {
+            let decoded = percent_decode(text, false);
+            let spaced = percent_decode(text, true);
+            if decoded != text {
+                self.scan_as_written(&decoded, is_command);
+            }
+            if spaced != decoded && spaced != text {
+                self.scan_as_written(&spaced, is_command);
+            }
+        }
+    }
+
+    fn scan_as_written(&mut self, text: &str, is_command: bool) {
         self.pass(text, is_command);
         if is_command {
             let n = normalise(text);
@@ -164,7 +296,11 @@ impl Finder<'_> {
     }
 
     fn pass(&mut self, text: &str, is_command: bool) {
+        if self.past_deadline() {
+            return;
+        }
         self.roots(text);
+        self.relative_roots(text);
         let bare = is_command && self.cwd_private;
         if bare {
             for form in ["$(pwd)", "`pwd`", "$(pwd -P)", "`pwd -P`"] {
@@ -250,6 +386,35 @@ impl Finder<'_> {
         }
     }
 
+    /// Relative spellings of a private root, where the text before them starts a
+    /// path and the text after them ends the root. A spelling with no `/` (the
+    /// root is a child of `cwd`) needs a `/` after it, or prose would ask.
+    fn relative_roots(&mut self, text: &str) {
+        let forms = std::mem::take(&mut self.rel_forms);
+        for form in &forms {
+            for (start, _) in text.match_indices(form.as_str()) {
+                let end = start + form.len();
+                let before = text[..start].chars().next_back();
+                let next = text[end..].chars().next();
+                let starts = before.is_none_or(|c| ends_path(c) || splits_token(c));
+                let ends = if form.contains('/') {
+                    next.is_none_or(|c| c == '/' || ends_path(c))
+                } else {
+                    next == Some('/')
+                };
+                if !starts || !ends {
+                    continue;
+                }
+                let stop = text[end..].find(ends_path).map_or(text.len(), |i| end + i);
+                let cand = &text[start..stop];
+                if !self.is_allowed_text(cand) {
+                    self.push(cand, HitKind::Root);
+                }
+            }
+        }
+        self.rel_forms = forms;
+    }
+
     fn is_allowed_text(&self, cand: &str) -> bool {
         match self.abs(cand, false) {
             Some(p) => self.s.allowed_with(self.r, &p),
@@ -298,7 +463,7 @@ impl Finder<'_> {
     }
 
     fn token(&mut self, tok: &str, bare: bool, shell: bool) {
-        if !self.tokens.insert((tok.to_string(), shell)) {
+        if self.past_deadline() || !self.tokens.insert((tok.to_string(), shell)) {
             return;
         }
         if let Some(p) = self.abs(tok, shell) {
@@ -377,7 +542,7 @@ mod tests {
         fn set_rec(&self, rec: &Record, cfg: &Config) -> Set {
             let h = self.home.display().to_string();
             let env = move |k: &str| (k == "HOME").then(|| h.clone());
-            Set::load(rec, cfg, &env, "demo")
+            Set::load(rec, cfg, &env, "demo").unwrap()
         }
 
         fn p(&self, rel: &str) -> String {
@@ -441,6 +606,62 @@ mod tests {
         let cwd = f.base.join("r/repo");
         assert!(!hits(&s, json!({"file_path": "../notes/a.md"}), &cwd).is_empty());
         assert!(hits(&s, json!({"file_path": "../repo/a.md"}), &cwd).is_empty());
+    }
+
+    #[test]
+    fn relative_spelling_of_a_root_with_a_space() {
+        let f = fx();
+        fs::create_dir_all(f.base.join("My Notes")).unwrap();
+        fs::create_dir_all(f.base.join("repo")).unwrap();
+        let s = f.set(&[&f.p("My Notes")], &[]);
+        let cwd = f.base.join("repo");
+        for cmd in [
+            "gh pr create --body-file \"../My Notes/plan.md\"",
+            "gh pr create --body-file ../My\\ Notes/plan.md",
+            "gh pr create --body-file '../My Notes'/plan.md",
+        ] {
+            assert!(!bash(&s, cmd, &cwd).is_empty(), "{cmd}");
+        }
+        let up = json!({"path": "../My Notes/plan.md"});
+        assert!(!find_paths("mcp__x__upload", &up, &cwd, &s).is_empty());
+        // Through a symlinked cwd, the spelling relative to the real one.
+        fs::create_dir_all(f.base.join("deep/er")).unwrap();
+        symlink(&cwd, f.base.join("deep/er/repolink")).unwrap();
+        let linked = f.base.join("deep/er/repolink");
+        assert!(!find_paths("mcp__x__upload", &up, &linked, &s).is_empty());
+        // `..` alone is no hit, from outside or inside the root.
+        assert!(bash(&s, "cd .. && ls ../other", &cwd).is_empty());
+        let inside = f.base.join("My Notes/sub");
+        fs::create_dir_all(&inside).unwrap();
+        let w = find_paths(
+            "Write",
+            &json!({"content": "cd .. and ../../x"}),
+            &inside,
+            &s,
+        );
+        assert!(w.is_empty(), "{w:?}");
+    }
+
+    #[test]
+    fn percent_and_plus_encoded_paths() {
+        let f = fx();
+        let s = f.set(&[&f.p("My Notes")], &[]);
+        let enc = f.p("My Notes/plan.md").replace('/', "%2F");
+        for text in [
+            enc.replace(' ', "+"),
+            enc.replace(' ', "%20"),
+            format!("https://x/?f={}", enc.replace(' ', "+")),
+        ] {
+            assert!(
+                !hits(&s, json!({ "url": text }), &f.base).is_empty(),
+                "{text}"
+            );
+        }
+        // `%2B` stays a plus sign, so it is not a space.
+        let plus = f.p("My%2BNotes/plan.md");
+        assert!(hits(&s, json!({ "url": plus }), &f.base).is_empty());
+        // Broken escapes are left as they are.
+        assert!(hits(&s, json!({ "url": "%zz%2%" }), &f.base).is_empty());
     }
 
     #[test]

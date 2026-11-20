@@ -8,7 +8,7 @@ use globset::{GlobBuilder, GlobMatcher};
 
 use crate::config::Config;
 use crate::project::Record;
-use crate::{Env, paths};
+use crate::{Env, Error, paths};
 
 const GLOB_META: [char; 4] = ['*', '?', '[', '{'];
 
@@ -21,8 +21,6 @@ pub struct Set {
     roots: Vec<PathBuf>,
     /// Private globs, each written as given and with its literal prefix canonicalised.
     globs: Vec<GlobMatcher>,
-    /// The literal directory each private glob starts from, as written and resolved.
-    glob_dirs: Vec<PathBuf>,
     /// Every way a private root can be written inside a string.
     forms: Vec<String>,
     allow_roots: Vec<PathBuf>,
@@ -31,9 +29,10 @@ pub struct Set {
 
 impl Set {
     /// Builds the set from the project's notes and `private` lists, the user-wide
-    /// `private` list and the project's data directory, which holds the verbatim
-    /// index of private files. `allow` entries come from the record and the config.
-    pub fn load(rec: &Record, cfg: &Config, env: Env, slug: &str) -> Set {
+    /// `private` list and the project's data directory. `allow` entries come from
+    /// the record and the config. A relative private entry is an error: it has
+    /// nothing to resolve against, and dropping it would protect nothing.
+    pub fn load(rec: &Record, cfg: &Config, env: Env, slug: &str) -> Result<Set, Error> {
         let r = Resolver::default();
         let home = paths::home(env);
         let mut home_variants = r.variants(&home);
@@ -43,28 +42,40 @@ impl Set {
             home_variants,
             roots: Vec::new(),
             globs: Vec::new(),
-            glob_dirs: Vec::new(),
             forms: Vec::new(),
             allow_roots: Vec::new(),
             allow_globs: Vec::new(),
         };
         let private = rec.notes.iter().chain(&rec.private).chain(&cfg.private);
         for entry in private {
-            s.add_private(&r, entry);
+            let abs = s
+                .absolute(entry)
+                .ok_or_else(|| Error::RelativePrivate(entry.clone()))?;
+            s.add_private(&r, entry, &abs);
         }
         if let Ok(dir) = paths::project_dir(env, slug) {
-            s.add_private(&r, &dir.display().to_string());
+            let dir = dir.display().to_string();
+            s.add_private(&r, &dir, &dir);
         }
         for entry in rec.allow.iter().chain(&cfg.allow) {
             s.add_allow(&r, entry);
         }
         s.forms.sort();
         s.forms.dedup();
-        s
+        Ok(s)
     }
 
     pub fn contains(&self, abs: &Path) -> bool {
         self.contains_with(&Resolver::default(), abs)
+    }
+
+    /// Judged on the resolved path alone, as `allowed_with` is: a lexical spelling
+    /// inside a private root must not count when a symlink leads out of it.
+    pub fn holds(&self, abs: &Path) -> bool {
+        let v = Resolver::default().resolve(abs);
+        self.roots.iter().any(|root| v.starts_with(root))
+            || v.ancestors()
+                .any(|a| self.globs.iter().any(|g| g.is_match(a)))
     }
 
     pub fn allowed(&self, abs: &Path) -> bool {
@@ -74,11 +85,6 @@ impl Set {
     /// Private directories and files, each as written and resolved.
     pub(crate) fn roots(&self) -> &[PathBuf] {
         &self.roots
-    }
-
-    /// Where files matching a private glob can be found.
-    pub(crate) fn glob_dirs(&self) -> &[PathBuf] {
-        &self.glob_dirs
     }
 
     pub(crate) fn forms(&self) -> &[String] {
@@ -173,17 +179,10 @@ impl Set {
 
     /// `~`, `$HOME` and `${HOME}` for the home directory, as a prefix only.
     pub(crate) fn expand_home(&self, text: &str) -> Option<PathBuf> {
-        for pre in ["${HOME}", "$HOME", "~"] {
-            if let Some(rest) = text.strip_prefix(pre) {
-                if rest.is_empty() {
-                    return Some(self.home.clone());
-                }
-                if let Some(rel) = rest.strip_prefix('/') {
-                    return Some(self.home.join(rel));
-                }
-            }
-        }
-        None
+        home_rest(text).map(|rel| match rel {
+            "" => self.home.clone(),
+            rel => self.home.join(rel),
+        })
     }
 
     /// Absolute path for an entry as the user wrote it; `None` for a relative one,
@@ -195,23 +194,16 @@ impl Set {
         entry.starts_with('/').then(|| entry.to_string())
     }
 
-    fn add_private(&mut self, r: &Resolver, entry: &str) {
-        let Some(abs) = self.absolute(entry) else {
-            return;
-        };
+    fn add_private(&mut self, r: &Resolver, entry: &str, abs: &str) {
         if abs.contains(GLOB_META) {
-            match r.glob(&abs) {
-                Some(mut g) => {
-                    self.globs.append(&mut g);
-                    self.glob_dirs
-                        .extend(r.variants(Path::new(&literal_dir(&abs))));
-                }
+            match r.glob(abs) {
+                Some(mut g) => self.globs.append(&mut g),
                 // A broken glob still protects its directory, which errs towards asking.
-                None => self.add_root(r, entry, &literal_dir(&abs)),
+                None => self.add_root(r, entry, &literal_dir(abs)),
             }
             // A directory whose name has a glob character is a root as well.
         }
-        self.add_root(r, entry, &abs);
+        self.add_root(r, entry, abs);
     }
 
     fn add_allow(&mut self, r: &Resolver, entry: &str) {
@@ -253,6 +245,25 @@ impl Set {
             .extend(forms.into_iter().filter(|f| !f.is_empty() && f != "/"));
         self.roots.extend(variants);
     }
+}
+
+/// The path after a leading `~`, `$HOME` or `${HOME}`, empty for the home
+/// directory itself; `None` when the text does not start with one.
+fn home_rest(text: &str) -> Option<&str> {
+    ["${HOME}", "$HOME", "~"].iter().find_map(|pre| {
+        let rest = text.strip_prefix(pre)?;
+        if rest.is_empty() {
+            Some(rest)
+        } else {
+            rest.strip_prefix('/')
+        }
+    })
+}
+
+/// Whether an entry is written from the home directory, which the privacy
+/// check expands itself.
+pub fn names_home(entry: &str) -> bool {
+    home_rest(entry).is_some()
 }
 
 /// The directory part of a glob before its first metacharacter.

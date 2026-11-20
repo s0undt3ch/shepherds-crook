@@ -12,6 +12,8 @@ pub enum Error {
     Schema { slug: String },
     #[error("config {path}: {msg}")]
     Config { path: String, msg: String },
+    #[error("private entry is not absolute: {0}")]
+    RelativePrivate(String),
     #[error("claude agents: {0}")]
     Agents(String),
     #[error("database error: {0}")]

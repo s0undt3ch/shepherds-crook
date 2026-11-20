@@ -6,6 +6,7 @@ use std::path::Path;
 use clap::Subcommand;
 use rusqlite::Connection;
 
+use crate::privacy::names_home;
 use crate::project::{self, ItemKind};
 use crate::store::{Mode, Store, Touch};
 use crate::{Env, Error};
@@ -16,7 +17,7 @@ pub enum ProjectCmd {
     AddRepo { path: String },
     /// Add a notes folder (absolute path; also private)
     AddNotes { path: String },
-    /// Add a private path or glob
+    /// Add a private path or glob (relative to the current directory, `~` or `$HOME`)
     AddPrivate { value: String },
     /// Add an allow entry for a known false positive
     AddAllow { value: String },
@@ -34,12 +35,20 @@ pub enum ProjectCmd {
     SetStatus,
 }
 
-/// Repo and notes paths may be relative to where the user ran the command.
+/// Repo, notes and private paths may be relative to where the user ran the
+/// command. A private entry is stored absolute and cleaned, or as written from
+/// the home directory, which the privacy check expands itself.
 fn resolve(kind: ItemKind, value: &str, cwd: &Path) -> String {
-    if matches!(kind, ItemKind::Repo | ItemKind::Notes) && Path::new(value).is_relative() {
-        cwd.join(value).display().to_string()
-    } else {
-        value.to_string()
+    match kind {
+        ItemKind::Repo | ItemKind::Notes if Path::new(value).is_relative() => {
+            cwd.join(value).display().to_string()
+        }
+        // An empty value goes on as it is, for `project::add` to refuse.
+        ItemKind::Private if !value.trim().is_empty() && !names_home(value) => {
+            let joined = cwd.join(value).display().to_string();
+            project::clean_path(&joined).unwrap_or(joined)
+        }
+        _ => value.to_string(),
     }
 }
 
@@ -208,5 +217,52 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn relative_private_entries_resolve_against_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_for(tmp.path());
+        project::init(&env, "p").unwrap();
+        let cwd = Path::new("/work/here");
+        for value in [
+            "../notes/./secret/**",
+            "plain",
+            "/abs/../abs/x/",
+            "~/vault",
+            "$HOME/v",
+            "${HOME}/w",
+        ] {
+            let cmd = ProjectCmd::AddPrivate {
+                value: value.into(),
+            };
+            run(&env, "p", cmd, cwd, &mut Cursor::new("")).unwrap();
+        }
+        let s = Store::open(&env, "p", Mode::ReadWrite).unwrap();
+        let private = s.read(|c| Ok(project::get(c)?.private)).unwrap();
+        assert_eq!(
+            private,
+            [
+                "/work/notes/secret/**",
+                "/work/here/plain",
+                "/abs/x",
+                "~/vault",
+                "$HOME/v",
+                "${HOME}/w",
+            ]
+        );
+        drop(s);
+        let cmd = ProjectCmd::AddPrivate { value: " ".into() };
+        let e = run(&env, "p", cmd, cwd, &mut Cursor::new("")).unwrap_err();
+        assert!(e.to_string().contains("empty value"), "{e}");
+        // `remove` resolves the same way.
+        let cmd = ProjectCmd::Remove {
+            kind: ItemKind::Private,
+            value: "plain".into(),
+        };
+        run(&env, "p", cmd, cwd, &mut Cursor::new("")).unwrap();
+        let s = Store::open(&env, "p", Mode::ReadWrite).unwrap();
+        let private = s.read(|c| Ok(project::get(c)?.private)).unwrap();
+        assert!(!private.iter().any(|p| p.ends_with("plain")), "{private:?}");
     }
 }

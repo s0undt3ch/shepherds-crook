@@ -1,12 +1,13 @@
-//! Review Focus 4: a large `Write` is checked inside the hook's budget.
-//! Ignored by default because it is only meaningful in a release build:
+//! Large inputs are checked inside the hook's budget, or answered with an ask
+//! when they cannot be. Ignored by default because they are only meaningful in
+//! a release build:
 //! `cargo nextest run --release --run-ignored only`.
 
 mod common;
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use common::crook;
@@ -16,9 +17,6 @@ use crook::store::{Mode, Store, Touch};
 use serde_json::{Value, json};
 
 const BUDGET: Duration = Duration::from_millis(500);
-const INDEX_BYTES: u64 = 7 << 20;
-const NOTE_FILES: usize = 12;
-const NOTE_BYTES: usize = 900 << 10;
 const WRITE_BYTES: usize = 5 << 20;
 
 /// Deterministic prose-like text: lines of 6 to 14 words from a fixed
@@ -57,9 +55,6 @@ fn prose(bytes: usize, seed: u64, min_words: usize) -> String {
     out
 }
 
-const SECRET: &str = "the private quarterly migration moves billing onto the new ledger";
-const REPO_FILES: usize = 3000;
-
 struct World {
     _tmp: tempfile::TempDir,
     base: PathBuf,
@@ -68,8 +63,7 @@ struct World {
 }
 
 impl World {
-    /// A project with private notes whose index comes to at least 7 MB (asserted
-    /// on the first call), and an empty working directory.
+    /// A project with a private notes folder, and an empty working directory.
     fn new() -> World {
         let tmp = tempfile::tempdir().unwrap();
         let base = std::fs::canonicalize(tmp.path()).unwrap();
@@ -79,11 +73,7 @@ impl World {
         project::init(env, "p").unwrap();
         let notes = base.join("notes");
         std::fs::create_dir_all(&notes).unwrap();
-        for i in 0..NOTE_FILES {
-            let text = prose(NOTE_BYTES, 100 + i as u64, 14);
-            std::fs::write(notes.join(format!("n{i}.md")), text).unwrap();
-        }
-        std::fs::write(notes.join("secret.md"), format!("{SECRET}\n")).unwrap();
+        std::fs::write(notes.join("secret.md"), "x\n").unwrap();
         let repo = base.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         let w = World {
@@ -104,40 +94,6 @@ impl World {
             project::add(tx, kind, &path.display().to_string()).map(|_| ())
         })
         .unwrap();
-    }
-
-    /// A real git repo of tracked, realistic text, added to the project.
-    fn track_repo(&self) {
-        for i in 0..REPO_FILES {
-            let dir = self.repo.join(format!("d{}", i % 50));
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(
-                dir.join(format!("f{i}.txt")),
-                prose(2 << 10, 5000 + i as u64, 8),
-            )
-            .unwrap();
-        }
-        for args in [
-            &["init", "-q"][..],
-            &["add", "-A"],
-            &["commit", "-q", "-m", "x"],
-        ] {
-            let out = Command::new("git")
-                .arg("-C")
-                .arg(&self.repo)
-                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-                .args(["-c", "commit.gpgsign=false"])
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "{args:?}");
-        }
-        self.add(ItemKind::Repo, &self.repo);
-    }
-
-    fn index_bytes(&self) -> u64 {
-        let index = self.base.join("crook/p/index/index.bin");
-        std::fs::metadata(index).unwrap().len()
     }
 
     /// One `Write` into the working directory through the real binary: how long
@@ -177,93 +133,41 @@ impl World {
     }
 }
 
-fn assert_asks_about_secret(v: &Value, took: Duration) {
+fn reason(v: &Value) -> &str {
     let h = &v["hookSpecificOutput"];
     assert_eq!(h["permissionDecision"], "ask", "{v}");
-    let reason = h["permissionDecisionReason"].as_str().unwrap();
-    assert!(reason.starts_with("crook: private reference: "), "{reason}");
-    assert!(took < BUDGET, "checked in {took:?}, budget {BUDGET:?}");
+    h["permissionDecisionReason"].as_str().unwrap()
 }
 
+/// A 5 MB `Write` that names a private file at its end.
 #[test]
 #[ignore = "release-only budget test"]
 fn large_write_budget() {
     let w = World::new();
-    // The first call builds the index; the budget is for the calls after it.
-    let (cold, _) = w.write("hello");
-    let index_bytes = w.index_bytes();
-    assert!(
-        index_bytes >= INDEX_BYTES,
-        "index is only {index_bytes} bytes"
-    );
-
+    let secret = w.notes.join("secret.md").display().to_string();
     let mut content = prose(WRITE_BYTES, 7, 6);
-    content.push_str(SECRET);
-    content.push('\n');
+    content.push_str(&format!("see {secret}\n"));
     let (took, v) = w.write(&content);
-    eprintln!("index {index_bytes} bytes, cold build {cold:?}, 5 MB write checked in {took:?}");
-    assert_asks_about_secret(&v, took);
-    assert!(v.to_string().contains("secret.md"), "{v}");
+    eprintln!("5 MB write checked in {took:?}");
+    assert_eq!(reason(&v), format!("crook: private reference: {secret}"));
+    assert!(took < BUDGET, "checked in {took:?}, budget {BUDGET:?}");
 }
 
-/// A Write quoting megabytes of private notes, with a project repo of thousands
-/// of tracked files to subtract against: the repo search is cut off at its
-/// deadline, every hit stands, and the answer is still an ask inside the budget.
+/// 200,000 distinct relative paths cost a filesystem lookup each: past the
+/// check's deadline the hook asks instead of running on.
 #[test]
 #[ignore = "release-only budget test"]
-fn quoting_write_with_big_repo_budget() {
+fn too_large_to_check_asks_in_budget() {
     let w = World::new();
-    w.track_repo();
-    w.write("hello");
-    let mut content = String::new();
-    for i in 0..4 {
-        content.push_str(&std::fs::read_to_string(w.notes.join(format!("n{i}.md"))).unwrap());
+    let mut cmd = String::from("cat");
+    for i in 0..200_000 {
+        cmd.push_str(&format!(" t{i}/x"));
     }
-    let (took, v) = w.write(&content);
-    eprintln!(
-        "{} byte quote of private notes, {REPO_FILES}-file repo: {took:?}",
-        content.len()
+    let (took, v) = w.call("Bash", json!({ "command": cmd }));
+    eprintln!("{} byte command of relative paths: {took:?}", cmd.len());
+    assert_eq!(
+        reason(&v),
+        "crook: private reference check: input too large to check"
     );
-    assert_asks_about_secret(&v, took);
-}
-
-/// An `Edit` of a large existing file (its content is public text to subtract
-/// against, and does not hold the quoted lines) quoting 20,000 private lines, all
-/// of which a tracked repo file also holds, plus one that nothing public holds.
-#[test]
-#[ignore = "release-only budget test"]
-fn edit_of_large_file_budget() {
-    let w = World::new();
-    w.track_repo();
-    let mut quoted = String::new();
-    for i in 0..2 {
-        let text = std::fs::read_to_string(w.notes.join(format!("n{i}.md"))).unwrap();
-        quoted.extend(text.lines().take(10_000).flat_map(|l| [l, "\n"]));
-    }
-    std::fs::write(w.repo.join("public-copy.txt"), &quoted).unwrap();
-    let git = |args: &[&str]| {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(&w.repo)
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{args:?}");
-    };
-    git(&["add", "public-copy.txt"]);
-    git(&["commit", "-q", "-m", "copy"]);
-    let target = w.repo.join("big.md");
-    std::fs::write(&target, prose(6 << 20, 99, 6)).unwrap();
-    w.write("hello");
-    let new_string = format!("{quoted}{SECRET}\n");
-    let input = json!({"file_path": target.display().to_string(), "old_string": "x",
-        "new_string": new_string});
-    let (took, v) = w.call("Edit", input);
-    eprintln!(
-        "Edit of a 6 MB file quoting {} bytes: {took:?}",
-        new_string.len()
-    );
-    assert_asks_about_secret(&v, took);
+    assert!(took < BUDGET, "answered in {took:?}, budget {BUDGET:?}");
 }

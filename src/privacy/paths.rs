@@ -36,12 +36,27 @@ fn splits_token(c: char) -> bool {
 }
 
 fn has_glob_char(s: &str) -> bool {
-    s.contains(['*', '?', '['])
+    s.contains(['*', '?', '[', '{'])
 }
 
-/// Every private path the call's input names, each text once. `tool` matters
-/// for the bare-name rule, which covers the `command` field of Bash and Monitor
-/// only: a markdown body with `*` or `[` must not ask.
+/// The command with shell quotes dropped and `\<char>` unescaped. Detection
+/// only, not a lexer: it lets `My\ Notes` and `"$HOME"/notes` read as paths.
+fn normalise(cmd: &str) -> String {
+    let mut out = String::with_capacity(cmd.len());
+    let mut it = cmd.chars();
+    while let Some(c) = it.next() {
+        match c {
+            '\\' => out.extend(it.next()),
+            '"' | '\'' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Every private path the call's input names, each text once, in document order.
+/// `tool` matters for the bare-name rule, which covers the `command` field of
+/// Bash and Monitor only: a markdown body with `*` or `[` must not ask.
 pub fn find_paths(tool: &str, input: &Value, cwd: &Path, s: &Set) -> Vec<Hit> {
     let r = Resolver::default();
     let mut f = Finder {
@@ -52,23 +67,31 @@ pub fn find_paths(tool: &str, input: &Value, cwd: &Path, s: &Set) -> Vec<Hit> {
         hits: Vec::new(),
         seen: HashSet::new(),
         tokens: HashSet::new(),
+        entries: None,
     };
     // `command` of Bash and Monitor, found by identity so a nested field of the same name is not.
     let command = matches!(tool, "Bash" | "Monitor")
         .then(|| input.get("command").and_then(Value::as_str))
         .flatten();
-    let mut stack = vec![input];
-    while let Some(v) = stack.pop() {
-        match v {
-            Value::String(t) => f.scan(t, command.is_some_and(|c| std::ptr::eq(c, t.as_str()))),
-            Value::Array(a) => stack.extend(a),
-            Value::Object(o) => {
-                for (k, v) in o {
-                    f.scan(k, false);
-                    stack.push(v);
+    enum Item<'v> {
+        Val(&'v Value),
+        Key(&'v str),
+    }
+    let mut stack = vec![Item::Val(input)];
+    while let Some(item) = stack.pop() {
+        match item {
+            Item::Key(k) => f.scan(k, false),
+            Item::Val(Value::String(t)) => {
+                f.scan(t, command.is_some_and(|c| std::ptr::eq(c, t.as_str())));
+            }
+            Item::Val(Value::Array(a)) => stack.extend(a.iter().rev().map(Item::Val)),
+            Item::Val(Value::Object(o)) => {
+                for (k, v) in o.iter().rev() {
+                    stack.push(Item::Val(v));
+                    stack.push(Item::Key(k));
                 }
             }
-            _ => {}
+            Item::Val(_) => {}
         }
     }
     f.hits
@@ -83,6 +106,8 @@ struct Finder<'a> {
     seen: HashSet<String>,
     /// Tokens already judged, so a repeated one costs nothing.
     tokens: HashSet<(String, bool)>,
+    /// Names in a private `cwd`, read once.
+    entries: Option<Vec<String>>,
 }
 
 impl Finder<'_> {
@@ -96,15 +121,62 @@ impl Finder<'_> {
     }
 
     fn scan(&mut self, text: &str, is_command: bool) {
+        self.pass(text, is_command);
+        if is_command {
+            let n = normalise(text);
+            if n != text {
+                self.pass(&n, true);
+            }
+        }
+    }
+
+    fn pass(&mut self, text: &str, is_command: bool) {
         self.roots(text);
-        if is_command && self.cwd_private {
-            for form in ["$(pwd)", "`pwd`"] {
+        let bare = is_command && self.cwd_private;
+        if bare {
+            for form in ["$(pwd)", "`pwd`", "$(pwd -P)", "`pwd -P`"] {
                 if text.contains(form) {
                     self.push(form, HitKind::Bare);
                 }
             }
+            self.entry_names(text);
         }
-        self.tokens(text, is_command && self.cwd_private, is_command);
+        self.tokens(text, bare, is_command);
+    }
+
+    /// A name in the private `cwd` written as a delimited substring, which finds
+    /// names with spaces however the shell quoted them.
+    fn entry_names(&mut self, text: &str) {
+        let cwd = self.cwd;
+        let names = self.entries.get_or_insert_with(|| {
+            std::fs::read_dir(cwd)
+                .map(|d| {
+                    d.filter_map(Result::ok)
+                        .filter_map(|e| e.file_name().into_string().ok())
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        let mut found = Vec::new();
+        for name in names.iter() {
+            for (start, _) in text.match_indices(name.as_str()) {
+                let end = start + name.len();
+                let before = text[..start].chars().next_back();
+                let after = text[end..].chars().next();
+                let edge = |c: char, extra: char| {
+                    ends_path(c) || splits_token(c) || c == '/' || c == extra
+                };
+                if before.is_none_or(|c| edge(c, '{')) && after.is_none_or(|c| edge(c, '}')) {
+                    found.push(name.clone());
+                    break;
+                }
+            }
+        }
+        for name in found {
+            if !self.s.allowed_with(self.r, &self.cwd.join(&name)) {
+                self.push(&name, HitKind::Bare);
+            }
+        }
     }
 
     /// Root pass: each spelling of each private root, where the next character
@@ -140,7 +212,7 @@ impl Finder<'_> {
             return Some(p);
         }
         if shell {
-            for pre in ["${PWD}", "$PWD"] {
+            for pre in ["${PWD}", "$PWD", "${OLDPWD}", "$OLDPWD", "~+"] {
                 if let Some(rest) = tok.strip_prefix(pre) {
                     if rest.is_empty() {
                         return Some(self.cwd.to_path_buf());
@@ -179,7 +251,14 @@ impl Finder<'_> {
             return;
         }
         if let Some(p) = self.abs(tok, shell) {
-            if self.s.contains_with(self.r, &p) && !self.s.allowed_with(self.r, &p) {
+            let full = p.display().to_string();
+            let hit = if shell && has_glob_char(&full) {
+                // The shell expands the glob, so the directory before it decides.
+                self.s.glob_reaches_private(self.r, &full)
+            } else {
+                self.s.contains_with(self.r, &p) && !self.s.allowed_with(self.r, &p)
+            };
+            if hit {
                 self.push(tok, HitKind::Token);
             }
             return;
@@ -512,6 +591,124 @@ mod tests {
         texts.sort();
         texts.dedup();
         assert_eq!(n, texts.len(), "{h:?}");
+    }
+
+    #[test]
+    fn quoted_and_escaped_spellings() {
+        let f = fx();
+        fs::create_dir_all(f.home.join("Documents/My Notes")).unwrap();
+        fs::create_dir_all(f.home.join("notes")).unwrap();
+        let s = f.set(&["~/Documents/My Notes", "~/notes"], &[]);
+        for cmd in [
+            "cp ~/Documents/My\\ Notes/x.md /tmp",
+            "cat \"$HOME\"/notes/plan.md",
+            "cat '$HOME'/notes/plan.md",
+            "cat \"~/Documents/My Notes/x.md\"",
+        ] {
+            assert!(!bash(&s, cmd, &f.base).is_empty(), "{cmd}");
+        }
+        // a private cwd with a name that has a space
+        let notes = f.home.join("notes");
+        fs::write(notes.join("My Note.md"), "x").unwrap();
+        for cmd in [
+            "cp \"My Note.md\" /tmp/",
+            "cp My\\ Note.md /tmp/",
+            "cp 'My Note.md' /tmp/",
+        ] {
+            assert!(!bash(&s, cmd, &notes).is_empty(), "{cmd}");
+        }
+        // public cwd: the name alone doesn't hit
+        let repo = f.base.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("My Note.md"), "x").unwrap();
+        assert!(bash(&s, "cp \"My Note.md\" /tmp/", &repo).is_empty());
+    }
+
+    #[test]
+    fn braces_and_globs_in_paths() {
+        let f = fx();
+        let notes = f.home.join("notes");
+        fs::create_dir_all(&notes).unwrap();
+        fs::write(notes.join("plan.md"), "x").unwrap();
+        let s = f.set(&["~/notes"], &[]);
+        assert!(!bash(&s, "cp {plan,other}.md /tmp", &notes).is_empty());
+        assert!(!bash(&s, "cat ~/{notes,x}/a", &f.base).is_empty());
+        assert!(!bash(&s, "cat ~/no*/a.md", &f.base).is_empty());
+        assert!(!bash(&s, "cat ~/*/a.md", &f.base).is_empty());
+        assert!(!bash(&s, &format!("cat {}/n[o]tes/a", f.home.display()), &f.base).is_empty());
+        assert!(bash(&s, "cat ~/zz*/a.md", &f.base).is_empty());
+        // braces in a public cwd or outside a command are not a hit
+        assert!(bash(&s, "cp {a,b}.md /tmp", &f.base).is_empty());
+        assert!(hits(&s, json!({"content": "cat ~/no*/a.md"}), &f.base).is_empty());
+    }
+
+    #[test]
+    fn pwd_spellings_in_private_cwd() {
+        let f = fx();
+        let notes = f.home.join("notes");
+        fs::create_dir_all(&notes).unwrap();
+        let s = f.set(&["~/notes"], &[]);
+        for cmd in [
+            "cp $(pwd -P)/a /tmp",
+            "cp $OLDPWD/a /tmp",
+            "cp ${OLDPWD}/a /tmp",
+            "cp ~+/a /tmp",
+            "cp ~+ /tmp",
+        ] {
+            assert!(!bash(&s, cmd, &notes).is_empty(), "{cmd}");
+            assert!(bash(&s, cmd, &f.base).is_empty(), "public {cmd}");
+        }
+    }
+
+    #[test]
+    fn allow_does_not_follow_a_symlink_out() {
+        let f = fx();
+        let notes = f.base.join("notes");
+        fs::create_dir_all(notes.join("public")).unwrap();
+        fs::create_dir_all(notes.join("secret")).unwrap();
+        symlink("../secret", notes.join("public/link")).unwrap();
+        let rec = Record {
+            notes: vec![notes.display().to_string()],
+            allow: vec![notes.join("public").display().to_string()],
+            ..Record::default()
+        };
+        let s = f.set_rec(&rec, &Config::default());
+        assert!(s.allowed(&notes.join("public/a.md")));
+        assert!(!s.allowed(&notes.join("public/link/a.md")));
+        let h = hits(
+            &s,
+            json!({"p": notes.join("public/link/a.md").display().to_string()}),
+            &f.base,
+        );
+        assert!(!h.is_empty());
+        assert!(
+            hits(
+                &s,
+                json!({"p": notes.join("public/a.md").display().to_string()}),
+                &f.base
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn hits_come_in_document_order() {
+        let f = fx();
+        let s = f.set(&["/abs/notes"], &[]);
+        let input = json!({"a": ["/abs/notes/1", ["/abs/notes/2"], {"k": "/abs/notes/3"}], "b": "/abs/notes/4"});
+        let order: Vec<_> = hits(&s, input, &f.base)
+            .into_iter()
+            .map(|h| h.text)
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "/abs/notes/1",
+                "/abs/notes/2",
+                "/abs/notes/3",
+                "/abs/notes/4"
+            ]
+        );
     }
 
     #[test]

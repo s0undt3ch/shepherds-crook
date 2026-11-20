@@ -80,10 +80,37 @@ impl Set {
         })
     }
 
+    /// Judged on the resolved path alone: a lexical spelling inside an allow
+    /// root must not allow a symlink that leads out of it. A missing path
+    /// resolves to its existing prefix plus the lexical tail.
     pub(crate) fn allowed_with(&self, r: &Resolver, abs: &Path) -> bool {
-        r.variants(abs).iter().any(|v| {
-            self.allow_roots.iter().any(|root| v.starts_with(root))
-                || self.allow_globs.iter().any(|g| g.is_match(v))
+        let v = r.resolve(abs);
+        self.allow_roots.iter().any(|root| v.starts_with(root))
+            || self.allow_globs.iter().any(|g| g.is_match(&v))
+    }
+
+    /// A glob starting with this literal prefix may expand into a private root:
+    /// the prefix is inside a root, or a root's path starts with it (`~/no*`
+    /// against `~/notes`). The directory part is canonicalised, the partial
+    /// segment kept as written.
+    pub(crate) fn glob_reaches_private(&self, r: &Resolver, full: &str) -> bool {
+        let end = full.find(GLOB_META).unwrap_or(full.len());
+        let dir = literal_dir(full);
+        let partial = full.get(dir.len()..end).unwrap_or_default();
+        if dir.is_empty() {
+            return false;
+        }
+        r.variants(Path::new(&dir)).iter().any(|v| {
+            let pre = format!(
+                "{}{}",
+                v.display().to_string().trim_end_matches('/'),
+                partial
+            );
+            self.contains_with(r, v)
+                || self
+                    .roots
+                    .iter()
+                    .any(|root| root.display().to_string().starts_with(&pre))
         })
     }
 
@@ -168,7 +195,7 @@ impl Set {
 }
 
 /// The directory part of a glob before its first metacharacter.
-fn literal_dir(pattern: &str) -> String {
+pub(crate) fn literal_dir(pattern: &str) -> String {
     let end = pattern.find(GLOB_META).unwrap_or(pattern.len());
     match pattern[..end].rfind('/') {
         Some(0) => "/".to_string(),

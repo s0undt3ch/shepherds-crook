@@ -14,6 +14,7 @@ pub mod hook;
 pub mod launch;
 pub mod modverb;
 pub mod paths;
+pub mod privacy;
 pub mod project;
 pub mod settings;
 pub mod store;

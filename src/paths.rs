@@ -19,7 +19,7 @@ fn get(env: Env, key: &str) -> Option<String> {
 }
 
 /// Built by hand: the `dirs` crate gives `~/Library/Application Support` on macOS.
-fn home(env: Env) -> PathBuf {
+pub(crate) fn home(env: Env) -> PathBuf {
     // A missing HOME resolves under `/`, so writes fail loudly instead of landing in the cwd.
     PathBuf::from(get(env, "HOME").unwrap_or_else(|| "/".to_string()))
 }

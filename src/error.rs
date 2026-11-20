@@ -10,6 +10,10 @@ pub enum Error {
     Stale,
     #[error("run crook open {slug}")]
     Schema { slug: String },
+    #[error("config {path}: {msg}")]
+    Config { path: String, msg: String },
+    #[error("claude agents: {0}")]
+    Agents(String),
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),
     #[error("io error: {0}")]

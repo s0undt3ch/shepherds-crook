@@ -5,9 +5,8 @@ use rusqlite::Connection;
 use crate::store::{Mode, Store};
 use crate::{Env, Error, paths};
 
-/// Slugs of every project whose database holds `child`. A database that
-/// cannot be opened or read is skipped: it cannot be the one meant.
-fn projects_with(env: Env, child: &str) -> Vec<String> {
+/// Slugs of every project that has a database, sorted.
+pub fn all_slugs(env: Env) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(paths::data_dir(env)) else {
         return Vec::new();
     };
@@ -16,13 +15,20 @@ fn projects_with(env: Env, child: &str) -> Vec<String> {
         .filter(|e| e.path().join("crook.db").is_file())
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|slug| paths::valid_slug(slug).is_ok())
-        .filter(|slug| {
-            Store::open(env, slug, Mode::ReadOnly)
-                .and_then(|s| s.read(|c| has_child(c, child)))
-                .unwrap_or(false)
-        })
         .collect();
     slugs.sort();
+    slugs
+}
+
+/// Slugs of every project whose database holds `child`. A database that
+/// cannot be opened or read is skipped: it cannot be the one meant.
+fn projects_with(env: Env, child: &str) -> Vec<String> {
+    let mut slugs = all_slugs(env);
+    slugs.retain(|slug| {
+        Store::open(env, slug, Mode::ReadOnly)
+            .and_then(|s| s.read(|c| has_child(c, child)))
+            .unwrap_or(false)
+    });
     slugs
 }
 

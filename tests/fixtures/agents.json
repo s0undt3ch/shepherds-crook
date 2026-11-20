@@ -1,0 +1,38 @@
+[
+  {
+    "pid": 4242,
+    "cwd": "/work/repo/.worktrees/c1",
+    "kind": "interactive",
+    "startedAt": 1794995899876,
+    "sessionId": "aaaa-interactive",
+    "name": "c1",
+    "status": "idle"
+  },
+  {
+    "id": "bbbb0000",
+    "cwd": "/work/repo/.worktrees/c2",
+    "kind": "background",
+    "startedAt": 1789723217042,
+    "sessionId": "bbbb-background",
+    "name": "bbbb0000 | c2",
+    "state": "blocked"
+  },
+  {
+    "pid": 4343,
+    "cwd": "/work/repo/.worktrees/c1/sub",
+    "kind": "interactive",
+    "startedAt": 1795029041748,
+    "sessionId": "cccc-orphan",
+    "name": "stray",
+    "status": "idle"
+  },
+  {
+    "pid": 4444,
+    "cwd": "/elsewhere",
+    "kind": "interactive",
+    "startedAt": 1795029795232,
+    "sessionId": "dddd-elsewhere",
+    "name": "other",
+    "status": "idle"
+  }
+]

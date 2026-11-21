@@ -100,8 +100,8 @@ The design lists them in full. The ones to know first:
   backslash spelling and a hand-built expansion.
 - **`git worktree remove` deletes ignored files** in the worktree, such as `.env` and build output. `crook stop` and
   `crook wipe` use it.
-- **Spawning before the project home is trusted fails** at `--add-dir`. Open the project once and accept the trust prompt
-  first.
+- **A project home that is not trusted yet** makes `claude --bg` refuse with `Workspace not trusted`, so spawning
+  without herdr fails. Open the project once and accept the trust prompt first.
 - **`--add-dir` trust is per session.**
 - **Other mods.** A higher-tier mod can pass events past crook's hooks. `crook open` names such mods.
 

@@ -33,17 +33,26 @@ step() {
   read -r -p "Press Enter when done (Ctrl-C to stop) " _
 }
 
+notes="$(mktemp -d "${TMPDIR:-/tmp}/crook-e2e-notes.XXXXXX")"
+echo "e2e private note" > "$notes/plan.md"
+
 "$crook" init "$slug"
 "$crook" project "$slug" add-repo "$repo"
+"$crook" project "$slug" add-notes "$notes"
+
+# Every crook command below must see the same throwaway state, so a second terminal needs these too.
+echo
+echo "Paste these into every other terminal or pane you use for this checklist:"
+printf '  export XDG_STATE_HOME=%q XDG_DATA_HOME=%q\n' "$XDG_STATE_HOME" "$XDG_DATA_HOME"
 
 step "Open the orchestrator" \
   "a Claude Code session named crook-$slug, in the project home; with herdr, a crook-$slug workspace with a dog-labelled tab" \
-  "$crook open $slug   (in another terminal or pane; accept the trust prompt once)"
+  "$crook open $slug   (in another terminal or pane with the exports above; accept the trust prompt once)"
 step "Spawn two children" \
   "ask the orchestrator to spawn children 'one' and 'two' in $repo; each gets a worktree under $repo/.worktrees/$slug/ on branch crook/$slug/<child>; with herdr, a tab each" \
   "git -C $repo worktree list"
 step "Task a child" \
-  "ask the orchestrator to task 'one' with a small job; the child receives 'crook: you have tasks waiting', calls take_task and starts" ""
+  "ask the orchestrator to task both 'one' and 'two' with a small job each; each child receives 'crook: you have tasks waiting', calls take_task and starts" ""
 step "A child asks: need" \
   "tell 'one' to ask you a question with need; it ends its turn; the orchestrator's status line shows 1 waiting on you; with herdr, a notification" ""
 step "Jump to the waiting child" \
@@ -56,8 +65,7 @@ step "Finish: done" \
 step "Clear a child" \
   "run /clear in 'two' while it has a current task; the project card returns with the task" ""
 step "Privacy check" \
-  "ask a child to run a Bash command that names a path inside a notes folder; it asks you. Read of the same note must not ask" \
-  "$crook project $slug add-notes <a notes folder>   (before spawning)"
+  "ask a child to run a Bash command that names $notes/plan.md (added as a notes folder at the start); it asks you. Read of the same note must not ask" ""
 step "Resume after a kill" \
   "kill a child's claude process, then resume it; it restarts with the same session id" \
   "$crook resume $slug/two"
@@ -72,4 +80,4 @@ step "Clean up" \
   "$crook stop $slug/two && $crook wipe $slug"
 
 echo
-echo "Checklist finished. Throwaway directories: $repo $XDG_STATE_HOME $XDG_DATA_HOME"
+echo "Checklist finished. Throwaway directories: $repo $notes $XDG_STATE_HOME $XDG_DATA_HOME"

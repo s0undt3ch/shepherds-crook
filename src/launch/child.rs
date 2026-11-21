@@ -58,6 +58,10 @@ pub trait Launcher {
     fn worktree_list(&self, repo: &Path) -> Result<Vec<PathBuf>, Error>;
     /// Whether `git -C <path> status --porcelain` prints anything.
     fn worktree_dirty(&self, path: &Path) -> Result<bool, Error>;
+    /// `git -C <repo> worktree prune`.
+    fn worktree_prune(&self, repo: &Path) -> Result<(), Error>;
+    /// The local branches in `repo` named `<prefix>...`.
+    fn branches(&self, repo: &Path, prefix: &str) -> Result<Vec<String>, Error>;
     fn start(&self, mode: Mode, cmd: &StartCmd) -> Result<(), Error>;
     fn agents(&self) -> Result<Vec<Agent>, Error>;
     /// `claude stop <session id>`.
@@ -447,6 +451,7 @@ pub(crate) mod fake {
     pub enum Call {
         Add(PathBuf, PathBuf, String),
         Remove(PathBuf, PathBuf),
+        Prune(PathBuf),
         Start(Mode, StartCmd),
         StopBg(String),
         Terminate(u32),
@@ -465,6 +470,8 @@ pub(crate) mod fake {
         /// What `worktree_list` shows; `None` lists every `<repo>/.worktrees/*/*` on disk.
         pub listed: Option<Vec<PathBuf>>,
         pub fail_stop_bg: bool,
+        /// What `branches` shows for each repo.
+        pub branch_list: std::collections::BTreeMap<PathBuf, Vec<String>>,
         /// Runs inside `stop_bg` and `agents`, to change the disk mid-stop.
         pub on_stop: Option<Box<dyn Fn()>>,
     }
@@ -521,6 +528,20 @@ pub(crate) mod fake {
         }
         fn worktree_dirty(&self, path: &Path) -> Result<bool, Error> {
             Ok(self.dirty.contains(path))
+        }
+        fn worktree_prune(&self, repo: &Path) -> Result<(), Error> {
+            self.log(Call::Prune(repo.into()));
+            Ok(())
+        }
+        fn branches(&self, repo: &Path, prefix: &str) -> Result<Vec<String>, Error> {
+            Ok(self
+                .branch_list
+                .get(repo)
+                .into_iter()
+                .flatten()
+                .filter(|b| b.starts_with(prefix))
+                .cloned()
+                .collect())
         }
         fn start(&self, mode: Mode, cmd: &StartCmd) -> Result<(), Error> {
             self.log(Call::Start(mode, cmd.clone()));
@@ -972,6 +993,12 @@ mod tests {
             }
             fn worktree_dirty(&self, p: &Path) -> Result<bool, Error> {
                 self.0.worktree_dirty(p)
+            }
+            fn worktree_prune(&self, r: &Path) -> Result<(), Error> {
+                self.0.worktree_prune(r)
+            }
+            fn branches(&self, r: &Path, p: &str) -> Result<Vec<String>, Error> {
+                self.0.branches(r, p)
             }
             fn start(&self, m: Mode, c: &StartCmd) -> Result<(), Error> {
                 self.0.start(m, c)

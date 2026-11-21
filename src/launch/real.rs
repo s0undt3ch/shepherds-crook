@@ -196,6 +196,27 @@ impl Launcher for RealLauncher<'_> {
         Ok(!out.trim().is_empty())
     }
 
+    fn worktree_prune(&self, repo: &Path) -> Result<(), Error> {
+        self.git_out(&[
+            "-C".as_ref(),
+            repo.as_os_str(),
+            "worktree".as_ref(),
+            "prune".as_ref(),
+        ])
+        .map(drop)
+    }
+
+    fn branches(&self, repo: &Path, prefix: &str) -> Result<Vec<String>, Error> {
+        let out = self.git_out(&[
+            "-C".as_ref(),
+            repo.as_os_str(),
+            "for-each-ref".as_ref(),
+            "--format=%(refname:short)".as_ref(),
+            format!("refs/heads/{prefix}").as_ref(),
+        ])?;
+        Ok(out.lines().map(str::to_string).collect())
+    }
+
     fn start(&self, mode: Mode, cmd: &StartCmd) -> Result<(), Error> {
         self.check(mode)?;
         let mut c = Command::new(&cmd.program);
@@ -286,6 +307,38 @@ mod tests {
         l.worktree_remove(&repo, &wt).unwrap();
         assert!(!wt.exists());
         assert_eq!(l.worktree_list(&repo).unwrap(), [repo]);
+    }
+
+    #[test]
+    fn git_prune_and_branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = std::fs::canonicalize(tmp.path()).unwrap().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        for b in [
+            "crook/demo/c1",
+            "crook/demo/c2",
+            "crook/demo2/c1",
+            "crook-x",
+        ] {
+            git(&repo, &["branch", b]);
+        }
+        let env = path_env();
+        let l = RealLauncher::new(&env);
+        assert_eq!(
+            l.branches(&repo, "crook/demo/").unwrap(),
+            ["crook/demo/c1", "crook/demo/c2"]
+        );
+        assert!(l.branches(&repo, "crook/none/").unwrap().is_empty());
+        // A worktree whose directory was deleted by hand is dropped by prune.
+        let wt = repo.join(".worktrees/demo/c3");
+        l.worktree_add(&repo, &wt, "crook/demo/c3").unwrap();
+        std::fs::remove_dir_all(&wt).unwrap();
+        assert_eq!(l.worktree_list(&repo).unwrap().len(), 2);
+        l.worktree_prune(&repo).unwrap();
+        assert_eq!(l.worktree_list(&repo).unwrap(), std::slice::from_ref(&repo));
+        assert!(l.worktree_prune(&repo.join("missing")).is_err());
     }
 
     fn script(dir: &Path, name: &str, body: &str) -> PathBuf {

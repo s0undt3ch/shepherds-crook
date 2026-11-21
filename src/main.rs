@@ -37,6 +37,13 @@ enum Cmd {
     Unpark { child: String },
     /// Stop a child, archive it and remove its worktrees: `<child>` or `<slug>/<child>`
     Stop { child: String },
+    /// Remove a finished project's worktrees, home and state; keeps the diary and the branches
+    Wipe {
+        slug: String,
+        /// Remove the diary too (refused for a diary under `diary_root`)
+        #[arg(long)]
+        with_diary: bool,
+    },
     /// One line per project
     List,
     /// Live children across projects
@@ -124,6 +131,15 @@ fn run(args: &[OsString], env: Env) -> u8 {
         Cmd::Resume { child } => launch_verb(env, |env, host| cli::resume::plan(env, &child, host)),
         Cmd::Stop { child } => user_verb(env, |env| {
             cli::stop::run(env, &child, &launch::real::RealLauncher::new(env))
+        }),
+        Cmd::Wipe { slug, with_diary } => user_verb(env, |env| {
+            cli::wipe::run(
+                env,
+                &slug,
+                with_diary,
+                &launch::real::RealLauncher::new(env),
+            )
+            .map(|lines| lines.join("\n"))
         }),
         Cmd::Init { slug } => user_verb(env, |env| cli::init::run(env, &slug)),
         Cmd::List => user_verb(env, cli::list::run),

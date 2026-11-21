@@ -97,7 +97,7 @@ pub fn add_child(c: &Connection, ch: &Child) -> Result<(), Error> {
         "INSERT INTO status(child, state, seq, changed_at) VALUES (?1, 'working', 0, ?2)",
         (&ch.child, now),
     )?;
-    Ok(())
+    hold(c, &ch.child, &ch.session_id)
 }
 
 /// Checked inside the same transaction as the write that follows: the child
@@ -312,15 +312,44 @@ pub fn record_session(
     if n == 0 {
         return Err(no_such(child));
     }
-    Ok(())
+    hold(c, child, session_id)
 }
 
 pub fn add_fork(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
     status_row(c, child)?;
+    refuse_held(c, child, session_id)?;
     c.execute(
         "INSERT OR IGNORE INTO forks(child, session_id) VALUES (?1, ?2)",
         (child, session_id),
     )?;
+    Ok(())
+}
+
+/// Whether the child's row has ever held `session_id`.
+pub fn held(c: &Connection, child: &str, session_id: &str) -> Result<bool, Error> {
+    Ok(c.query_row(
+        "SELECT count(*) FROM child_sessions WHERE child = ?1 AND session_id = ?2",
+        (child, session_id),
+        |r| r.get::<_, i64>(0),
+    )? > 0)
+}
+
+/// Records that the child's row holds `session_id`, for good.
+fn hold(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
+    c.execute(
+        "INSERT OR IGNORE INTO child_sessions(child, session_id) VALUES (?1, ?2)",
+        (child, session_id),
+    )?;
+    Ok(())
+}
+
+/// A held id is the child's, so it can never become a fork or be adopted as one.
+fn refuse_held(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
+    if held(c, child, session_id)? {
+        return Err(Error::Refused(format!(
+            "session {session_id} has been {child} itself, so it is not a fork"
+        )));
+    }
     Ok(())
 }
 
@@ -355,6 +384,7 @@ pub fn record_orchestrator(c: &Connection, session_id: &str, pid: u32) -> Result
 /// Makes `session_id` the child, and drops it from `forks` so it is
 /// park-denied like any child.
 pub fn adopt(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
+    refuse_held(c, child, session_id)?;
     let n = c.execute(
         "UPDATE children SET session_id = ?2 WHERE child = ?1",
         (child, session_id),
@@ -366,7 +396,7 @@ pub fn adopt(c: &Connection, child: &str, session_id: &str) -> Result<(), Error>
         "DELETE FROM forks WHERE child = ?1 AND session_id = ?2",
         (child, session_id),
     )?;
-    Ok(())
+    hold(c, child, session_id)
 }
 
 fn count(c: &Connection, sql: &str, child: &str) -> Result<i64, Error> {
@@ -900,6 +930,22 @@ mod tests {
         assert_eq!(row(&s, "c1").1, 2, "a no-op lift does not bump");
         assert!(!s.read(|c| parked(c, "c1")).unwrap());
         assert!(refused(w(&mut s, |c| need(c, "c1", " "))).contains("empty"));
+    }
+
+    #[test]
+    fn a_held_session_id_is_never_a_fork() {
+        let (_t, mut s) = fresh();
+        assert!(s.read(|c| held(c, "c1", "s-c1")).unwrap());
+        w(&mut s, |c| record_session(c, "c1", "s-new", 42)).unwrap();
+        for id in ["s-c1", "s-new"] {
+            assert!(s.read(|c| held(c, "c1", id)).unwrap(), "{id}");
+            assert!(refused(w(&mut s, |c| add_fork(c, "c1", id))).contains(id));
+            assert!(refused(w(&mut s, |c| adopt(c, "c1", id))).contains(id));
+        }
+        assert!(!s.read(|c| held(c, "c1", "other")).unwrap());
+        assert!(!s.read(|c| held(c, "c2", "s-c1")).unwrap());
+        w(&mut s, |c| adopt(c, "c1", "B")).unwrap();
+        assert!(s.read(|c| held(c, "c1", "B")).unwrap());
     }
 
     #[test]

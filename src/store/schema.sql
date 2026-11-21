@@ -42,6 +42,12 @@ CREATE TABLE forks (
     session_id TEXT NOT NULL,
     PRIMARY KEY (child, session_id)
 );
+-- Every session id a child's row has held: never a fork, always park-denied.
+CREATE TABLE child_sessions (
+    child TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    PRIMARY KEY (child, session_id)
+);
 CREATE TABLE seen (child TEXT PRIMARY KEY, seq INTEGER NOT NULL);
 CREATE TABLE notified (child TEXT PRIMARY KEY, seq INTEGER NOT NULL);
 CREATE TABLE asks (

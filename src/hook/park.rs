@@ -18,7 +18,7 @@ pub enum Decision {
 }
 
 /// `None` is "no decision". A parked child is denied unless it is a recorded
-/// fork: the recorded child session and any unrecorded session are denied.
+/// fork: every id the child has held and any unrecorded session are denied.
 pub fn check(
     c: &Connection,
     id: &Identity,
@@ -43,7 +43,8 @@ fn child_check(
         return Ok(None);
     }
     let allowed = match session_id {
-        Some(s) => !crew::is_current(c, child, s)?.0 && crew::is_fork(c, child, s)?,
+        // Any id the child has held is the child, even if a fork row names it.
+        Some(s) => !crew::held(c, child, s)? && crew::is_fork(c, child, s)?,
         None => false,
     };
     if allowed {

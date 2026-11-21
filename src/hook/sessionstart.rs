@@ -47,23 +47,34 @@ fn alive(pid: u32) -> bool {
 const PS: [&str; 2] = ["/bin/ps", "/usr/bin/ps"];
 
 /// Whether `pid` is a running claude process, by its command name from `ps`.
-/// A pid the child no longer holds may have been reused by anything. When `ps`
-/// cannot run, a live pid is taken for the child: refusing is the safe side.
+/// A pid the child no longer holds may have been reused by anything; a live pid
+/// `ps` cannot name is taken for the child: refusing is the safe side.
 fn is_claude(pid: u32) -> bool {
     if !alive(pid) {
         return false;
     }
-    for ps in PS {
-        let out = Command::new(ps)
+    let out = PS.iter().find_map(|ps| {
+        Command::new(ps)
             .args(["-o", "comm=", "-p", &pid.to_string()])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
-            .output();
-        if let Ok(o) = out {
-            return o.status.success() && claude_name(String::from_utf8_lossy(&o.stdout).trim());
-        }
+            .output()
+            .ok()
+    });
+    judge(out.map(|o| {
+        let comm = String::from_utf8_lossy(&o.stdout).into_owned();
+        (o.status.success(), comm)
+    }))
+}
+
+/// The verdict on a live pid from `ps`'s exit status and output. When `ps`
+/// did not run, failed or printed nothing, it cannot tell: the pid is taken
+/// for the child, which refuses the caller.
+fn judge(out: Option<(bool, String)>) -> bool {
+    match out {
+        Some((true, comm)) if !comm.trim().is_empty() => claude_name(comm.trim()),
+        _ => true,
     }
-    true
 }
 
 /// The command's basename is `claude`, alone or followed by a character that
@@ -85,6 +96,12 @@ fn record(
     ppid: u32,
 ) -> Result<Option<String>, Error> {
     match (id.role, id.child.as_deref()) {
+        (Role::Child, Some(child)) if source == "fork" && crew::held(c, child, session_id)? => {
+            let (_, current) = crew::is_current(c, child, session_id)?;
+            return Ok(Some(format!(
+                "crook: this session is not the child; the child is session {current}"
+            )));
+        }
         (Role::Child, Some(child)) if source == "fork" => {
             // `/branch` keeps the claude process, so the fork is the child.
             if crew::claude_pid(c, child)? == Some(ppid) {
@@ -118,7 +135,16 @@ fn record(
 
 #[cfg(test)]
 mod tests {
-    use super::claude_name;
+    use super::{claude_name, judge};
+
+    #[test]
+    fn ps_that_cannot_tell_is_the_child() {
+        assert!(judge(None), "no ps ran");
+        assert!(judge(Some((false, String::new()))), "ps failed");
+        assert!(judge(Some((true, "  \n".into()))), "ps printed nothing");
+        assert!(judge(Some((true, "/usr/bin/claude\n".into()))));
+        assert!(!judge(Some((true, "sleep\n".into()))));
+    }
 
     #[test]
     fn claude_name_is_exact() {

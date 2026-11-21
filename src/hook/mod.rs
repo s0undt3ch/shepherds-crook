@@ -614,6 +614,61 @@ mod tests {
         );
     }
 
+    /// The child's own claude runs the hook itself before parking: the ppid is
+    /// the recorded pid, so the claude guard cannot tell it from a restart.
+    #[test]
+    fn forge_from_the_child_before_parking_keeps_the_park() {
+        for fork_ppid in [None, Some(4242)] {
+            let f = Fixture::new();
+            let own = f.pid;
+            let decoy = json!({"session_id": "decoy", "source": "startup"}).to_string();
+            f.call("SessionStart", &decoy, &CHILD, own);
+            // Back to the real id as a fork: through `adopt` (same pid) or `add_fork`.
+            let back = json!({"session_id": "s-c1", "source": "fork"}).to_string();
+            let (_, out) = f.call("SessionStart", &back, &CHILD, fork_ppid.unwrap_or(own));
+            assert!(
+                context(&out).starts_with("crook: this session is not the child"),
+                "{out}"
+            );
+            let s = f.store();
+            assert!(!s.read(|c| crew::is_fork(c, "c1", "s-c1")).unwrap());
+            drop(s);
+            f.park("c1");
+            for sid in ["s-c1", "decoy"] {
+                assert_eq!(
+                    decision(&f.pre(&CHILD, sid, "Bash", json!({}))).0,
+                    "deny",
+                    "{sid} {fork_ppid:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clear_keeps_the_old_id_denied_while_parked() {
+        let f = Fixture::new();
+        let clear = json!({"session_id": "s-c1b", "source": "clear"}).to_string();
+        let (_, out) = f.call("SessionStart", &clear, &CHILD, f.pid);
+        assert!(context(&out).contains("Project card"), "{out}");
+        assert!(
+            f.store()
+                .read(|c| crew::is_current(c, "c1", "s-c1b"))
+                .unwrap()
+                .0
+        );
+        let fork = json!({"session_id": "f1", "source": "fork"}).to_string();
+        f.call("SessionStart", &fork, &CHILD, 555);
+        f.park("c1");
+        for sid in ["s-c1", "s-c1b"] {
+            assert_eq!(
+                decision(&f.pre(&CHILD, sid, "Bash", json!({}))).0,
+                "deny",
+                "{sid}"
+            );
+        }
+        assert_eq!(f.pre(&CHILD, "f1", "Bash", json!({})), "");
+    }
+
     #[test]
     fn reused_pid_that_is_not_claude_lets_a_restart_record_itself() {
         let f = Fixture::new();

@@ -1,0 +1,502 @@
+# The packslip verify identity in `publish-packslip` pins this file's path and
+# `refs/heads/main`, and the archives' provenance names `_build-binary-archive.yml`
+# as the signer. Renaming either file or releasing from another ref breaks both.
+name: Release
+run-name: "Release (branch: ${{ github.ref_name }}; version: ${{ inputs.release-version }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-version:
+        required: true
+        type: string
+        description: 'Release version to prepare: X.Y.Z, or X.Y.Z-rc.N for a pre-release'
+
+env:
+  COLUMNS: 190
+  FORCE_COLOR: "1"
+  # Bump to invalidate every cache used by this workflow.
+  CACHE_SEED: "1"
+  # `MISE_VERSION` lives in `.github/env` (loaded per-job by a
+  # "Load shared env vars" step) so a single edit propagates to every
+  # workflow.
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  # Bumps the version and the changelog on a local commit and hands it on as a
+  # patch artifact. Nothing is pushed: `publish-release` pushes it, after every
+  # build has passed.
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+    outputs:
+      release-version: ${{ steps.bump-version.outputs.release-version }}
+      release-patch-name: ${{ steps.bump-version.outputs.release-patch-name }}
+      release-prerelease: ${{ steps.bump-version.outputs.release-prerelease }}
+      release-notes-filename: ${{ steps.prepare-release-notes.outputs.release-notes-filename }}
+      # Mirror env.CACHE_SEED / env.MISE_VERSION. A workflow-call `with:` block
+      # can't read `env`, so the build job reads these outputs instead.
+      cache-seed: ${{ steps.expose.outputs.cache-seed }}
+      mise-version: ${{ steps.expose.outputs.mise-version }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      # The packslip identity pins `release.yml@refs/heads/main`; a release
+      # from another ref would tag and publish before `publish-packslip`
+      # fails verification.
+      - name: Require the main branch
+        if: ${{ github.ref != 'refs/heads/main' }}
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Releases are dispatched from refs/heads/main, not ${REF}" >&2
+          exit 1
+
+      - name: Check For Admin Permission
+        uses: actions-cool/check-user-permission@c21884f3dda18dafc2f8b402fe807ccc9ec1aa5e # v2.4.0
+        with:
+          require: admin
+          username: ${{ github.triggering_actor }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The changelog needs the history and the tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Load shared env vars
+        # `$GITHUB_ENV` expects strict `KEY=VALUE` lines and rejects blank/comment
+        # lines as "Invalid format", so keep only the assignments.
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Expose the cache seed and mise version
+        id: expose
+        run: |
+          {
+            echo "cache-seed=${CACHE_SEED}"
+            echo "mise-version=${MISE_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup Prek
+        # Installs every tool in mise.toml (cargo-edit, git-cliff, prek) and primes the hook cache.
+        id: setup-pre-commit
+        uses: ./.github/actions/setup-pre-commit
+        with:
+          cache-seed: ${{ env.CACHE_SEED }}|prepare-release
+          mise-version: ${{ env.MISE_VERSION }}
+
+      - name: Setup ToolR
+        # `toolr release bump` dispatches from the tools venv.
+        id: setup-toolr
+        uses: ./.github/actions/setup-toolr
+        with:
+          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|prepare-release
+
+      - name: Configure Git
+        uses: ./.github/actions/configure-git
+
+      - name: Bump Version
+        id: bump-version
+        env:
+          RELEASE_VERSION: ${{ inputs.release-version }}
+        run: |
+          set -euo pipefail
+          # `toolr release bump` refuses anything but X.Y.Z or X.Y.Z-rc.N, so
+          # the value is safe to use below.
+          toolr release bump "$RELEASE_VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${RELEASE_VERSION}" >/dev/null; then
+            echo "::error::Tag v${RELEASE_VERSION} already exists" >&2
+            exit 1
+          fi
+          prerelease=false
+          case "$RELEASE_VERSION" in
+            *-rc.*) prerelease=true ;;
+          esac
+          {
+            echo "release-version=${RELEASE_VERSION}"
+            echo "release-patch-name=crook-${RELEASE_VERSION}.patch"
+            echo "release-prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing version: \`${RELEASE_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare GH Release notes
+        id: prepare-release-notes
+        env:
+          RELEASE_VERSION: ${{ steps.bump-version.outputs.release-version }}
+        run: |
+          set -euo pipefail
+          git-cliff --config cliff.toml --unreleased --tag "v${RELEASE_VERSION}" --strip all \
+            --output release-notes.md
+          echo "release-notes-filename=release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Release Notes Artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.prepare-release-notes.outputs.release-notes-filename }}
+          path: ${{ steps.prepare-release-notes.outputs.release-notes-filename }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Update CHANGELOG.md
+        # A pre-release gets no CHANGELOG section: the final release rolls it up.
+        if: steps.bump-version.outputs.release-prerelease != 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.bump-version.outputs.release-version }}
+        run: git-cliff --config cliff.toml --verbose --unreleased --tag "v${RELEASE_VERSION}" --prepend CHANGELOG.md
+
+      - name: Commit changes
+        env:
+          RELEASE_VERSION: ${{ steps.bump-version.outputs.release-version }}
+          # `pin-github-actions` resolves pins through `gh api`.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          files=(Cargo.toml Cargo.lock CHANGELOG.md)
+          # Fixing pass: let the auto-fixers tidy the release's own files.
+          prek run --files "${files[@]}" || true
+          # Strict pass: anything still failing is a real failure.
+          if ! prek run --files "${files[@]}" --show-diff-on-failure; then
+            echo "::error::prek failed on the release changes; the uncommitted release diff follows." >&2
+            git --no-pager diff HEAD >&2
+            exit 1
+          fi
+          # Only the files the release owns may differ from the dispatched commit.
+          unexpected="$(git status --porcelain --untracked-files=no | grep -vE ' (Cargo\.toml|Cargo\.lock|CHANGELOG\.md)$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "::error::The release changed files it does not own:" >&2
+            echo "$unexpected" >&2
+            exit 1
+          fi
+          git commit -m "chore(release): Prepare for ${RELEASE_VERSION} release" -- "${files[@]}"
+
+      - name: Show Changes Diff
+        run: git show --color --stat --patch HEAD
+
+      - name: Create Release Patch
+        env:
+          RELEASE_PATCH_NAME: ${{ steps.bump-version.outputs.release-patch-name }}
+        run: git format-patch --keep-subject --binary --stdout HEAD^ > "$RELEASE_PATCH_NAME"
+
+      - name: Upload Changes Diff Artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.bump-version.outputs.release-patch-name }}
+          path: ${{ steps.bump-version.outputs.release-patch-name }}
+          retention-days: 7
+          if-no-files-found: error
+
+  build-binary-archive:
+    name: Build (binary)
+    needs:
+      - prepare-release
+    uses: ./.github/workflows/_build-binary-archive.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      release-version: ${{ needs.prepare-release.outputs.release-version }}
+      release-patch-name: ${{ needs.prepare-release.outputs.release-patch-name }}
+      cache-seed: ${{ needs.prepare-release.outputs.cache-seed }}
+      mise-version: ${{ needs.prepare-release.outputs.mise-version }}
+      targets: >-
+        [
+          {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
+          {"triple": "aarch64-unknown-linux-musl", "runner": "ubuntu-24.04-arm"},
+          {"triple": "aarch64-apple-darwin", "runner": "macos-15"},
+          {"triple": "x86_64-apple-darwin", "runner": "macos-15-intel"}
+        ]
+
+  publish-release:
+    name: Publish Release
+    environment: release
+    needs:
+      - prepare-release
+      - build-binary-archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # We could stick this in a custom, in-repo action, but this would mean we would have to checkout
+      # the repo now, and then checkout again with higher privileges, which is why we're doing it here.
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          # Pushes the release tag and commit, and creates the GitHub release.
+          permission-contents: write
+
+      - name: Get GitHub App User ID
+        id: get-user-id
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          echo "user-id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Git
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          APP_USER_ID: ${{ steps.get-user-id.outputs.user-id }}
+        run: |
+          git config --global user.name "${APP_SLUG}[bot]"
+          git config --global user.email "${APP_USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The push below authenticates with the App token the checkout persists.
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Apply Release Patch
+        uses: ./.github/actions/apply-release-patch
+        with:
+          release-patch-name: ${{ needs.prepare-release.outputs.release-patch-name }}
+
+      - name: Tag the v${{ needs.prepare-release.outputs.release-version }} Release
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.release-version }}
+        run: |
+          git tag -m "chore(release): Release v${RELEASE_VERSION}" -a "v${RELEASE_VERSION}"
+
+      # The per-triple binary archives and their sha256 files.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: crook-archive-*
+          path: release-assets
+          merge-multiple: true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.prepare-release.outputs.release-notes-filename }}
+
+      - name: Push the release commit and tag
+        id: push-release
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.release-version }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != refs/heads/* ]]; then
+            echo "::error::Releases must be dispatched on a branch (refs/heads/...), not ${GITHUB_REF}" >&2
+            exit 1
+          fi
+          # Atomic, so a branch that moved since dispatch can't leave a tag on an orphaned commit.
+          if git push --atomic origin "HEAD:refs/heads/${GITHUB_REF_NAME}" "refs/tags/v${RELEASE_VERSION}"; then
+            exit 0
+          fi
+          # A failed atomic push doesn't say why, so ask origin whether anything landed and whether a re-run is safe.
+          fail() {
+            echo "::error::Pushing v${RELEASE_VERSION} failed: $1" >&2
+            exit 1
+          }
+          tag="refs/tags/v${RELEASE_VERSION}"
+          tag_lines="$(git ls-remote origin "${tag}" "${tag}^{}")" \
+            || fail "origin could not be queried, so what was published is unknown. Check origin before retrying."
+          if [[ -n "${tag_lines}" ]]; then
+            # The peeled line names an annotated tag's commit; a lightweight tag has only the plain one.
+            tag_commit="$(awk -v ref="${tag}^{}" '$2 == ref { print $1 }' <<<"${tag_lines}")"
+            tag_commit="${tag_commit:-$(awk -v ref="${tag}" '$2 == ref { print $1 }' <<<"${tag_lines}")}"
+            if [[ "${tag_commit}" == "$(git rev-parse HEAD)" ]]; then
+              fail "origin already has v${RELEASE_VERSION} on this release commit, from an earlier attempt. Create the GitHub release by hand with the \"Create GitHub release\" step's command."
+            fi
+            fail "origin has v${RELEASE_VERSION} on another commit (${tag_commit}), not this release commit. Stop and find out where that tag came from."
+          fi
+          branch_lines="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}")" \
+            || fail "origin could not be queried, so what was published is unknown. Check origin before retrying."
+          if [[ "${branch_lines%%[[:space:]]*}" != "${GITHUB_SHA}" ]]; then
+            fail "origin's ${GITHUB_REF_NAME} moved since the run was dispatched, and nothing was published. Dispatch the release again from its new tip."
+          fi
+          fail "origin's ${GITHUB_REF_NAME} has not moved and nothing was published, so the cause is elsewhere (network, token, a server-side hook). Re-run this job once that is fixed."
+
+      - name: Create GitHub release
+        id: create-release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.release-version }}
+          RELEASE_NOTES: ${{ needs.prepare-release.outputs.release-notes-filename }}
+          RELEASE_PRERELEASE: ${{ needs.prepare-release.outputs.release-prerelease }}
+        # --verify-tag relies on the `push-release` step above having run.
+        # A pre-release is never "latest": `latest` lookups skip releases
+        # flagged as pre-releases.
+        run: |
+          release_flag=--latest
+          if [ "${RELEASE_PRERELEASE}" = "true" ]; then
+            release_flag=--prerelease
+          fi
+          gh release create "v${RELEASE_VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "${RELEASE_VERSION}" \
+            --notes-file "${RELEASE_NOTES}" \
+            "${release_flag}" \
+            release-assets/*
+
+  # Keep this job inline in release.yml: Sigstore records the calling
+  # workflow file as the signing identity, and mise pins that identity.
+  publish-packslip:
+    name: Publish packslip
+    # Runs even if publish-release failed after creating the release; an
+    # earlier failure makes the tag checkout or download fail loudly.
+    # "Re-run failed jobs" re-runs publish-release too, which fails
+    # harmlessly on the existing tag, and this job re-signs with --clobber.
+    if: >-
+      ${{ !cancelled()
+          && needs.prepare-release.result == 'success'
+          && (needs.publish-release.result == 'success'
+              || needs.publish-release.result == 'failure') }}
+    needs:
+      - prepare-release
+      - publish-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      ARCHIVE_PATTERNS: crook-*-*-apple-darwin.tar.gz crook-*-*-linux-musl.tar.gz
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.prepare-release.outputs.release-version }}
+          persist-credentials: false
+
+      - name: Resolve the release commit
+        id: source
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.release-version }}
+        run: |
+          set -euo pipefail
+          echo "commit=$(git rev-parse "v${RELEASE_VERSION}^{commit}")" >> "$GITHUB_OUTPUT"
+
+      # Version must match the `github:jdx/packslip@1.11.4` pin in ci.yml.
+      # The action uploads with `gh release upload --clobber`, so a re-run
+      # re-signs and replaces the existing packslip.sigstore.json asset.
+      # install-smoke.yml looks for this asset as packslip.sigstore.json.
+      - name: Sign and upload the packslip
+        id: packslip
+        uses: jdx/packslip@e0340e0c1d10c90a434de2b90f3a1ba345923564 # v1.11.4
+        with:
+          tag: v${{ needs.prepare-release.outputs.release-version }}
+          version: ${{ needs.prepare-release.outputs.release-version }}
+          commit: ${{ steps.source.outputs.commit }}
+          manifest: .github/packslip.toml
+          download: ${{ env.ARCHIVE_PATTERNS }}
+          attest: link
+
+      - name: Verify the published packslip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare-release.outputs.release-version }}
+          COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          cd "$(mktemp -d)"
+          read -ra patterns <<<"$ARCHIVE_PATTERNS"
+          download_args=(-p packslip.sigstore.json)
+          for p in "${patterns[@]}"; do
+            download_args+=(-p "$p")
+          done
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" "${download_args[@]}"
+          artifacts=()
+          for p in "${patterns[@]}"; do
+            # shellcheck disable=SC2206 # unquoted on purpose: glob each pattern
+            matches=($p)
+            for f in "${matches[@]}"; do
+              artifacts+=(--artifact "$f")
+            done
+          done
+          # Hard-coded, not derived from github.workflow_ref: this catches a
+          # signer change that mise users would have to re-approve.
+          packslip verify packslip.sigstore.json \
+            --identity https://github.com/s0undt3ch/shepherds-crook/.github/workflows/release.yml@refs/heads/main \
+            --issuer https://token.actions.githubusercontent.com \
+            "${artifacts[@]}"
+          packslip show packslip.sigstore.json \
+            | jq -e --arg v "$VERSION" --arg c "$COMMIT" \
+                '.predicate.version == $v and .predicate.source.commit == $c'
+
+  # The scheduled smoke run would only reach this release on its next
+  # cron tick, so start one now, after the packslip exists.
+  # `workflow_dispatch` is one of the few events GITHUB_TOKEN may trigger.
+  dispatch-install-smoke:
+    name: Start the install smoke tests
+    # Explicit, because publish-packslip can succeed after publish-release
+    # failed, and the implicit success() would then skip this job.
+    if: ${{ !cancelled() && needs.publish-packslip.result == 'success' }}
+    needs:
+      - prepare-release
+      - publish-packslip
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: Dispatch install-smoke.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare-release.outputs.release-version }}
+        run: |
+          gh workflow run install-smoke.yml --repo "$GITHUB_REPOSITORY" --ref main -f version="$VERSION"
+
+  set-pipeline-exit-status:
+    permissions: {}
+    # This job gives the workflow a single check representing the whole run.
+    # It must list EVERY job in `needs`: a job skipped because an upstream
+    # dependency failed reports `skipped`, not `failure`, so a failure is
+    # only visible here on the job that directly failed.
+    # `toolr pre-commit check-gate-needs` keeps the list complete.
+    name: Set the ${{ github.workflow }} Pipeline Exit Status
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - build-binary-archive
+      - dispatch-install-smoke
+      - prepare-release
+      - publish-packslip
+      - publish-release
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      # A local `uses:` resolves from the checked-out tree, and gate jobs
+      # otherwise never check out the repo.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Gate on the needed jobs' results
+        uses: ./.github/actions/pipeline-gate
+        with:
+          jobs: ${{ toJSON(needs) }}

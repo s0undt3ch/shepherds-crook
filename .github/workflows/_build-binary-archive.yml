@@ -15,6 +15,11 @@ on:
         required: true
         type: string
         description: 'Version of mise to install. Pass the caller workflow''s MISE_VERSION env var.'
+      release-patch-name:
+        required: false
+        type: string
+        default: ''
+        description: 'Release patch artifact (the version bump and changelog commit) to apply before building. Empty builds the checked-out commit as it is.'
       targets:
         required: true
         type: string
@@ -53,6 +58,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure Git
+        if: ${{ inputs.release-patch-name != '' }}
+        uses: ./.github/actions/configure-git
+
+      - name: Apply Release Patch
+        if: ${{ inputs.release-patch-name != '' }}
+        uses: ./.github/actions/apply-release-patch
+        with:
+          release-patch-name: ${{ inputs.release-patch-name }}
+
       - name: Set up mise (installs Rust toolchain pinned in mise.toml)
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
@@ -61,7 +76,9 @@ jobs:
           cache_key_prefix: ${{ inputs.cache-seed }}|mise|${{ inputs.mise-version }}|build-binary|${{ runner.os }}|${{ runner.arch }}|${{ matrix.target.triple }}
 
       - name: Add Rust target
-        run: rustup target add ${{ matrix.target.triple }}
+        env:
+          TRIPLE: ${{ matrix.target.triple }}
+        run: rustup target add "$TRIPLE"
 
       # musl-tools provides musl-gcc, which rust needs as the linker
       # when targeting *-linux-musl. Architecture-native: x86_64-musl

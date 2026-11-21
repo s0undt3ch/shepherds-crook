@@ -7,6 +7,8 @@ min_version = "2026.11.1"
 # Cargo.toml equal to this pin.
 rust = { version = "1.99.1", profile = "minimal", components = "clippy,rustfmt" }
 "cargo:cargo-nextest" = "0.9.152"
+# `toolr release bump` runs `cargo set-version`, which updates Cargo.toml and Cargo.lock together.
+"cargo:cargo-edit" = "0.13.14"
 "aqua:taiki-e/cargo-llvm-cov" = "0.9.1"
 prek = "0.5.11"
 # The mod's npm package brings `tsc` and `vitest`.

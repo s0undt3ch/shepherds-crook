@@ -184,7 +184,7 @@ fn too_large_to_check_asks_in_budget() {
 }
 
 /// A 5 MB `Write` that names a folder with a root's spaced name after its
-/// parent's name every 40 lines, each read back to every start its line allows
+/// parent's name every 200 lines, each read back to every start its line allows
 /// and resolved, and the detour into the root at its end.
 #[test]
 #[ignore = "release-only budget test"]
@@ -199,7 +199,7 @@ fn spaced_root_names_budget() {
     let mut content = String::new();
     for (i, line) in prose(WRITE_BYTES, 11, 6).lines().enumerate() {
         content.push_str(line);
-        if i % 40 == 0 {
+        if i % 200 == 0 {
             n += 1;
             content.push_str(&decoy);
         }

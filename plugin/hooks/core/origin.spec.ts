@@ -80,6 +80,23 @@ describe('userTurn', () => {
     expect(o.userTurn()).toBe(false)
   })
 
+  it('fails closed when a machine entry shares the text with a newer user entry', () => {
+    const o = createOrigin()
+    o.noteOrigin('scheduled-trigger', false, 'continue')
+    o.noteOrigin('composer', false, 'continue')
+    o.turnStart('continue')
+    expect(o.userTurn()).toBe(false)
+    expect(o.pending()).toBe(0)
+  })
+
+  it('is a user turn when every entry sharing the text is a user entry', () => {
+    const o = createOrigin()
+    o.noteOrigin('composer', false, 'continue')
+    o.noteOrigin('bridge', false, 'continue')
+    o.turnStart('continue')
+    expect(o.userTurn()).toBe(true)
+  })
+
   it('does not queue a slash command, which starts no turn', () => {
     const o = createOrigin()
     o.noteOrigin('composer', true, '/crook-adopt')

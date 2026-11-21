@@ -12,12 +12,16 @@ function world(
   const runs: Run[] = []
   const registered: { name: string; isDeferred?: unknown; inputSchema: unknown }[] = []
   const commands: string[] = []
+  const submits: { text: string; origin: unknown }[] = []
   mock.env(on, env)
   on('session.id', () => ({ value: 's1' }))
   on('ui.status', () => ({ value: undefined }))
   on('session.start', () => ({ cwd: '/w' }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
-  on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('prompt.submit', (_, e) => {
+    submits.push({ text: e.text, origin: e.origin })
+    return { text: e.text }
+  })
   on('tool.register', (_, e) => {
     registered.push(e)
     return { value: { tool: `mcp__crook__${e.name}` } }
@@ -32,7 +36,7 @@ function world(
     const verb = e.argv[2] ?? ''
     return { value: { exitCode: 0, stdout: JSON.stringify(reply(verb, stdin)), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { runs, registered, commands }
+  return { runs, registered, commands, submits }
 }
 
 const PRES = { isFullscreen: false, columns: 80 }
@@ -174,4 +178,41 @@ test('crook-adopt from any other origin is refused and runs nothing', async ($, 
     expect(r.text).toContain('type it')
   }
   expect(w.runs.some(x => x.argv[2] === 'adopt')).toBe(false)
+})
+
+test('the child watcher wakes an idle child once per inbox state', async ($, on) => {
+  const clock = mock.clock(on)
+  let mtime = 1
+  on('fs.stat', () => ({ value: { kind: 'file', size: 0, mtimeMs: mtime, isLink: false } }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  const snap = { untaken: 2, taken: 0, newest_seq: 2, task_open: false, parked: false, is_current: true, current_id: 's1', card_version: 1 }
+  const w = world(on, CHILD, verb => {
+    if (verb === 'ping') return { ok: true, role: 'child', gen: '/d/crook/p/gen' }
+    if (verb === 'snapshot') return { ok: true, ...snap }
+    return { ok: true, task: 'x' }
+  })
+  const wakes = () => w.submits.filter(x => x.text === 'crook: you have tasks waiting. Call take_task.')
+  const snapshots = () => w.runs.filter(x => x.argv[2] === 'snapshot')
+  const end = (turnId: string) => $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId, reason: 'answer' })
+  await $.session.start(START)
+  await clock.advance(2000)
+  expect(wakes()).toHaveLength(1)
+  expect(snapshots()[0]?.stdin).toEqual({ session_id: 's1', user_turn: false })
+
+  // The wake-up's turn ends without a take_task: the same inbox is not offered again.
+  await $.turn.start({ text: 'crook: you have tasks waiting. Call take_task.', turnId: 'w1' })
+  await end('w1')
+  mtime = 2
+  await clock.advance(6000)
+  expect(wakes()).toHaveLength(1)
+
+  // A turn that takes a task re-reads at its end, and the moved state gets one more offer.
+  await $.turn.start({ text: 'crook: you have tasks waiting. Call take_task.', turnId: 'w2' })
+  await $.tool.run({ tool: 'mcp__crook__take_task', tool_use_id: 't1' })
+  const before = snapshots().length
+  Object.assign(snap, { untaken: 1, taken: 1 })
+  await end('w2')
+  await clock.settle()
+  expect(snapshots().length).toBeGreaterThan(before)
+  expect(wakes()).toHaveLength(2)
 })

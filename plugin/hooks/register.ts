@@ -3,8 +3,13 @@ import type { EngineInterface, Register } from 'claude-code'
 import { ports } from './adapter.ts'
 import { noteOrigin, turnStart, userTurn } from './core/origin.ts'
 import { TOOLS, findTool, runTool, toolsFor } from './core/tools.ts'
+import { onTurn, startChildWatcher } from './core/watcher.ts'
 
 // A mod may hand `$` only to top-level functions of this file, so the helpers that take it sit here.
+
+// What the main-loop turn now running has done, for the watcher at its end.
+let calledTake = false
+let calledDone = false
 
 async function registerTools($: EngineInterface, role: string): Promise<void> {
   for (const t of toolsFor(role)) {
@@ -26,7 +31,12 @@ async function registerTools($: EngineInterface, role: string): Promise<void> {
 async function serve($: EngineInterface, name: string, input: Record<string, unknown>) {
   const def = findTool(name)
   if (def === undefined) return { deny: `crook: no such tool ${name}` }
-  return runTool(ports($), def, input, await $.session.id(), userTurn())
+  const answer = await runTool(ports($), def, input, await $.session.id(), userTurn())
+  if ('result' in answer) {
+    if (name === 'take_task') calledTake = true
+    if (name === 'done') calledDone = true
+  }
+  return answer
 }
 
 async function adopt($: EngineInterface, origin: string): Promise<string> {
@@ -47,6 +57,7 @@ export const register: Register = on => {
       $.ui.status(why.startsWith('crook:') ? why : `crook: ${why}`)
     } else {
       $.ui.status(`crook: ${String(r.role)}`)
+      if (r.role === 'child' && typeof r.gen === 'string') startChildWatcher(p, { sessionId, gen: r.gen })
     }
     // Tools register even when ping fails, by the environment's role, so each one can say why it won't run.
     await registerTools($, (r.ok ? String(r.role) : p.env('CROOK_ROLE')) ?? '')
@@ -60,7 +71,17 @@ export const register: Register = on => {
   })
 
   on('turn.start', ($, e, next) => {
-    if (e.agentId === undefined) turnStart(e.text)
+    if (e.agentId === undefined) {
+      turnStart(e.text)
+      calledTake = false
+      calledDone = false
+    }
+    onTurn({ kind: 'start', agentId: e.agentId, calledTake: false, calledDone: false })
+    return next(e)
+  })
+
+  on('turn.complete', ($, e, next) => {
+    onTurn({ kind: 'complete', agentId: e.agentId, calledTake, calledDone })
     return next(e)
   })
 

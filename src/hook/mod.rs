@@ -547,6 +547,74 @@ mod tests {
     }
 
     #[test]
+    fn same_id_then_decoy_then_fork_keeps_the_park() {
+        let f = Fixture::new();
+        let claude = live_claude(f.tmp.path());
+        let pid = claude.0.id();
+        f.store()
+            .write(Touch::CHILDREN, |tx| {
+                crew::record_session(tx, "c1", "s-c1", pid)
+            })
+            .unwrap();
+        f.park("c1");
+        let env = child_with_path();
+        let env = as_refs(&env);
+        let x = pid + 7;
+        for (sid, source) in [("s-c1", "resume"), ("decoy", "startup"), ("s-c1", "fork")] {
+            let input = json!({"session_id": sid, "source": source}).to_string();
+            f.call("SessionStart", &input, &env, x);
+        }
+        let s = f.store();
+        assert_eq!(s.read(|c| crew::claude_pid(c, "c1")).unwrap(), Some(pid));
+        assert!(s.read(|c| crew::is_current(c, "c1", "s-c1")).unwrap().0);
+        drop(s);
+        for sid in ["s-c1", "decoy"] {
+            assert_eq!(
+                decision(&f.pre(&CHILD, sid, "Bash", json!({}))).0,
+                "deny",
+                "{sid}"
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_path_does_not_lift_a_park() {
+        use std::os::unix::fs::PermissionsExt;
+        let f = Fixture::new();
+        let claude = live_claude(f.tmp.path());
+        let pid = claude.0.id();
+        f.store()
+            .write(Touch::CHILDREN, |tx| {
+                crew::record_session(tx, "c1", "s-c1", pid)
+            })
+            .unwrap();
+        f.park("c1");
+        let bin = f.tmp.path().join("fake");
+        std::fs::create_dir_all(&bin).unwrap();
+        let ps = bin.join("ps");
+        std::fs::write(&ps, "#!/bin/sh\necho zsh\n").unwrap();
+        std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let fake = bin.display().to_string();
+        for path in ["/nonexistent", fake.as_str()] {
+            let mut env: Vec<(&str, &str)> = CHILD.to_vec();
+            env.push(("PATH", path));
+            let input = json!({"session_id": "decoy", "source": "startup"}).to_string();
+            let (_, out) = f.call("SessionStart", &input, &env, pid + 1);
+            assert_eq!(
+                context(&out),
+                "crook: this session is not the child; the child is session s-c1",
+                "{path}"
+            );
+        }
+        assert!(
+            f.store()
+                .read(|c| crew::is_current(c, "c1", "s-c1"))
+                .unwrap()
+                .0
+        );
+    }
+
+    #[test]
     fn reused_pid_that_is_not_claude_lets_a_restart_record_itself() {
         let f = Fixture::new();
         let other = live();
@@ -584,9 +652,10 @@ mod tests {
         let input = json!({"session_id": "s-c1", "source": "resume"}).to_string();
         let (_, out) = f.call("SessionStart", &input, &env, 4242);
         assert!(context(&out).contains("Project card"), "{out}");
+        // The live claude keeps the row: a same-id caller only gets the card.
         assert_eq!(
             f.store().read(|c| crew::claude_pid(c, "c1")).unwrap(),
-            Some(4242)
+            Some(pid)
         );
     }
 

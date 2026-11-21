@@ -25,6 +25,8 @@ pub struct Set {
     forms: Vec<String>,
     /// Every way the literal directory of a private glob can be written.
     glob_forms: Vec<String>,
+    /// The literal directory of each private glob, as written and resolved.
+    glob_dirs: Vec<PathBuf>,
     allow_roots: Vec<PathBuf>,
     allow_globs: Vec<GlobMatcher>,
 }
@@ -46,6 +48,7 @@ impl Set {
             globs: Vec::new(),
             forms: Vec::new(),
             glob_forms: Vec::new(),
+            glob_dirs: Vec::new(),
             allow_roots: Vec::new(),
             allow_globs: Vec::new(),
         };
@@ -98,6 +101,10 @@ impl Set {
 
     pub(crate) fn glob_forms(&self) -> &[String] {
         &self.glob_forms
+    }
+
+    pub(crate) fn glob_dirs(&self) -> &[PathBuf] {
+        &self.glob_dirs
     }
 
     pub(crate) fn contains_with(&self, r: &Resolver, abs: &Path) -> bool {
@@ -211,6 +218,10 @@ impl Set {
                     let dir = literal_dir(abs);
                     let mut forms = self.spellings(r, &literal_dir(entry), &dir);
                     self.glob_forms.append(&mut forms);
+                    // `/` is everything's ancestor: no relative spelling of it helps.
+                    if dir != "/" {
+                        self.glob_dirs.extend(r.variants(Path::new(&dir)));
+                    }
                 }
                 // A broken glob still protects its directory, which errs towards asking.
                 None => self.add_root(r, entry, &literal_dir(abs)),

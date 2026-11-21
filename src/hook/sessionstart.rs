@@ -9,7 +9,7 @@ use rusqlite::Connection;
 
 use crate::gate::{Identity, Role};
 use crate::store::{Mode, Store, Touch};
-use crate::{Env, Error, agents, crew};
+use crate::{Env, Error, crew};
 
 /// The `additionalContext` text; errors are for the caller to word.
 pub fn handle(
@@ -21,7 +21,7 @@ pub fn handle(
 ) -> Result<String, Error> {
     let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
     let refused = store.write(Touch::CHILDREN, |tx| {
-        record(tx, env, id, session_id, source, ppid)
+        record(tx, id, session_id, source, ppid)
     })?;
     if let Some(line) = refused {
         return Ok(line);
@@ -43,26 +43,35 @@ fn alive(pid: u32) -> bool {
     }
 }
 
-/// Whether `pid` is a running claude process, by its command name from `ps`
-/// on the injected `PATH`. A pid the child no longer holds may have been reused
-/// by anything; when `ps` cannot tell, it is not taken for the child.
-fn is_claude(env: Env, pid: u32) -> bool {
+/// `ps` by absolute path: one found on `PATH` could be anything.
+const PS: [&str; 2] = ["/bin/ps", "/usr/bin/ps"];
+
+/// Whether `pid` is a running claude process, by its command name from `ps`.
+/// A pid the child no longer holds may have been reused by anything. When `ps`
+/// cannot run, a live pid is taken for the child: refusing is the safe side.
+fn is_claude(pid: u32) -> bool {
     if !alive(pid) {
         return false;
     }
-    let Some(ps) = agents::find_on_path(env, "ps") else {
-        return false;
-    };
-    let out = Command::new(ps)
-        .args(["-o", "comm=", "-p", &pid.to_string()])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    out.is_ok_and(|o| {
-        let comm = String::from_utf8_lossy(&o.stdout);
-        let name = comm.trim().rsplit('/').next().unwrap_or_default();
-        o.status.success() && name.contains("claude")
-    })
+    for ps in PS {
+        let out = Command::new(ps)
+            .args(["-o", "comm=", "-p", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        if let Ok(o) = out {
+            return o.status.success() && claude_name(String::from_utf8_lossy(&o.stdout).trim());
+        }
+    }
+    true
+}
+
+/// The command's basename is `claude`, alone or followed by a character that
+/// is not a letter or digit (`claude-code`, not `claudette`).
+fn claude_name(comm: &str) -> bool {
+    let name = comm.rsplit('/').next().unwrap_or_default();
+    name.strip_prefix("claude")
+        .is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()))
 }
 
 /// Records the session. `Some` is the context to answer with instead, when a
@@ -70,7 +79,6 @@ fn is_claude(env: Env, pid: u32) -> bool {
 /// taking its row would lift a park.
 fn record(
     c: &Connection,
-    env: Env,
     id: &Identity,
     session_id: &str,
     source: &str,
@@ -87,16 +95,17 @@ fn record(
         }
         (Role::Child, Some(child)) => {
             let (same, current) = crew::is_current(c, child, session_id)?;
-            if !same
-                && let Some(pid) = crew::claude_pid(c, child)?
-                && pid != ppid
-                && is_claude(env, pid)
-            {
+            // Another live claude holds the row: the caller is not the child.
+            let held = crew::claude_pid(c, child)?.is_some_and(|p| p != ppid && is_claude(p));
+            if held && !same {
                 return Ok(Some(format!(
                     "crook: this session is not the child; the child is session {current}"
                 )));
             }
-            crew::record_session(c, child, session_id, ppid)?;
+            // With the child's own id, it only gets the card: its pid stays.
+            if !held {
+                crew::record_session(c, child, session_id, ppid)?;
+            }
         }
         // A fork of the orchestrator must not take over its row.
         (Role::Orchestrator, _) if source != "fork" => {
@@ -105,4 +114,24 @@ fn record(
         _ => {}
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::claude_name;
+
+    #[test]
+    fn claude_name_is_exact() {
+        for yes in [
+            "claude",
+            "/usr/local/bin/claude",
+            "claude-code",
+            "claude.exe",
+        ] {
+            assert!(claude_name(yes), "{yes}");
+        }
+        for no in ["claudette", "notclaude", "zsh", "", "claude2"] {
+            assert!(!claude_name(no), "{no}");
+        }
+    }
 }

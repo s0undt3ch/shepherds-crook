@@ -52,16 +52,11 @@ pub fn parse(json: &str) -> Result<Vec<Agent>, Error> {
 
 /// `claude` as the injected `PATH` finds it.
 fn find_claude(env: Env) -> Option<PathBuf> {
-    find_on_path(env, "claude")
-}
-
-/// An executable `name` as the injected `PATH` finds it.
-pub fn find_on_path(env: Env, name: &str) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     env("PATH")?
         .split(':')
         .filter(|d| !d.is_empty())
-        .map(|d| PathBuf::from(d).join(name))
+        .map(|d| PathBuf::from(d).join("claude"))
         .find(|p| {
             std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         })

@@ -51,7 +51,7 @@ export interface Role<S> {
   reoffer?(prev: S, s: S): boolean
   /** Called with each good snapshot. */
   onRead?(s: S): void
-  /** Called as an offer goes out; what it returns is added to the next snapshot call. */
+  /** Called once an offer's submit has succeeded; what it returns is added to the next snapshot call. */
   onOffer?(s: S): object | undefined
 }
 
@@ -69,7 +69,7 @@ const childRole: Role<ChildSnap> = {
  * (or `NET_MS` passed); every tick then decides from the last snapshot. It submits one fixed-text
  * wake-up per state (the role's key), and only when idle and the role says the snapshot is ready.
  */
-export function createWatcher<S extends { card_version: number }>(
+export function createWatcher<S>(
   p: Ports,
   ids: WatcherIds,
   role: Role<S>,
@@ -122,11 +122,11 @@ export function createWatcher<S extends { card_version: number }>(
     noteOwn(text)
     // Busy until the wake-up's turn ends, so a change before its turn starts queues no second one.
     idle = false
-    const extra = role.onOffer?.(s)
     // Not awaited: the submit may resolve only once its turn starts, and reads must go on meanwhile.
     void p.submit(text).then(
       () => {
-        // Sent after the submit, so a submit that fails leaves the work unmarked.
+        // Only after the submit, so a submit that fails leaves the work unmarked and the budget unspent.
+        const extra = role.onOffer?.(s)
         if (extra === undefined) return
         pending = extra
         stale = true

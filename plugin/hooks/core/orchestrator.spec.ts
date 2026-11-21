@@ -177,9 +177,54 @@ describe('orchestrator watcher', () => {
     await poll(w, watcher)
     await turn(watcher)
     expect(w.submits).toHaveLength(5)
-    watcher.onComposer()
+    watcher.onTypedPrompt()
     await poll(w, watcher)
     expect(w.submits).toHaveLength(6)
+  })
+
+  it('sends no ack when the submit rejects, and does not spend the machine-turn budget', async () => {
+    const { w, p } = world({ done_unnotified: done(['c1', 1]) })
+    let reject = true
+    const watcher = createOrchestratorWatcher(
+      { ...p, submit: async t => (reject ? Promise.reject(new Error('no')) : p.submit(t)) },
+      IDS,
+      () => {},
+    )
+    await watcher.tick()
+    await flush()
+    await poll(w, watcher)
+    expect(snapshots(w).some(r => 'ack' in r.input)).toBe(false)
+    // One offer per state: the failed one is not retried, so the budget is checked with five new states.
+    reject = false
+    for (let i = 2; i <= 6; i++) {
+      w.snap = { ...w.snap, done_unnotified: done(['c1', i]) }
+      w.mtime = i + 1
+      await poll(w, watcher)
+      watcher.onTurn(START)
+      watcher.onTurn(END)
+      await flush()
+    }
+    expect(w.submits).toHaveLength(5)
+  })
+
+  it('resends the same ack when its read fails', async () => {
+    const { w, p } = world({ done_unnotified: done(['c1', 4]) })
+    let failAck = true
+    const watcher = createOrchestratorWatcher(
+      { ...p, run: async (verb, input) => (failAck && 'ack' in input ? { ok: false, error: 'x' } : p.run(verb, input)) },
+      IDS,
+      () => {},
+    )
+    await watcher.tick()
+    await flush()
+    await poll(w, watcher)
+    expect(w.submits).toEqual([DONE_WAKE_UP])
+    failAck = false
+    w.mtime = 9
+    await poll(w, watcher)
+    const sent = snapshots(w).filter(r => 'ack' in r.input)
+    expect(sent.at(-1)?.input.ack).toEqual({ c1: 4 })
+    expect(w.acked).toEqual({ c1: 4 })
   })
 
   it('does not decide after a failed read until a good one', async () => {

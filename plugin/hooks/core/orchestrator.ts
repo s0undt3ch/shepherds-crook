@@ -5,7 +5,7 @@ import type { Role, TurnEvent, WatcherIds } from './watcher.ts'
 
 export const DONE_WAKE_UP = 'crook: children are done. Call status().'
 export const STALE_NUDGE = 'the card is stale: move Where it stands on, keeping what is still true'
-/** Wake-ups with no `composer` prompt between them, after which the orchestrator stops waking. */
+/** Wake-ups with no typed (`composer` or `bridge`) prompt between them, after which the orchestrator stops waking. */
 export const MAX_MACHINE_TURNS = 5
 
 const USER_KINDS = new Set(['composer', 'bridge'])
@@ -80,7 +80,7 @@ export function createOrchestratorWatcher(p: Ports, ids: WatcherIds, noteOwn: (t
     /** The status line from the last snapshot read; never runs a verb. */
     line: (): string | undefined => (last === undefined ? undefined : renderStatus(last)),
     /** A typed prompt (`composer` or `bridge`): the user is back, so wake-ups may go on. */
-    onComposer(): void {
+    onTypedPrompt(): void {
       machineTurns = 0
     },
   }
@@ -99,8 +99,8 @@ export function onOrchestratorTurn(e: TurnEvent): void {
   shared?.onTurn(e)
 }
 
-export function onComposerPrompt(): void {
-  shared?.onComposer()
+export function onTypedPrompt(): void {
+  shared?.onTypedPrompt()
 }
 
 interface Prompt {
@@ -122,7 +122,7 @@ export async function filter<E extends Prompt, R>(
   next: (e: E) => Promise<R>,
 ): Promise<R> {
   const typed = USER_KINDS.has(e.origin.kind)
-  if (typed) onComposerPrompt()
+  if (typed) onTypedPrompt()
   if (e.command !== undefined || !typed) return next(e)
   let add: string[] = []
   try {

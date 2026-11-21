@@ -69,6 +69,8 @@ jobs:
         with:
           require: admin
           username: ${{ github.triggering_actor }}
+          # Without it the action only sets an output and never fails the job.
+          error-if-missing: true
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

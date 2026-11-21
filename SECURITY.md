@@ -6,8 +6,7 @@ Please report vulnerabilities privately, through GitHub's private vulnerability 
 repository's **Security** tab and choose **Report a vulnerability**. Do not open a public issue or pull
 request for a vulnerability.
 
-Include what you found, how to reproduce it, and the crook version (`crook --version`) and platform. You
-will get a reply in the advisory thread, and a fix is credited to you unless you would rather it were not.
+Include what you found, how to reproduce it, and the crook version (`crook --version`) and platform.
 
 ## Scope
 

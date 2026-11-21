@@ -229,10 +229,11 @@ impl Launcher for RealLauncher<'_> {
                 .as_ref()
                 .ok_or_else(|| Error::Refused("a herdr start needs a pane launch".into()))?;
             let address = format!("{}/{}", p.slug, p.child);
-            return herdr::spawn_pane(
+            return herdr::spawn_tab(
                 self.env,
                 &p.slug,
                 &cmd.cwd,
+                &herdr::child_label(&p.child),
                 &[p.crook_bin.clone().into(), "launch".into(), address.into()],
             );
         }
@@ -277,7 +278,7 @@ impl Launcher for RealLauncher<'_> {
             return Ok(());
         }
         match herdr::pane_for(self.env, session_id) {
-            Some(pane) => herdr::close(self.env, &pane),
+            Some(pane) => herdr::close_tab_of(self.env, &pane),
             None => Ok(()),
         }
     }
@@ -477,6 +478,8 @@ mod tests {
                 &format!(
                     "echo \"$@\" >> {}\n\
                      case \"$*\" in\n\
+                     'pane get w1:p2') printf '%s' '{{\"result\":{{\"pane\":{{\"tab_id\":\"w1:t2\"}}}}}}';;\n\
+                     'tab get w1:t2') printf '%s' '{{\"result\":{{\"tab\":{{\"pane_count\":1}}}}}}';;\n\
                      'pane list') printf '%s' '{{\"result\":{{\"panes\":[{{\"pane_id\":\"w1:p1\"}},{{\"pane_id\":\"w1:p2\",\"agent\":\"claude\"}}]}}}}';;\n\
                      'pane process-info --pane w1:p2') printf '%s' '{{\"result\":{{\"process_info\":{{\"foreground_processes\":[{{\"pid\":4242}}]}}}}}}';;\n\
                      'pane process-info'*) printf '%s' '{{\"result\":{{\"process_info\":{{\"foreground_processes\":[]}}}}}}';;\n\
@@ -511,13 +514,13 @@ mod tests {
     }
 
     #[test]
-    fn close_pane_closes_the_pane_found_by_the_session_pid() {
+    fn close_pane_closes_the_tab_of_the_pane_found_by_the_session_pid() {
         let p = Panes::new();
         let env = p.env(true);
         RealLauncher::new(&env).close_pane("sid").unwrap();
         assert_eq!(
             p.calls().last().map(String::as_str),
-            Some("pane close w1:p2")
+            Some("tab close w1:t2")
         );
     }
 
@@ -528,7 +531,7 @@ mod tests {
         let l = RealLauncher::new(&env);
         l.close_pane("unknown-session").unwrap();
         assert!(
-            !p.calls().iter().any(|c| c.starts_with("pane close")),
+            !p.calls().iter().any(|c| c.contains(" close ")),
             "{:?}",
             p.calls()
         );
@@ -565,6 +568,8 @@ mod tests {
                 "workspace create --label crook-demo --cwd /r/.worktrees/demo/c1 --no-focus"
             ]
         );
+        // The tab is labelled with the child's name.
+        assert_eq!(herdr::child_label(&cmd.pane.as_ref().unwrap().child), "c1");
         // Without a pane launch there is nothing to type.
         let bare = StartCmd { pane: None, ..cmd };
         assert!(matches!(

@@ -18,6 +18,23 @@ pub struct Config {
     pub home: Option<String>,
     /// When set, a project's diary is `<diary_root>/<slug>` instead of `<home>/<slug>/diary`.
     pub diary_root: Option<String>,
+    #[serde(default)]
+    pub herdr: HerdrConfig,
+}
+
+/// The tab label of an orchestrator: a dog, one code point.
+pub const ORCHESTRATOR_LABEL: &str = "\u{1F415}";
+
+/// Plain text for a tab bar that cannot draw `ORCHESTRATOR_LABEL`: the only
+/// numeronym crook uses. Set it as `[herdr] orchestrator_label = "o10r"`.
+pub const ORCHESTRATOR_LABEL_TEXT: &str = "o10r";
+
+/// `[herdr]` in config.toml.
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HerdrConfig {
+    /// The label of the orchestrator's herdr tab; blank counts as unset.
+    pub orchestrator_label: Option<String>,
 }
 
 /// `~` and `~/x` from the home directory; anything else as written.
@@ -66,6 +83,16 @@ impl Config {
             Some(d) => Ok(absolute(env, "diary_root", d)?.join(slug)),
             None => Ok(self.project_home(env, slug)?.join("diary")),
         }
+    }
+
+    /// The label for an orchestrator's herdr tab.
+    pub fn orchestrator_label(&self) -> &str {
+        self.herdr
+            .orchestrator_label
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .unwrap_or(ORCHESTRATOR_LABEL)
     }
 
     /// The glob that makes every project's diary private, whichever project
@@ -135,6 +162,22 @@ mod tests {
     fn missing_file_is_empty() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(load(&env_in(tmp.path())).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn orchestrator_label_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        assert_eq!(load(&env).unwrap().orchestrator_label(), "\u{1F415}");
+        assert_eq!(ORCHESTRATOR_LABEL.chars().count(), 1);
+        write(tmp.path(), "[herdr]\norchestrator_label = \"boss\"\n");
+        assert_eq!(load(&env).unwrap().orchestrator_label(), "boss");
+        write(tmp.path(), "[herdr]\norchestrator_label = \"  \"\n");
+        assert_eq!(load(&env).unwrap().orchestrator_label(), ORCHESTRATOR_LABEL);
+        write(tmp.path(), "[herdr]\n");
+        assert_eq!(load(&env).unwrap().orchestrator_label(), ORCHESTRATOR_LABEL);
+        write(tmp.path(), "[herdr]\nnope = 1\n");
+        assert!(load(&env).is_err());
     }
 
     #[test]

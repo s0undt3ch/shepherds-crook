@@ -23,6 +23,8 @@ pub struct Set {
     globs: Vec<GlobMatcher>,
     /// Every way a private root can be written inside a string.
     forms: Vec<String>,
+    /// Every way the literal directory of a private glob can be written.
+    glob_forms: Vec<String>,
     allow_roots: Vec<PathBuf>,
     allow_globs: Vec<GlobMatcher>,
 }
@@ -43,6 +45,7 @@ impl Set {
             roots: Vec::new(),
             globs: Vec::new(),
             forms: Vec::new(),
+            glob_forms: Vec::new(),
             allow_roots: Vec::new(),
             allow_globs: Vec::new(),
         };
@@ -62,6 +65,8 @@ impl Set {
         }
         s.forms.sort();
         s.forms.dedup();
+        s.glob_forms.sort();
+        s.glob_forms.dedup();
         Ok(s)
     }
 
@@ -89,6 +94,10 @@ impl Set {
 
     pub(crate) fn forms(&self) -> &[String] {
         &self.forms
+    }
+
+    pub(crate) fn glob_forms(&self) -> &[String] {
+        &self.glob_forms
     }
 
     pub(crate) fn contains_with(&self, r: &Resolver, abs: &Path) -> bool {
@@ -197,7 +206,12 @@ impl Set {
     fn add_private(&mut self, r: &Resolver, entry: &str, abs: &str) {
         if abs.contains(GLOB_META) {
             match r.glob(abs) {
-                Some(mut g) => self.globs.append(&mut g),
+                Some(mut g) => {
+                    self.globs.append(&mut g);
+                    let dir = literal_dir(abs);
+                    let mut forms = self.spellings(r, &literal_dir(entry), &dir);
+                    self.glob_forms.append(&mut forms);
+                }
                 // A broken glob still protects its directory, which errs towards asking.
                 None => self.add_root(r, entry, &literal_dir(abs)),
             }
@@ -220,9 +234,15 @@ impl Set {
     }
 
     fn add_root(&mut self, r: &Resolver, raw: &str, abs: &str) {
-        let variants = r.variants(Path::new(abs));
+        let mut forms = self.spellings(r, raw, abs);
+        self.forms.append(&mut forms);
+        self.roots.extend(r.variants(Path::new(abs)));
+    }
+
+    /// Every way `abs` (written by the user as `raw`) can appear in a string.
+    fn spellings(&self, r: &Resolver, raw: &str, abs: &str) -> Vec<String> {
         let mut forms = vec![raw.to_string()];
-        for v in &variants {
+        for v in &r.variants(Path::new(abs)) {
             forms.push(v.display().to_string());
             for h in &self.home_variants {
                 if let Ok(rel) = v.strip_prefix(h) {
@@ -241,9 +261,8 @@ impl Set {
                 forms.push(Path::new("/").join(rest).display().to_string());
             }
         }
-        self.forms
-            .extend(forms.into_iter().filter(|f| !f.is_empty() && f != "/"));
-        self.roots.extend(variants);
+        forms.retain(|f| !f.is_empty() && f != "/");
+        forms
     }
 }
 

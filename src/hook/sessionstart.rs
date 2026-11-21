@@ -1,14 +1,15 @@
 //! `SessionStart`: records the session and injects the project card.
 
+use std::process::{Command, Stdio};
+
 use nix::errno::Errno;
 use nix::sys::signal::kill;
 use nix::unistd::Pid;
 use rusqlite::Connection;
 
-use crate::crew;
 use crate::gate::{Identity, Role};
 use crate::store::{Mode, Store, Touch};
-use crate::{Env, Error};
+use crate::{Env, Error, agents, crew};
 
 /// The `additionalContext` text; errors are for the caller to word.
 pub fn handle(
@@ -20,7 +21,7 @@ pub fn handle(
 ) -> Result<String, Error> {
     let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
     let refused = store.write(Touch::CHILDREN, |tx| {
-        record(tx, id, session_id, source, ppid)
+        record(tx, env, id, session_id, source, ppid)
     })?;
     if let Some(line) = refused {
         return Ok(line);
@@ -42,11 +43,34 @@ fn alive(pid: u32) -> bool {
     }
 }
 
+/// Whether `pid` is a running claude process, by its command name from `ps`
+/// on the injected `PATH`. A pid the child no longer holds may have been reused
+/// by anything; when `ps` cannot tell, it is not taken for the child.
+fn is_claude(env: Env, pid: u32) -> bool {
+    if !alive(pid) {
+        return false;
+    }
+    let Some(ps) = agents::find_on_path(env, "ps") else {
+        return false;
+    };
+    let out = Command::new(ps)
+        .args(["-o", "comm=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    out.is_ok_and(|o| {
+        let comm = String::from_utf8_lossy(&o.stdout);
+        let name = comm.trim().rsplit('/').next().unwrap_or_default();
+        o.status.success() && name.contains("claude")
+    })
+}
+
 /// Records the session. `Some` is the context to answer with instead, when a
 /// session claims a child whose claude process is another one, still running:
 /// taking its row would lift a park.
 fn record(
     c: &Connection,
+    env: Env,
     id: &Identity,
     session_id: &str,
     source: &str,
@@ -62,11 +86,12 @@ fn record(
             }
         }
         (Role::Child, Some(child)) => {
-            if let Some(pid) = crew::claude_pid(c, child)?
+            let (same, current) = crew::is_current(c, child, session_id)?;
+            if !same
+                && let Some(pid) = crew::claude_pid(c, child)?
                 && pid != ppid
-                && alive(pid)
+                && is_claude(env, pid)
             {
-                let (_, current) = crew::is_current(c, child, session_id)?;
                 return Ok(Some(format!(
                     "crook: this session is not the child; the child is session {current}"
                 )));

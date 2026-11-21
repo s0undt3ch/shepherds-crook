@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
+use crate::privacy::names_home;
 use crate::store::{Mode, Store, Touch};
 use crate::{Env, Error};
 
@@ -248,6 +249,12 @@ fn insert(c: &Connection, kind: ItemKind, value: &str) -> Result<(), Error> {
 /// adds. A notes folder is also private, so a note can never be public by omission.
 pub fn add(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
     let value = normalise(kind, value)?;
+    // The privacy check refuses a relative private entry, so none is stored.
+    if kind == ItemKind::Private && !value.starts_with('/') && !names_home(&value) {
+        return Err(Error::Refused(format!(
+            "private entry is not absolute: {value:?}"
+        )));
+    }
     insert(c, kind, &value)?;
     if kind == ItemKind::Notes {
         insert(c, ItemKind::Private, &value)?;
@@ -486,6 +493,21 @@ mod tests {
             .unwrap_err();
         assert!(matches!(e, Error::Refused(_)));
         assert_eq!(version(&s), v + 1, "a refused remove changes nothing");
+    }
+
+    #[test]
+    fn add_refuses_a_relative_private_entry() {
+        let (_t, mut s) = fresh();
+        for rel in ["rel/x", "x", "./y/**"] {
+            let e = s
+                .write(Touch::PROJECT, |tx| add(tx, ItemKind::Private, rel))
+                .unwrap_err();
+            assert!(e.to_string().contains("not absolute"), "{e}");
+        }
+        for ok in ["/abs/x", "~/v", "$HOME/w", "${HOME}"] {
+            s.write(Touch::PROJECT, |tx| add(tx, ItemKind::Private, ok))
+                .unwrap();
+        }
     }
 
     #[test]

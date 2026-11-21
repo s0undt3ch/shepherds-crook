@@ -32,6 +32,8 @@ const ASKS_BUSY: Duration = Duration::from_millis(100);
 const MAX_REFS: usize = 512;
 /// The whole check stops this long after it starts, leaving room in the 500 ms budget.
 const CHECK_BY: Duration = Duration::from_millis(400);
+/// The `asks` insert waits only until this long after the check starts.
+const ASKS_BY: Duration = Duration::from_millis(480);
 const TOO_LARGE: &str = "crook: private reference check: input too large to check";
 
 /// Tools that never reach the privacy check, whatever they name.
@@ -41,12 +43,12 @@ pub fn exempt_tool(tool: &str, input: &Value) -> bool {
         || (tool == "Agent" && local_agent(input))
 }
 
-/// A built-in subagent type, run locally. A field that is present but not a
-/// string counts as neither.
+/// A built-in subagent type, run locally. Only a known local `isolation`
+/// counts; any other value, or one that is not a string, is checked.
 fn local_agent(input: &Value) -> bool {
     let local = input
         .get("isolation")
-        .is_none_or(|v| v.as_str().is_some_and(|i| i != "remote"));
+        .is_none_or(|v| v.as_str() == Some("worktree"));
     let built_in = input
         .get("subagent_type")
         .is_none_or(|v| v.as_str().is_some_and(|t| LOCAL_AGENT_TYPES.contains(&t)));
@@ -79,7 +81,8 @@ pub fn check(
     if exempt_tool(tool, input) {
         return Ok(None);
     }
-    let deadline = Instant::now() + CHECK_BY;
+    let started = Instant::now();
+    let deadline = started + CHECK_BY;
     let cfg = config::load(env)?;
     let set = Set::load(rec, &cfg, env, slug)?;
     // Judged on where the write lands: a link out of the notes is not the notes.
@@ -94,12 +97,19 @@ pub fn check(
         return Ok(None);
     };
     let others = refs.len() - 1;
-    log_ask(env, slug, session_id, tool, first, others);
+    log_ask(env, slug, session_id, tool, first, others, started);
     let mut reason = format!("crook: private reference: {first}");
     if others > 0 {
         reason.push_str(&format!(" (+{others} more)"));
     }
     Ok(Some(reason))
+}
+
+/// How long the `asks` insert may wait for the lock, started at `started` and
+/// asked at `now`: `None` when the budget is spent.
+fn asks_wait(started: Instant, now: Instant) -> Option<Duration> {
+    let left = (started + ASKS_BY).saturating_duration_since(now);
+    (!left.is_zero()).then(|| left.min(ASKS_BUSY))
 }
 
 /// Drops a reference that sits inside another one: a path found under two
@@ -115,9 +125,22 @@ fn distinct(mut refs: Vec<String>) -> Vec<String> {
     refs
 }
 
-/// Its own short-lived connection: a lost row never changes the decision.
-fn log_ask(env: Env, slug: &str, session: Option<&str>, tool: &str, hit: &str, others: usize) {
-    let done = Store::open_with_busy(env, slug, Mode::ReadWrite, ASKS_BUSY).and_then(|mut s| {
+/// Its own short-lived connection, waiting only as long as the budget leaves:
+/// a lost row never changes the decision.
+fn log_ask(
+    env: Env,
+    slug: &str,
+    session: Option<&str>,
+    tool: &str,
+    hit: &str,
+    others: usize,
+    started: Instant,
+) {
+    let done = match asks_wait(started, Instant::now()) {
+        Some(busy) => Store::open_with_busy(env, slug, Mode::ReadWrite, busy),
+        None => Err(Error::Refused("no time left in the hook's budget".into())),
+    }
+    .and_then(|mut s| {
         s.write(Touch::empty(), |tx| {
             tx.execute(
                 "INSERT INTO asks(at, session_id, tool, hit, \"others\") VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -329,6 +352,7 @@ mod tests {
             json!({"prompt": prompt, "isolation": "remote"}),
             json!({"prompt": prompt, "subagent_type": 7}),
             json!({"prompt": prompt, "isolation": ["remote"]}),
+            json!({"prompt": prompt, "subagent_type": "Explore", "isolation": "cloud"}),
         ] {
             assert_eq!(
                 reason(&f.pre("Agent", input.clone())),
@@ -366,7 +390,14 @@ mod tests {
     #[test]
     fn relative_private_entry_is_a_hook_error() {
         let f = Fx::new();
-        f.edit(|c| project::add(c, ItemKind::Private, "rel/notes"));
+        // A legacy entry, from before `add` refused relative ones.
+        f.edit(|c| {
+            c.execute(
+                "INSERT INTO project_item(kind, value, pos) VALUES ('private', 'rel/notes', 99)",
+                [],
+            )?;
+            Ok(0)
+        });
         assert_eq!(
             reason(&f.pre("Bash", json!({"command": "ls"}))),
             "crook: hook error: private entry is not absolute: rel/notes"
@@ -479,6 +510,17 @@ mod tests {
             &r[..r.len().min(200)]
         );
         assert_eq!(f.asks().len(), 1);
+    }
+
+    #[test]
+    fn asks_wait_fits_the_budget() {
+        use std::time::{Duration, Instant};
+        let t = Instant::now();
+        assert_eq!(super::asks_wait(t, t), Some(super::ASKS_BUSY));
+        let late = t + Duration::from_millis(430);
+        assert_eq!(super::asks_wait(t, late), Some(Duration::from_millis(50)));
+        assert_eq!(super::asks_wait(t, t + Duration::from_millis(480)), None);
+        assert_eq!(super::asks_wait(t, t + Duration::from_secs(2)), None);
     }
 
     #[test]

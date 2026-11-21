@@ -106,8 +106,17 @@ pub fn run(
         ProjectCmd::AddLink { url } => add(&mut store, ItemKind::Link, &url)?,
         ProjectCmd::AddTicket { ticket } => add(&mut store, ItemKind::Ticket, &ticket)?,
         ProjectCmd::Remove { kind, value } => {
-            let value = resolve(kind, &value, cwd);
-            store.write(Touch::PROJECT, |tx| project::remove(tx, kind, &value))?
+            let resolved = resolve(kind, &value, cwd);
+            // The value as written first: an entry stored before values were
+            // resolved (a relative `private` one) must stay removable.
+            store.write(Touch::PROJECT, |tx| {
+                match project::remove(tx, kind, &value) {
+                    Err(Error::Refused(_)) if resolved != value => {
+                        project::remove(tx, kind, &resolved)
+                    }
+                    r => r,
+                }
+            })?
         }
         ProjectCmd::SetWhat => {
             let text = read_text(stdin)?;
@@ -264,5 +273,29 @@ mod tests {
         let s = Store::open(&env, "p", Mode::ReadWrite).unwrap();
         let private = s.read(|c| Ok(project::get(c)?.private)).unwrap();
         assert!(!private.iter().any(|p| p.ends_with("plain")), "{private:?}");
+    }
+
+    #[test]
+    fn legacy_relative_private_entry_can_be_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_for(tmp.path());
+        project::init(&env, "p").unwrap();
+        let mut s = Store::open(&env, "p", Mode::ReadWrite).unwrap();
+        s.write(Touch::PROJECT, |tx| {
+            tx.execute(
+                "INSERT INTO project_item(kind, value, pos) VALUES ('private', 'rel/x', 0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        drop(s);
+        let cmd = ProjectCmd::Remove {
+            kind: ItemKind::Private,
+            value: "rel/x".into(),
+        };
+        run(&env, "p", cmd, Path::new("/work"), &mut Cursor::new("")).unwrap();
+        let s = Store::open(&env, "p", Mode::ReadWrite).unwrap();
+        assert!(s.read(|c| Ok(project::get(c)?.private)).unwrap().is_empty());
     }
 }

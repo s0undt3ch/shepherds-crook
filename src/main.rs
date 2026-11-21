@@ -56,7 +56,9 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
-/// Stands in for a stdout that is not open: every write fails.
+/// Stands in for stdout when it cannot be duplicated (no free descriptor):
+/// every write fails, so an answer that cannot be given exits 2. A closed fd 1
+/// never gets here: the Rust runtime reopens it on `/dev/null` at start.
 struct NoStdout;
 
 impl Write for NoStdout {

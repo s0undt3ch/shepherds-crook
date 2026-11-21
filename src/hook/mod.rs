@@ -243,6 +243,28 @@ mod tests {
         )
     }
 
+    /// A live process whose command is `claude`: a copy of `sleep` by that name.
+    fn live_claude(dir: &std::path::Path) -> Live {
+        let bin = dir.join("claude");
+        let sleep = ["/bin/sleep", "/usr/bin/sleep"]
+            .into_iter()
+            .find(|p| std::path::Path::new(p).exists())
+            .unwrap();
+        std::fs::copy(sleep, &bin).unwrap();
+        Live(std::process::Command::new(&bin).arg("60").spawn().unwrap())
+    }
+
+    /// The child env with the test's `PATH`, so the hook can run `ps`.
+    fn child_with_path() -> Vec<(&'static str, String)> {
+        let mut v: Vec<(&str, String)> = CHILD.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        v.push(("PATH", std::env::var("PATH").unwrap_or_default()));
+        v
+    }
+
+    fn as_refs<'a>(v: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+        v.iter().map(|(k, v)| (*k, v.as_str())).collect()
+    }
+
     impl Fixture {
         fn new() -> Fixture {
             let tmp = tempfile::tempdir().unwrap();
@@ -481,8 +503,10 @@ mod tests {
     #[test]
     fn forged_session_start_does_not_lift_a_park() {
         let f = Fixture::new();
-        let claude = live();
+        let claude = live_claude(f.tmp.path());
         let pid = claude.0.id();
+        let env = child_with_path();
+        let env = as_refs(&env);
         f.store()
             .write(Touch::CHILDREN, |tx| {
                 crew::record_session(tx, "c1", "s-c1", pid)
@@ -490,7 +514,7 @@ mod tests {
             .unwrap();
         f.park("c1");
         let forged = json!({"session_id": "decoy", "source": "startup"}).to_string();
-        let (code, out) = f.call("SessionStart", &forged, &CHILD, pid + 1);
+        let (code, out) = f.call("SessionStart", &forged, &env, pid + 1);
         assert_eq!(code, 0);
         assert_eq!(
             context(&out),
@@ -512,13 +536,57 @@ mod tests {
         }
         // The same claude process (a `/clear`) still records its new id.
         let clear = json!({"session_id": "s-c1b", "source": "clear"}).to_string();
-        let (_, out) = f.call("SessionStart", &clear, &CHILD, pid);
+        let (_, out) = f.call("SessionStart", &clear, &env, pid);
         assert!(context(&out).contains("Project card"), "{out}");
         assert!(
             f.store()
                 .read(|c| crew::is_current(c, "c1", "s-c1b"))
                 .unwrap()
                 .0
+        );
+    }
+
+    #[test]
+    fn reused_pid_that_is_not_claude_lets_a_restart_record_itself() {
+        let f = Fixture::new();
+        let other = live();
+        let pid = other.0.id();
+        f.store()
+            .write(Touch::CHILDREN, |tx| {
+                crew::record_session(tx, "c1", "s-c1", pid)
+            })
+            .unwrap();
+        let env = child_with_path();
+        let env = as_refs(&env);
+        let input = json!({"session_id": "s-new", "source": "resume"}).to_string();
+        let (_, out) = f.call("SessionStart", &input, &env, 4242);
+        assert!(context(&out).contains("Project card"), "{out}");
+        assert!(
+            f.store()
+                .read(|c| crew::is_current(c, "c1", "s-new"))
+                .unwrap()
+                .0
+        );
+    }
+
+    #[test]
+    fn same_session_id_takes_the_normal_path() {
+        let f = Fixture::new();
+        let claude = live_claude(f.tmp.path());
+        let pid = claude.0.id();
+        f.store()
+            .write(Touch::CHILDREN, |tx| {
+                crew::record_session(tx, "c1", "s-c1", pid)
+            })
+            .unwrap();
+        let env = child_with_path();
+        let env = as_refs(&env);
+        let input = json!({"session_id": "s-c1", "source": "resume"}).to_string();
+        let (_, out) = f.call("SessionStart", &input, &env, 4242);
+        assert!(context(&out).contains("Project card"), "{out}");
+        assert_eq!(
+            f.store().read(|c| crew::claude_pid(c, "c1")).unwrap(),
+            Some(4242)
         );
     }
 

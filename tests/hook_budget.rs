@@ -118,6 +118,7 @@ impl World {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        warm_binary();
         let started = Instant::now();
         let mut child = c.spawn().unwrap();
         let mut stdin = child.stdin.take().unwrap();
@@ -131,6 +132,15 @@ impl World {
         let v = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
         (took, v)
     }
+}
+
+/// The first exec of a relinked binary pays macOS launch checks, which are not
+/// the hook's cost: run it once, untimed, per test process.
+fn warm_binary() {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(|| {
+        let _ = crook().args(["hook", "Nope"]).stdin(Stdio::null()).output();
+    });
 }
 
 fn reason(v: &Value) -> &str {

@@ -4,6 +4,8 @@ pub mod address;
 pub mod init;
 pub mod list;
 pub mod next;
+pub mod open;
 pub mod project;
+pub mod resume;
 pub mod status;
 pub mod unpark;

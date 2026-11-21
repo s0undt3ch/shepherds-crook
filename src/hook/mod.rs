@@ -6,7 +6,7 @@
 mod output;
 mod park;
 mod privacy;
-mod sessionstart;
+pub(crate) mod sessionstart;
 
 use std::io::{Read, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};

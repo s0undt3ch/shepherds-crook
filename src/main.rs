@@ -9,6 +9,7 @@ use clap_complete::Shell;
 
 use crook::cli::{self, project::ProjectCmd};
 use crook::gate::{self, Entry};
+use crook::launch::{self, Host, Outcome};
 use crook::{Env, hook, modverb};
 
 #[derive(Parser)]
@@ -28,6 +29,10 @@ enum Cmd {
         #[command(subcommand)]
         action: ProjectCmd,
     },
+    /// Start the project's orchestrator
+    Open { slug: String },
+    /// Restart a child's session: `<child>` or `<slug>/<child>`
+    Resume { child: String },
     /// Lift a child's park by hand: `<child>` or `<slug>/<child>`
     Unpark { child: String },
     /// One line per project
@@ -113,6 +118,8 @@ fn run(args: &[OsString], env: Env) -> u8 {
             clap_complete::generate(shell, &mut cmd, "crook", &mut std::io::stdout());
             0
         }
+        Cmd::Open { slug } => launch_verb(env, |env, host| cli::open::plan(env, &slug, host)),
+        Cmd::Resume { child } => launch_verb(env, |env, host| cli::resume::plan(env, &child, host)),
         Cmd::Init { slug } => user_verb(env, |env| cli::init::run(env, &slug)),
         Cmd::List => user_verb(env, cli::list::run),
         Cmd::Status => user_verb(env, cli::status::run),
@@ -135,6 +142,33 @@ fn user_verb(env: Env, f: impl FnOnce(Env) -> Result<String, crook::Error>) -> u
         Ok(msg) => {
             let _ = writeln!(std::io::stdout(), "{msg}");
             0
+        }
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "crook: {e}");
+            1
+        }
+    }
+}
+
+/// Runs a launch verb behind the gate. A start prints its notes on stderr, then
+/// replaces this process with `claude`, so it returns only when that fails.
+fn launch_verb(env: Env, f: impl FnOnce(Env, &Host) -> Result<Outcome, crook::Error>) -> u8 {
+    if let Err(e) = gate::check(Entry::User, env) {
+        let _ = writeln!(std::io::stderr(), "crook: {e}");
+        return 2;
+    }
+    match launch::with_real_host(env, |host| f(env, host)).and_then(|r| r) {
+        Ok(Outcome::Say(msg)) => {
+            let _ = writeln!(std::io::stdout(), "{msg}");
+            0
+        }
+        Ok(Outcome::Exec(plan)) => {
+            for note in &plan.notes {
+                let _ = writeln!(std::io::stderr(), "{note}");
+            }
+            let e = plan.exec();
+            let _ = writeln!(std::io::stderr(), "crook: cannot start claude: {e}");
+            1
         }
         Err(e) => {
             let _ = writeln!(std::io::stderr(), "crook: {e}");

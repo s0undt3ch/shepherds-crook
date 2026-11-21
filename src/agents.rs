@@ -1,7 +1,9 @@
 //! `claude agents --json`: the live sessions Claude Code knows about.
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -50,8 +52,23 @@ pub fn parse(json: &str) -> Result<Vec<Agent>, Error> {
         .collect())
 }
 
+/// Whether `cwd` is `root` or below it, compared as written and then
+/// canonicalised, because `/tmp` is `/private/tmp` on macOS.
+pub(crate) fn cwd_inside(cwd: &str, root: &str) -> bool {
+    if std::path::Path::new(cwd).starts_with(root) {
+        return true;
+    }
+    matches!(
+        (std::fs::canonicalize(cwd), std::fs::canonicalize(root)),
+        (Ok(c), Ok(w)) if c.starts_with(&w)
+    )
+}
+
+/// How long `claude agents --json` and `claude --version` may run.
+pub const CLAUDE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// `claude` as the injected `PATH` finds it.
-fn find_claude(env: Env) -> Option<PathBuf> {
+pub(crate) fn find_claude(env: Env) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     env("PATH")?
         .split(':')
@@ -62,18 +79,72 @@ fn find_claude(env: Env) -> Option<PathBuf> {
         })
 }
 
+/// Runs `cmd` with no stdin and returns its stdout, or an error when it fails
+/// or runs past `timeout` (then it is killed and reaped). Stdout is read on a
+/// thread, so a child with a lot of output never blocks on a full pipe.
+pub(crate) fn run_timeout(mut cmd: Command, timeout: Duration) -> Result<String, Error> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| Error::Agents(e.to_string()))?;
+    let mut out = child
+        .stdout
+        .take()
+        .ok_or_else(|| Error::Agents("no stdout".into()))?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out.read_to_end(&mut buf);
+        buf
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) if start.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Agents(format!(
+                    "timed out after {} s",
+                    timeout.as_secs_f32()
+                )));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(e) => return Err(Error::Agents(e.to_string())),
+        }
+    };
+    let buf = reader.join().unwrap_or_default();
+    if !status.success() {
+        return Err(Error::Agents(format!("exited with {status}")));
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 pub fn list(env: Env) -> Result<Vec<Agent>, Error> {
+    list_within(env, CLAUDE_TIMEOUT)
+}
+
+fn list_within(env: Env, timeout: Duration) -> Result<Vec<Agent>, Error> {
     let claude =
         find_claude(env).ok_or_else(|| Error::Agents("claude not found on PATH".into()))?;
-    let out = Command::new(claude)
-        .args(["agents", "--json"])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| Error::Agents(e.to_string()))?;
-    if !out.status.success() {
-        return Err(Error::Agents(format!("exited with {}", out.status)));
-    }
-    parse(&String::from_utf8_lossy(&out.stdout))
+    let mut cmd = Command::new(claude);
+    cmd.args(["agents", "--json"]);
+    parse(&run_timeout(cmd, timeout)?)
+}
+
+/// The `claude --version` number, such as `2.1.329`.
+pub fn claude_version(env: Env) -> Result<String, Error> {
+    let claude =
+        find_claude(env).ok_or_else(|| Error::Agents("claude not found on PATH".into()))?;
+    let mut cmd = Command::new(claude);
+    cmd.arg("--version");
+    let out = run_timeout(cmd, CLAUDE_TIMEOUT)?;
+    Ok(out
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_string())
 }
 
 #[cfg(test)]
@@ -143,5 +214,52 @@ mod tests {
         let p = empty.path().display().to_string();
         let env = move |k: &str| (k == "PATH").then(|| p.clone());
         assert!(matches!(list(&env), Err(Error::Agents(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_gives_up_on_a_hung_claude() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("claude");
+        std::fs::write(&bin, "#!/bin/sh\nexec /bin/sleep 30\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let p = tmp.path().display().to_string();
+        let env = move |k: &str| (k == "PATH").then(|| p.clone());
+        let t = Instant::now();
+        let e = list_within(&env, Duration::from_millis(300)).unwrap_err();
+        assert!(e.to_string().contains("timed out"), "{e}");
+        assert!(t.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn large_output_does_not_block_the_child() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("claude");
+        // ~200 KB, past the 64 KB pipe buffer.
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\nprintf '['\ni=0; while [ $i -lt 4000 ]; do printf '{\"sessionId\":\"s%s\",\"cwd\":\"/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},' $i; i=$((i+1)); done\nprintf '{\"sessionId\":\"last\"}]'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let p = tmp.path().display().to_string();
+        let env = move |k: &str| (k == "PATH").then(|| p.clone());
+        assert_eq!(list(&env).unwrap().len(), 4001);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_version_reads_the_first_word() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("claude");
+        std::fs::write(&bin, "#!/bin/sh\necho '2.1.329 (Claude Code)'\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let p = tmp.path().display().to_string();
+        let env = move |k: &str| (k == "PATH").then(|| p.clone());
+        assert_eq!(claude_version(&env).unwrap(), "2.1.329");
     }
 }

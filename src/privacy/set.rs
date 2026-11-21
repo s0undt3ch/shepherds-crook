@@ -59,6 +59,11 @@ impl Set {
                 .ok_or_else(|| Error::RelativePrivate(entry.clone()))?;
             s.add_private(&r, entry, &abs);
         }
+        // Every project's diary is private in every session, so a sibling's
+        // diary one `../` away still asks.
+        if let Some(glob) = cfg.diaries_glob(env) {
+            s.add_private(&r, &glob, &glob);
+        }
         if let Ok(dir) = paths::project_dir(env, slug) {
             let dir = dir.display().to_string();
             s.add_private(&r, &dir, &dir);
@@ -288,6 +293,12 @@ fn home_rest(text: &str) -> Option<&str> {
             rest.strip_prefix('/')
         }
     })
+}
+
+/// The path as the kernel resolves it: the longest existing prefix canonicalised,
+/// the missing tail folded lexically.
+pub fn resolve_path(p: &Path) -> PathBuf {
+    Resolver::default().resolve(p)
 }
 
 /// Whether an entry is written from the home directory, which the privacy

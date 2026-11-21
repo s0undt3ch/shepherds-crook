@@ -49,7 +49,7 @@ const PS: [&str; 2] = ["/bin/ps", "/usr/bin/ps"];
 /// Whether `pid` is a running claude process, by its command name from `ps`.
 /// A pid the child no longer holds may have been reused by anything; a live pid
 /// `ps` cannot name is taken for the child: refusing is the safe side.
-fn is_claude(pid: u32) -> bool {
+pub(crate) fn is_claude(pid: u32) -> bool {
     if !alive(pid) {
         return false;
     }

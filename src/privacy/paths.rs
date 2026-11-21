@@ -900,6 +900,7 @@ mod tests {
         let cfg = Config {
             private: vec![],
             allow: vec![f.p("notes/shared.md")],
+            ..Config::default()
         };
         let s = f.set_rec(&rec, &cfg);
         let cwd = &f.base;
@@ -921,11 +922,38 @@ mod tests {
     }
 
     #[test]
+    fn private_diaries() {
+        let f = fx();
+        let diary = |root: &str, slug: &str| f.home.join(root).join(slug);
+        // Default home: every project's diary is private, this project's or not.
+        let s = f.set_rec(&Record::default(), &Config::default());
+        let other = diary(".local/share/crook", "other").join("diary/a.md");
+        assert!(s.contains(&other));
+        assert!(!hits(&s, json!({"p": other.display().to_string()}), &f.base).is_empty());
+        // The rest of a home is not.
+        assert!(!s.contains(&diary(".local/share/crook", "other").join("notes.md")));
+        // With `diary_root`, each folder under it is.
+        let cfg = Config {
+            diary_root: Some("~/vault/projects".into()),
+            ..Config::default()
+        };
+        let s = f.set_rec(&Record::default(), &cfg);
+        assert!(s.contains(&diary("vault/projects", "other").join("a.md")));
+        assert!(!s.contains(&other));
+        // A bad `home` never fails the load: the hook must not turn into an ask.
+        let cfg = Config {
+            home: Some("relative".into()),
+            ..Config::default()
+        };
+        f.set_rec(&Record::default(), &cfg);
+    }
+
+    #[test]
     fn user_wide_private_applies() {
         let f = fx();
         let cfg = Config {
             private: vec!["~/vault".into()],
-            allow: vec![],
+            ..Config::default()
         };
         let s = f.set_rec(&Record::default(), &cfg);
         assert!(!hits(&s, json!({"p": "~/vault/a"}), &f.base).is_empty());

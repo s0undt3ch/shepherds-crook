@@ -13,6 +13,7 @@ fn run(xdg: &Path, args: &[&str], stdin: &str) -> Output {
     let mut child = crook()
         .args(args)
         .env("XDG_STATE_HOME", xdg)
+        .env("XDG_DATA_HOME", xdg.join("data"))
         .current_dir(xdg)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -47,7 +48,8 @@ fn init_creates_and_refuses_an_existing_slug() {
     let tmp = tempfile::tempdir().unwrap();
     let o = run(tmp.path(), &["init", "p"], "");
     assert!(o.status.success(), "{}", stderr(&o));
-    assert_eq!(record(tmp.path()).version, 1);
+    // `init` adds the diary as a notes folder, which bumps the version once.
+    assert_eq!(record(tmp.path()).version, 2);
     let o = run(tmp.path(), &["init", "p"], "");
     assert_eq!(o.status.code(), Some(1));
     assert!(stderr(&o).contains("already exists"), "{}", stderr(&o));
@@ -68,8 +70,11 @@ fn add_notes_is_private() {
     // The process's cwd is the resolved path (`/var` is `/private/var` on macOS).
     let want = format!("{}/vault/n", tmp.path().canonicalize().unwrap().display());
     let r = record(tmp.path());
-    assert_eq!(r.notes, [want.as_str()]);
-    assert_eq!(r.private, [want.as_str()]);
+    // The diary `init` made comes first, and is private like every notes folder.
+    assert_eq!(r.notes.len(), 2);
+    assert!(r.notes[0].ends_with("/data/crook/p/diary"), "{:?}", r.notes);
+    assert_eq!(r.notes[1], want);
+    assert_eq!(r.private, r.notes);
 }
 
 #[test]
@@ -97,7 +102,8 @@ fn project_commands_edit_the_record() {
     );
     assert_eq!(r.links, ["https://x.test/1"]);
     assert!(r.tickets.is_empty());
-    assert_eq!(r.private, ["/secret/**"]);
+    assert_eq!(&r.private[1..], ["/secret/**"]);
+    assert!(r.private[0].ends_with("/data/crook/p/diary"));
     assert_eq!(r.allow, ["false positive"]);
     assert_eq!(r.repos, ["/r/x"]);
 }

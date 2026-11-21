@@ -1,8 +1,6 @@
 //! `crook status`: every live child across projects, and sessions in a crook
 //! worktree that run without the mod.
 
-use std::path::Path;
-
 use rusqlite::Connection;
 
 use crate::agents::{self, Agent};
@@ -65,17 +63,6 @@ pub(super) fn load(c: &Connection) -> Result<Vec<ChildInfo>, Error> {
     Ok(kids)
 }
 
-/// Compares as written, then canonicalised, because `/tmp` is `/private/tmp` on macOS.
-fn inside(cwd: &str, worktree: &str) -> bool {
-    if Path::new(cwd).starts_with(worktree) {
-        return true;
-    }
-    matches!(
-        (std::fs::canonicalize(cwd), std::fs::canonicalize(worktree)),
-        (Ok(c), Ok(w)) if c.starts_with(&w)
-    )
-}
-
 /// Rows for `crook next`, one per live child of every readable project.
 pub(super) fn rows(env: Env, agents: &[Agent]) -> Vec<Row> {
     let mut out = Vec::new();
@@ -112,7 +99,7 @@ fn project_lines(slug: &str, kids: &[ChildInfo], agents: Option<&[Agent]>) -> Ve
     for a in agents.unwrap_or_default() {
         if let Some(k) = kids
             .iter()
-            .find(|k| !k.knows(&a.session_id) && inside(&a.cwd, &k.worktree))
+            .find(|k| !k.knows(&a.session_id) && agents::cwd_inside(&a.cwd, &k.worktree))
         {
             lines.push(format!(
                 "{slug}/{}  session {} in {}: no crook mod",

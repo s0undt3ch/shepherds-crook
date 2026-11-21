@@ -24,7 +24,7 @@ pub(crate) fn home(env: Env) -> PathBuf {
     PathBuf::from(get(env, "HOME").unwrap_or_else(|| "/".to_string()))
 }
 
-fn data_home(env: Env) -> PathBuf {
+pub(crate) fn data_home(env: Env) -> PathBuf {
     match get(env, "XDG_DATA_HOME") {
         Some(x) => PathBuf::from(x),
         None => home(env).join(".local/share"),

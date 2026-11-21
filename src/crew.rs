@@ -372,6 +372,61 @@ pub fn claude_pid(c: &Connection, child: &str) -> Result<Option<u32>, Error> {
     Ok(pid.flatten().and_then(|p| u32::try_from(p).ok()))
 }
 
+/// Forgets the child's claude pid, so a restarted claude records itself: the
+/// SessionStart guard refuses a new session while the recorded pid is a live claude.
+pub fn clear_claude_pid(c: &Connection, child: &str) -> Result<(), Error> {
+    let n = c.execute(
+        "UPDATE children SET claude_pid = NULL WHERE child = ?1",
+        [child],
+    )?;
+    if n == 0 {
+        return Err(no_such(child));
+    }
+    Ok(())
+}
+
+/// What `crook resume` needs of a child.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resumable {
+    pub worktree: String,
+    pub session_id: String,
+    pub claude_pid: Option<u32>,
+    pub archived: bool,
+}
+
+pub fn resumable(c: &Connection, child: &str) -> Result<Resumable, Error> {
+    c.query_row(
+        "SELECT worktree, session_id, claude_pid, archived FROM children WHERE child = ?1",
+        [child],
+        |r| {
+            Ok(Resumable {
+                worktree: r.get(0)?,
+                session_id: r.get(1)?,
+                claude_pid: r
+                    .get::<_, Option<i64>>(2)?
+                    .and_then(|p| u32::try_from(p).ok()),
+                archived: r.get::<_, i64>(3)? != 0,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| no_such(child))
+}
+
+/// The orchestrator row: its session id and pid, when a session has recorded them.
+pub fn orchestrator(c: &Connection) -> Result<(Option<String>, Option<u32>), Error> {
+    let row: Option<(Option<String>, Option<i64>)> = c
+        .query_row(
+            "SELECT session_id, pid FROM orchestrator WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(row.map_or((None, None), |(s, p)| {
+        (s, p.and_then(|p| u32::try_from(p).ok()))
+    }))
+}
+
 pub fn record_orchestrator(c: &Connection, session_id: &str, pid: u32) -> Result<(), Error> {
     c.execute(
         "INSERT INTO orchestrator(id, session_id, pid) VALUES (1, ?1, ?2)

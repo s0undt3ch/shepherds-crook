@@ -7,8 +7,10 @@ set -euo pipefail
 crook="${CROOK:-crook}"
 slug="${SLUG:-e2e}"
 repo="${REPO:-$(mktemp -d "${TMPDIR:-/tmp}/crook-e2e-repo.XXXXXX")}"
-export XDG_STATE_HOME="${XDG_STATE_HOME:-$(mktemp -d "${TMPDIR:-/tmp}/crook-e2e-state.XXXXXX")}"
-export XDG_DATA_HOME="${XDG_DATA_HOME:-$(mktemp -d "${TMPDIR:-/tmp}/crook-e2e-data.XXXXXX")}"
+# Always fresh: inheriting the user's XDG dirs would run the checklist on their real projects.
+XDG_STATE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/crook-e2e-state.XXXXXX")"
+XDG_DATA_HOME="$(mktemp -d "${TMPDIR:-/tmp}/crook-e2e-data.XXXXXX")"
+export XDG_STATE_HOME XDG_DATA_HOME
 
 command -v "$crook" >/dev/null || { echo "crook not found; set CROOK=/path/to/crook" >&2; exit 1; }
 command -v claude >/dev/null || { echo "claude not found" >&2; exit 1; }

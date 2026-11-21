@@ -115,7 +115,7 @@ test('serves at tool.run', async ($, on) => {
   expect(need?.stdin).toEqual({ session_id: 's1', user_turn: false, question: 'which db?' })
 })
 
-test('spawn runs with a 120 s timeout and the other verbs with the default', async ($, on) => {
+test('spawn and stop run with their own timeouts and task with the default', async ($, on) => {
   const w = world(on, ORCH, ping('orchestrator'))
   await $.session.start(START)
   await $.tool.run({ tool: 'mcp__crook__spawn', tool_use_id: 't1', child: 'c1', repo: '/r', brief_text: 'b' })
@@ -123,7 +123,7 @@ test('spawn runs with a 120 s timeout and the other verbs with the default', asy
   await $.tool.run({ tool: 'mcp__crook__stop', tool_use_id: 't3', child: 'c1' })
   expect(w.timeouts.spawn).toBe(120000)
   expect(w.timeouts.task).toBeUndefined()
-  expect(w.timeouts.stop).toBeUndefined()
+  expect(w.timeouts.stop).toBe(45000)
 })
 
 test('a model call is served at tool.run, not by a tool.call answer', async ($, on) => {

@@ -413,7 +413,11 @@ pub fn archive_and_stop(
     };
     match a.kind.as_str() {
         "background" => {
-            run.stop_bg(&row.session_id)?;
+            run.stop_bg(&row.session_id).map_err(|e| {
+                Error::Refused(format!(
+                    "{child} is archived, but its session was not stopped and its worktrees were kept: {e}"
+                ))
+            })?;
             Ok(Stopped::Background)
         }
         "interactive" => match (row.claude_pid, a.pid) {
@@ -460,6 +464,9 @@ pub(crate) mod fake {
         pub agents_fail: bool,
         /// What `worktree_list` shows; `None` lists every `<repo>/.worktrees/*/*` on disk.
         pub listed: Option<Vec<PathBuf>>,
+        pub fail_stop_bg: bool,
+        /// Runs inside `stop_bg` and `agents`, to change the disk mid-stop.
+        pub on_stop: Option<Box<dyn Fn()>>,
     }
 
     impl Fake {
@@ -523,6 +530,9 @@ pub(crate) mod fake {
             Ok(())
         }
         fn agents(&self) -> Result<Vec<Agent>, Error> {
+            if let Some(f) = &self.on_stop {
+                f();
+            }
             if self.agents_fail {
                 return Err(Error::Agents("boom".into()));
             }
@@ -530,6 +540,9 @@ pub(crate) mod fake {
         }
         fn stop_bg(&self, session_id: &str) -> Result<(), Error> {
             self.log(Call::StopBg(session_id.into()));
+            if self.fail_stop_bg {
+                return Err(Error::Refused("claude stop failed".into()));
+            }
             Ok(())
         }
         fn terminate(&self, pid: u32) -> Result<(), Error> {
@@ -1203,6 +1216,20 @@ mod tests {
             assert_eq!(r, Stopped::NoSession);
             assert!(r.session_gone());
         }
+
+        // claude stop failing: archived, and the error says the worktrees were kept.
+        let (w, _) = spawned();
+        let run = Fake {
+            agents: vec![agent("sid-demo-c1", None, "background")],
+            fail_stop_bg: true,
+            ..Fake::default()
+        };
+        let e = refusal(archive_and_stop(&mut w.fx.store("demo"), "c1", &run));
+        assert!(
+            e.contains("archived") && e.contains("worktrees were kept"),
+            "{e}"
+        );
+        assert!(archived(&w));
 
         // claude agents failing: only archived, never a blind signal.
         let (w, _) = spawned();

@@ -119,13 +119,16 @@ describe('runTool', () => {
     ])
   })
 
-  it('gives spawn 120 s and every other tool the default', async () => {
+  it('gives spawn, worktree and stop their timeouts and every other tool the default', async () => {
     const { ports, timeouts } = fake({ ok: true })
     const input = { child: 'c1', repo: '/r', brief_text: 'b', text: 't', name: 'n', value: 'v' }
     for (const t of TOOLS) await runTool(ports, t, input, 's1', true)
     const byName = new Map(TOOLS.map((t, i) => [t.name, timeouts[i]]))
     expect(byName.get('spawn')).toBe(120000)
-    expect([...byName].filter(([, ms]) => ms !== undefined).map(([n]) => n)).toEqual(['spawn'])
+    // Above crook's own limits: git worktree add 90 s; claude agents 5 s plus claude stop 30 s.
+    expect(byName.get('worktree')).toBeGreaterThan(90_000)
+    expect(byName.get('stop')).toBeGreaterThan(35_000)
+    expect([...byName].filter(([, ms]) => ms !== undefined).map(([n]) => n).sort()).toEqual(['spawn', 'stop', 'worktree'])
   })
 
   it('sends task, stop and worktree to their verbs with the declared inputs only', async () => {

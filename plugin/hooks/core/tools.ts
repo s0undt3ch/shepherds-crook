@@ -17,6 +17,9 @@ export interface ToolDef {
 }
 
 const SPAWN_TIMEOUT_MS = 120_000
+// `worktree` waits on `git worktree add` (90 s in crook) and stop on `claude agents` (5 s) then `claude stop` (30 s); each adds margin.
+const WORKTREE_TIMEOUT_MS = 100_000
+const STOP_TIMEOUT_MS = 45_000
 
 const str = (description: string) => ({ type: 'string', description })
 const none = { type: 'object', properties: {} } as const
@@ -72,6 +75,7 @@ export const TOOLS: readonly ToolDef[] = [
     name: 'worktree',
     verb: 'worktree',
     roles: ['child'],
+    timeoutMs: WORKTREE_TIMEOUT_MS,
     description:
       'Make an extra git worktree in your own repo, as <repo>/.worktrees/<project>/<you>.<name>. Returns its path. Never run git worktree add yourself.',
     inputSchema: {
@@ -116,6 +120,7 @@ export const TOOLS: readonly ToolDef[] = [
     name: 'stop',
     verb: 'stop',
     roles: ['orchestrator'],
+    timeoutMs: STOP_TIMEOUT_MS,
     description: 'Stop a child session and archive it.',
     inputSchema: { type: 'object', properties: { child: str('The child name.') }, required: ['child'] },
   },

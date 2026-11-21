@@ -56,10 +56,20 @@ pub fn run(env: Env, arg: &str, run: &dyn Launcher) -> Result<String, Error> {
     }
     let mut removed = 0;
     let mut failed = Vec::new();
+    let mut skipped = Vec::new();
     for (path, real) in &checked {
-        // A worktree already gone from disk has nothing to remove.
+        // Checked again: the disk may have changed while the session was stopping.
         let res = match real {
-            Some(real) => run.worktree_remove(Path::new(&repo), real),
+            Some(_) => match verify_worktree(run, &repo, &slug, &child, Path::new(path)) {
+                Ok(Some(real)) => run.worktree_remove(Path::new(&repo), &real),
+                // It went away meanwhile: nothing to remove.
+                Ok(None) => Ok(()),
+                Err(e) => {
+                    skipped.push(format!("{path}: {e}"));
+                    continue;
+                }
+            },
+            // A worktree already gone from disk has nothing to remove.
             None => Ok(()),
         };
         match res {
@@ -70,7 +80,12 @@ pub fn run(env: Env, arg: &str, run: &dyn Launcher) -> Result<String, Error> {
             Err(e) => failed.push(format!("{path}: {e}")),
         }
     }
-    if !failed.is_empty() {
+    if !failed.is_empty() || !skipped.is_empty() {
+        failed.extend(
+            skipped
+                .iter()
+                .map(|s| format!("skipped, no longer verifies: {s}")),
+        );
         return Err(Error::Refused(format!(
             "child {child} is archived ({}), but not every worktree was removed: {}",
             stopped.describe(),
@@ -381,6 +396,43 @@ mod tests {
                 .unwrap();
             add_row(w, "c1", &c2);
         });
+    }
+
+    #[test]
+    fn stop_rechecks_before_each_removal() {
+        // c1's second worktree becomes a symlink to c2's after the first check,
+        // inside the session stop.
+        let w = w();
+        let all = w.paths("c1");
+        let (swap, c2) = (all[1].clone(), w.paths("c2").remove(0));
+        let run = Fake {
+            agents: vec![bg_agent("sid-c1")],
+            on_stop: Some(Box::new(move || {
+                std::fs::remove_dir_all(&swap).unwrap();
+                std::os::unix::fs::symlink(&c2, &swap).unwrap();
+            })),
+            ..Fake::default()
+        };
+        let e = w.stop("c1", &run).unwrap_err().to_string();
+        assert!(
+            e.contains("skipped") && e.contains(&all[1].display().to_string()),
+            "{e}"
+        );
+        let removed: Vec<_> = run
+            .calls()
+            .into_iter()
+            .filter_map(|c| match c {
+                Call::Remove(_, p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            removed,
+            [all[0].clone(), all[2].clone()],
+            "never the swapped one"
+        );
+        assert_eq!(w.paths("c1"), [all[1].clone()], "its row stays");
+        assert!(w.paths("c2")[0].is_dir());
     }
 
     #[test]

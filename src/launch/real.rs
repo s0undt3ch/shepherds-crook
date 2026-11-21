@@ -44,14 +44,8 @@ impl<'a> RealLauncher<'a> {
 fn stop_command(claude: &Path, session_id: &str) -> Command {
     let mut c = Command::new(claude);
     c.args(["stop", session_id]);
-    for (k, _) in std::env::vars_os() {
-        let name = k.to_string_lossy();
-        if name.starts_with("CROOK_")
-            || name.starts_with("CLAUDE_CODE_MESSAGING_")
-            || name == "CLAUDECODE"
-        {
-            c.env_remove(&k);
-        }
+    for (k, _) in std::env::vars_os().filter(|(k, _)| launch::scrubbed(k)) {
+        c.env_remove(k);
     }
     c.env_remove("CLAUDECODE");
     c

@@ -64,6 +64,13 @@ fn role_name(r: Role) -> Option<&'static str> {
     }
 }
 
+/// Variables a crook session never inherits: another session's identity and
+/// messaging tokens, and the Claude Code marker. `env` and `claude stop` share it.
+pub(crate) fn scrubbed(k: &std::ffi::OsStr) -> bool {
+    let k = k.to_string_lossy();
+    k.starts_with("CROOK_") || k.starts_with("CLAUDE_CODE_MESSAGING_") || k == "CLAUDECODE"
+}
+
 /// The environment a crook session starts with: `base` without any `CROOK_*`,
 /// `CLAUDE_CODE_MESSAGING_*` or `CLAUDECODE`, then this session's identity.
 pub fn env(
@@ -71,11 +78,7 @@ pub fn env(
     id: &Identity,
     crook_bin: &Path,
 ) -> Vec<(OsString, OsString)> {
-    let dropped = |k: &OsString| {
-        let k = k.to_string_lossy();
-        k.starts_with("CROOK_") || k.starts_with("CLAUDE_CODE_MESSAGING_") || k == "CLAUDECODE"
-    };
-    let mut out: Vec<(OsString, OsString)> = base.filter(|(k, _)| !dropped(k)).collect();
+    let mut out: Vec<(OsString, OsString)> = base.filter(|(k, _)| !scrubbed(k)).collect();
     out.push(("CROOK_PROJECT".into(), (&id.slug).into()));
     if let Some(role) = role_name(id.role) {
         out.push(("CROOK_ROLE".into(), role.into()));

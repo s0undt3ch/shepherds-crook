@@ -5,13 +5,15 @@ import { TOOLS, findTool, runTool, toolsFor } from './tools.ts'
 
 function fake(reply: VerbResult) {
   const calls: { verb: string; input: Record<string, unknown> }[] = []
+  const timeouts: (number | undefined)[] = []
   const ports = {
-    run: async (verb: string, input: object) => {
+    run: async (verb: string, input: object, timeoutMs?: number) => {
       calls.push({ verb, input: input as Record<string, unknown> })
+      timeouts.push(timeoutMs)
       return reply
     },
   } as unknown as Ports
-  return { ports, calls }
+  return { ports, calls, timeouts }
 }
 
 const names = (role: string) => toolsFor(role).map(t => t.name)
@@ -114,6 +116,27 @@ describe('runTool', () => {
       ['project-add', 'ticket', 'v'],
       ['project-add', 'repo', 'v'],
       ['project-add', 'notes', 'v'],
+    ])
+  })
+
+  it('gives spawn 120 s and every other tool the default', async () => {
+    const { ports, timeouts } = fake({ ok: true })
+    const input = { child: 'c1', repo: '/r', brief_text: 'b', text: 't', name: 'n', value: 'v' }
+    for (const t of TOOLS) await runTool(ports, t, input, 's1', true)
+    const byName = new Map(TOOLS.map((t, i) => [t.name, timeouts[i]]))
+    expect(byName.get('spawn')).toBe(120000)
+    expect([...byName].filter(([, ms]) => ms !== undefined).map(([n]) => n)).toEqual(['spawn'])
+  })
+
+  it('sends task, stop and worktree to their verbs with the declared inputs only', async () => {
+    const { ports, calls } = fake({ ok: true })
+    await runTool(ports, findTool('task')!, { child: 'c1', text: 'go', path: '/x' }, 's1', false)
+    await runTool(ports, findTool('stop')!, { child: 'c1' }, 's1', false)
+    await runTool(ports, findTool('worktree')!, { name: 'fix', path: '/etc/passwd' }, 's1', false)
+    expect(calls).toEqual([
+      { verb: 'task', input: { child: 'c1', text: 'go', session_id: 's1', user_turn: false } },
+      { verb: 'stop', input: { child: 'c1', session_id: 's1', user_turn: false } },
+      { verb: 'worktree', input: { name: 'fix', session_id: 's1', user_turn: false } },
     ])
   })
 

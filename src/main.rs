@@ -35,6 +35,8 @@ enum Cmd {
     Resume { child: String },
     /// Lift a child's park by hand: `<child>` or `<slug>/<child>`
     Unpark { child: String },
+    /// Stop a child, archive it and remove its worktrees: `<child>` or `<slug>/<child>`
+    Stop { child: String },
     /// One line per project
     List,
     /// Live children across projects
@@ -120,6 +122,9 @@ fn run(args: &[OsString], env: Env) -> u8 {
         }
         Cmd::Open { slug } => launch_verb(env, |env, host| cli::open::plan(env, &slug, host)),
         Cmd::Resume { child } => launch_verb(env, |env, host| cli::resume::plan(env, &child, host)),
+        Cmd::Stop { child } => user_verb(env, |env| {
+            cli::stop::run(env, &child, &launch::child::RealLauncher::new(env))
+        }),
         Cmd::Init { slug } => user_verb(env, |env| cli::init::run(env, &slug)),
         Cmd::List => user_verb(env, cli::list::run),
         Cmd::Status => user_verb(env, cli::status::run),

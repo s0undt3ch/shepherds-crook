@@ -49,6 +49,15 @@ pub struct Child {
     pub session_id: String,
 }
 
+/// A row of `worktrees`: one git worktree crook made for a child.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worktree {
+    pub child: String,
+    pub repo: String,
+    pub path: String,
+    pub branch: String,
+}
+
 fn no_such(child: &str) -> Error {
     Error::Refused(format!("no child {child:?}"))
 }
@@ -98,6 +107,63 @@ pub fn add_child(c: &Connection, ch: &Child) -> Result<(), Error> {
         (&ch.child, now),
     )?;
     hold(c, &ch.child, &ch.session_id)
+}
+
+/// Records a worktree for a child. A path already recorded is refused.
+pub fn add_worktree(c: &Connection, w: &Worktree) -> Result<(), Error> {
+    let n = c.execute(
+        "INSERT OR IGNORE INTO worktrees(child, repo, path, branch, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        (&w.child, &w.repo, &w.path, &w.branch, project::now()),
+    )?;
+    if n == 0 {
+        return Err(Error::Refused(format!(
+            "worktree {} is already recorded",
+            w.path
+        )));
+    }
+    Ok(())
+}
+
+/// The recorded worktrees, oldest first: one child's, or everyone's.
+pub fn worktrees(c: &Connection, child: Option<&str>) -> Result<Vec<Worktree>, Error> {
+    let mut st = c.prepare(
+        "SELECT child, repo, path, branch FROM worktrees
+         WHERE ?1 IS NULL OR child = ?1 ORDER BY rowid",
+    )?;
+    let rows = st.query_map([child], |r| {
+        Ok(Worktree {
+            child: r.get(0)?,
+            repo: r.get(1)?,
+            path: r.get(2)?,
+            branch: r.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Forgets a worktree row, once the worktree itself is gone.
+pub fn remove_worktree_row(c: &Connection, path: &str) -> Result<(), Error> {
+    c.execute("DELETE FROM worktrees WHERE path = ?1", [path])?;
+    Ok(())
+}
+
+/// The canonical repo a child works in.
+pub fn child_repo(c: &Connection, child: &str) -> Result<String, Error> {
+    c.query_row("SELECT repo FROM children WHERE child = ?1", [child], |r| {
+        r.get(0)
+    })
+    .optional()?
+    .ok_or_else(|| no_such(child))
+}
+
+/// How many children are not archived.
+pub fn live_count(c: &Connection) -> Result<i64, Error> {
+    Ok(c.query_row(
+        "SELECT count(*) FROM children WHERE archived = 0",
+        [],
+        |r| r.get(0),
+    )?)
 }
 
 /// Checked inside the same transaction as the write that follows: the child
@@ -550,12 +616,18 @@ fn goal(brief: &str) -> String {
 pub fn status(c: &Connection, id: &Identity, user_turn: bool) -> Result<StatusView, Error> {
     let record = project::get(c)?;
     let live = live_children(c)?;
+    let all_worktrees = worktrees(c, None)?;
     let kids: Vec<ChildLine> = live
         .iter()
         .map(|k| ChildLine {
             id: k.child.clone(),
             repo: k.repo.clone(),
             goal: goal(&k.brief),
+            worktrees: all_worktrees
+                .iter()
+                .filter(|w| w.child == k.child)
+                .map(|w| w.path.clone())
+                .collect(),
         })
         .collect();
     let mut children = Vec::new();
@@ -870,6 +942,63 @@ mod tests {
 
     fn refused(r: Result<impl std::fmt::Debug, Error>) -> String {
         r.unwrap_err().to_string()
+    }
+
+    fn wt(child: &str, path: &str) -> Worktree {
+        Worktree {
+            child: child.into(),
+            repo: format!("/r/{child}"),
+            path: path.into(),
+            branch: format!("crook/{child}"),
+        }
+    }
+
+    #[test]
+    fn worktree_rows_add_list_and_remove() {
+        let (_t, mut s) = fresh();
+        for (c, p) in [("c1", "/a"), ("c2", "/b"), ("c1", "/c")] {
+            w(&mut s, |tx| add_worktree(tx, &wt(c, p))).unwrap();
+        }
+        let paths = |s: &Store, who| -> Vec<String> {
+            s.read(|c| worktrees(c, who))
+                .unwrap()
+                .into_iter()
+                .map(|w| w.path)
+                .collect()
+        };
+        assert_eq!(paths(&s, Some("c1")), ["/a", "/c"]);
+        assert_eq!(paths(&s, None), ["/a", "/b", "/c"]);
+        assert!(refused(w(&mut s, |tx| add_worktree(tx, &wt("c2", "/a")))).contains("already"));
+        w(&mut s, |tx| remove_worktree_row(tx, "/a")).unwrap();
+        assert_eq!(paths(&s, None), ["/b", "/c"]);
+    }
+
+    #[test]
+    fn card_lists_worktrees() {
+        let (_t, mut s) = fresh();
+        for p in [
+            "/r/c1/.worktrees/p/c1",
+            "/r/c1/.worktrees/p/c1.a",
+            "/r/c1/.worktrees/p/c1.b",
+        ] {
+            w(&mut s, |tx| add_worktree(tx, &wt("c1", p))).unwrap();
+        }
+        let id = Identity {
+            slug: "p".into(),
+            role: Role::Orchestrator,
+            child: None,
+        };
+        let v = s.read(|c| status(c, &id, false)).unwrap();
+        let lines: Vec<&str> = v.card.lines().filter(|l| l.contains("c1 · ")).collect();
+        assert_eq!(lines.len(), 1, "{}", v.card);
+        for p in ["c1,", "c1.a,", "c1.b"] {
+            assert!(
+                lines[0].contains(&format!("/r/c1/.worktrees/p/{p}")),
+                "{}",
+                lines[0]
+            );
+        }
+        assert!(v.card.lines().count() <= card::MAX_LINES);
     }
 
     #[test]

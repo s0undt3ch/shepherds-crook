@@ -2,13 +2,18 @@
 //! Exit 0 carries `{"ok":true,...}`, exit 1 carries `{"ok":false,"error":"..."}`.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::crew::{self, Outcome, Snap};
 use crate::gate::{self, Entry, Identity, Role};
+use crate::launch::child::{
+    Launcher, RealLauncher, SpawnReq, WorktreeReq, add_worktree, archive_and_stop, spawn_child,
+};
 use crate::project::{self, ItemKind};
 use crate::store::{Mode, SCHEMA_VERSION, Store, Touch};
 use crate::{Env, Error};
@@ -104,6 +109,34 @@ struct SnapshotArgs {
     ack: BTreeMap<String, i64>,
 }
 
+#[derive(Deserialize)]
+struct SpawnArgs {
+    child: String,
+    repo: String,
+    brief_text: String,
+    branch: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WorktreeArgs {
+    name: String,
+    branch: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StopArgs {
+    child: String,
+}
+
+/// What `spawn`, `worktree` and `stop` run on: `git` and `claude`, this
+/// process's environment and binary, and a fresh session id.
+pub struct Machine<'a> {
+    pub run: &'a dyn Launcher,
+    pub base_env: &'a dyn Fn() -> Vec<(OsString, OsString)>,
+    pub crook_bin: &'a dyn Fn() -> Result<PathBuf, Error>,
+    pub new_id: &'a dyn Fn() -> String,
+}
+
 fn child_name(id: &Identity) -> Result<&str, Error> {
     match (id.role, id.child.as_deref()) {
         (Role::Child, Some(c)) => Ok(c),
@@ -183,7 +216,13 @@ fn project_write(
     Ok(ok(json!({ "version": version })))
 }
 
-fn dispatch(verb: &str, id: &Identity, req: &Request, env: Env) -> Result<Value, Error> {
+fn dispatch(
+    verb: &str,
+    id: &Identity,
+    req: &Request,
+    env: Env,
+    m: &Machine,
+) -> Result<Value, Error> {
     match verb {
         "ping" => {
             let store = Store::open(env, &id.slug, Mode::ReadWrite)?;
@@ -285,6 +324,52 @@ fn dispatch(verb: &str, id: &Identity, req: &Request, env: Env) -> Result<Value,
             let seq = store.write(Touch::INBOX, |tx| crew::task(tx, &a.child, &a.text))?;
             Ok(ok(json!({ "seq": seq })))
         }
+        "spawn" => {
+            orchestrator_only(id)?;
+            let a: SpawnArgs = args(req)?;
+            let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+            let session_id = spawn_child(
+                &mut store,
+                &SpawnReq {
+                    env,
+                    slug: id.slug.clone(),
+                    child: a.child.clone(),
+                    repo: a.repo,
+                    brief: a.brief_text,
+                    branch: a.branch,
+                    session_id: (m.new_id)(),
+                    base_env: (m.base_env)(),
+                    crook_bin: (m.crook_bin)()?,
+                },
+                m.run,
+            )?;
+            Ok(ok(json!({ "child": a.child, "session_id": session_id })))
+        }
+        "worktree" => {
+            let child = child_name(id)?.to_string();
+            let a: WorktreeArgs = args(req)?;
+            let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+            let path = add_worktree(
+                &mut store,
+                &WorktreeReq {
+                    child,
+                    session_id: req.session_id.clone(),
+                    name: a.name,
+                    branch: a.branch,
+                },
+                m.run,
+            )?;
+            Ok(ok(json!({ "path": path.display().to_string() })))
+        }
+        "stop" => {
+            orchestrator_only(id)?;
+            let a: StopArgs = args(req)?;
+            let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
+            let stopped = archive_and_stop(&mut store, &a.child, m.run)?;
+            Ok(ok(
+                json!({ "message": format!("{}: {}", a.child, stopped.describe()) }),
+            ))
+        }
         "snapshot" => snapshot(env, id, req),
         "orch-context" => {
             orchestrator_only(id)?;
@@ -306,7 +391,7 @@ fn dispatch(verb: &str, id: &Identity, req: &Request, env: Env) -> Result<Value,
     }
 }
 
-fn run(args: &[String], env: Env, stdin: &mut dyn Read) -> Result<Value, Error> {
+fn run(args: &[String], env: Env, stdin: &mut dyn Read, m: &Machine) -> Result<Value, Error> {
     let id = gate::check(Entry::Mod, env)?;
     let verb = args
         .first()
@@ -315,13 +400,31 @@ fn run(args: &[String], env: Env, stdin: &mut dyn Read) -> Result<Value, Error> 
     stdin.read_to_end(&mut raw)?;
     let req: Request =
         serde_json::from_slice(&raw).map_err(|e| Error::Refused(format!("bad request: {e}")))?;
-    dispatch(verb, &id, &req, env)
+    dispatch(verb, &id, &req, env, m)
 }
 
 /// Always writes one JSON object: `{"ok":true,...}` and exit 0, or
 /// `{"ok":false,"error":"..."}` and exit 1.
 pub fn main(args: &[String], env: Env, stdin: &mut dyn Read, stdout: &mut dyn Write) -> i32 {
-    let (reply, code) = match run(args, env, stdin) {
+    let run = RealLauncher::new(env);
+    let machine = Machine {
+        run: &run,
+        base_env: &|| std::env::vars_os().collect(),
+        crook_bin: &crate::launch::crook_bin,
+        new_id: &|| uuid::Uuid::new_v4().to_string(),
+    };
+    main_with(args, env, stdin, stdout, &machine)
+}
+
+/// `main` on a machine the caller supplies.
+pub fn main_with(
+    args: &[String],
+    env: Env,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+    m: &Machine,
+) -> i32 {
+    let (reply, code) = match run(args, env, stdin, m) {
         Ok(v) => (v, 0),
         Err(e) => (json!({"ok": false, "error": e.to_string()}), 1),
     };
@@ -375,6 +478,166 @@ mod tests {
     }
 
     const GOOD: &str = r#"{"session_id":"s1","user_turn":false}"#;
+
+    mod machine {
+        use super::super::*;
+        use crate::agents::Agent;
+        use crate::launch::child::fake::{Call, Fake};
+        use crate::launch::fixture::Fx;
+        use crate::project::ItemKind;
+
+        struct M {
+            fx: Fx,
+            repo: PathBuf,
+            fake: Fake,
+        }
+
+        fn m() -> M {
+            let fx = Fx::new();
+            fx.init("demo");
+            let repo = std::fs::canonicalize(fx.tmp.path()).unwrap().join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            fx.store("demo")
+                .write(Touch::PROJECT, |tx| {
+                    project::add(tx, ItemKind::Repo, &repo.display().to_string())
+                })
+                .unwrap();
+            M {
+                fx,
+                repo,
+                fake: Fake::default(),
+            }
+        }
+
+        impl M {
+            fn call(
+                &self,
+                role: &str,
+                child: Option<&str>,
+                verb: &str,
+                body: Value,
+            ) -> (i32, Value) {
+                let base = self.fx.env();
+                let (role, child) = (role.to_string(), child.map(str::to_string));
+                let env = move |k: &str| match k {
+                    "CROOK_ROLE" => Some(role.clone()),
+                    "CROOK_PROJECT" => Some("demo".into()),
+                    "CROOK_CHILD" => child.clone(),
+                    _ => base(k),
+                };
+                let machine = Machine {
+                    run: &self.fake,
+                    base_env: &Vec::new,
+                    crook_bin: &|| Ok(PathBuf::from("/abs/crook")),
+                    new_id: &|| "new-sid".to_string(),
+                };
+                let mut out = Vec::new();
+                let args = [verb.to_string()];
+                let input = body.to_string();
+                let code = main_with(
+                    &args,
+                    &env,
+                    &mut std::io::Cursor::new(input.into_bytes()),
+                    &mut out,
+                    &machine,
+                );
+                (code, serde_json::from_slice(&out).unwrap())
+            }
+
+            fn spawn(&self) -> (i32, Value) {
+                self.call(
+                    "orchestrator",
+                    None,
+                    "spawn",
+                    json!({"session_id":"o","user_turn":false,"child":"c1",
+                           "repo": self.repo.display().to_string(), "brief_text":"do it"}),
+                )
+            }
+        }
+
+        #[test]
+        fn spawn_then_worktree_then_stop() {
+            let m = m();
+            let (code, v) = m.spawn();
+            assert_eq!(
+                (code, v["session_id"].as_str()),
+                (0, Some("new-sid")),
+                "{v}"
+            );
+            let wt = m.repo.join(".worktrees/demo/c1");
+            assert!(matches!(&m.fake.calls()[0], Call::Add(_, p, _) if *p == wt));
+
+            // The child's own worktree.
+            let (code, v) = m.call(
+                "child",
+                Some("c1"),
+                "worktree",
+                json!({"session_id":"new-sid","user_turn":false,"name":"fix","path":"/etc"}),
+            );
+            let want = m.repo.join(".worktrees/demo/c1.fix");
+            assert_eq!(
+                (code, v["path"].as_str()),
+                (0, Some(want.display().to_string().as_str())),
+                "{v}"
+            );
+            // An orchestrator cannot make one.
+            let (code, v) = m.call(
+                "orchestrator",
+                None,
+                "worktree",
+                json!({"session_id":"o","user_turn":false,"name":"x"}),
+            );
+            assert_eq!(code, 1);
+            assert!(v["error"].as_str().unwrap().contains("child"), "{v}");
+
+            // The tool's stop: archive and stop, no worktree removed.
+            let fake = Fake {
+                agents: vec![Agent {
+                    session_id: "new-sid".into(),
+                    pid: None,
+                    cwd: "/x".into(),
+                    kind: "background".into(),
+                    state: None,
+                }],
+                ..Fake::default()
+            };
+            let m = M { fake, ..m };
+            let (code, v) = m.call(
+                "orchestrator",
+                None,
+                "stop",
+                json!({"session_id":"o","user_turn":false,"child":"c1"}),
+            );
+            assert_eq!(code, 0, "{v}");
+            assert!(v["message"].as_str().unwrap().contains("c1"), "{v}");
+            assert_eq!(m.fake.calls(), [Call::StopBg("new-sid".into())]);
+            let rows =
+                m.fx.store("demo")
+                    .read(|c| crew::worktrees(c, Some("c1")))
+                    .unwrap();
+            assert_eq!(rows.len(), 2, "the tool leaves the worktrees");
+        }
+
+        #[test]
+        fn spawn_stop_and_worktree_are_role_gated() {
+            let m = m();
+            let body = json!({"session_id":"s","user_turn":true,"child":"c1","repo":"/r",
+                              "brief_text":"b","name":"x"});
+            for verb in ["spawn", "stop"] {
+                let (code, v) = m.call("child", Some("c1"), verb, body.clone());
+                assert_eq!(code, 1, "{verb}");
+                assert!(v["error"].as_str().unwrap().contains("orchestrator"), "{v}");
+            }
+            let (code, _) = m.call(
+                "orchestrator",
+                None,
+                "spawn",
+                json!({"session_id":"s","user_turn":false}),
+            );
+            assert_eq!(code, 1, "bad arguments");
+            assert!(m.fake.calls().is_empty());
+        }
+    }
 
     #[test]
     fn ping_reports_identity_and_gen_path() {

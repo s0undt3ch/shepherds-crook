@@ -14,6 +14,8 @@ pub struct ChildLine {
     pub id: String,
     pub repo: String,
     pub goal: String,
+    /// Every worktree the child has, its spawn one first.
+    pub worktrees: Vec<String>,
 }
 
 /// The parts only a child's own card has.
@@ -78,7 +80,14 @@ pub fn render(r: &Record, kids: &[ChildLine], me: Option<&SelfPart>) -> String {
     push_list(&mut out, "Tickets:", &r.tickets, LIST_SHOWN);
     let lines: Vec<String> = kids
         .iter()
-        .map(|k| format!("{} · {} · {}", k.id, k.repo, k.goal))
+        .map(|k| {
+            let mut line = format!("{} · {} · {}", k.id, k.repo, k.goal);
+            if !k.worktrees.is_empty() {
+                let paths: Vec<String> = k.worktrees.iter().map(|w| one_line(w)).collect();
+                line.push_str(&format!(" · worktrees: {}", paths.join(", ")));
+            }
+            line
+        })
         .collect();
     push_list(&mut out, "Children:", &lines, CHILDREN_SHOWN);
     if !r.private.is_empty() {
@@ -124,6 +133,7 @@ mod tests {
             id: format!("c{i}"),
             repo: format!("/r/{i}"),
             goal: format!("goal {i}"),
+            worktrees: Vec::new(),
         }
     }
 
@@ -159,6 +169,35 @@ mod tests {
         ] {
             assert!(child.contains(want), "missing {want:?} in\n{child}");
         }
+    }
+
+    #[test]
+    fn card_lists_worktrees() {
+        let mut k = kid(1);
+        k.worktrees = vec![
+            "/r/1/.worktrees/p/c1".into(),
+            "/r/1/.worktrees/p/c1.fix".into(),
+            "/r/1/.worktrees/p/c1.docs".into(),
+        ];
+        let long = "line\n".repeat(200);
+        let r = Record {
+            what: long.clone(),
+            why: long.clone(),
+            status_text: long,
+            ..record()
+        };
+        let kids: Vec<ChildLine> = std::iter::once(k).chain((2..9).map(kid)).collect();
+        let card = render(&r, &kids, None);
+        let line = card.lines().find(|l| l.starts_with("- c1 ")).unwrap();
+        for p in [
+            "/r/1/.worktrees/p/c1,",
+            "/r/1/.worktrees/p/c1.fix,",
+            "/r/1/.worktrees/p/c1.docs",
+        ] {
+            assert!(line.contains(p), "{p} in {line}");
+        }
+        assert_eq!(card.lines().filter(|l| l.contains("worktrees:")).count(), 1);
+        assert!(card.lines().count() <= MAX_LINES, "{card}");
     }
 
     #[test]

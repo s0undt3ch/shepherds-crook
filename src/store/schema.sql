@@ -25,6 +25,15 @@ CREATE TABLE children (
     archived INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
+-- Every worktree crook made, the spawn one included: the one list `stop` and
+-- `wipe` read. `children.worktree` stays as the child's cwd.
+CREATE TABLE worktrees (
+    child TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    path TEXT PRIMARY KEY,
+    branch TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 CREATE TABLE inbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     child TEXT NOT NULL,

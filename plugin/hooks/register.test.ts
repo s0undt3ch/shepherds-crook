@@ -16,6 +16,7 @@ function world(
   const statuses: (string | undefined)[] = []
   // `order` interleaves verb runs and prompts entering; `failIds` makes that many `session.id` reads throw.
   const order: string[] = []
+  const timeouts: Record<string, unknown> = {}
   const session = { id: 's1', failIds: 0 }
   mock.env(on, env)
   on('session.id', () => {
@@ -48,10 +49,11 @@ function world(
     const stdin = JSON.parse(String(e.init?.stdin ?? '{}')) as Record<string, unknown>
     runs.push({ argv: e.argv, stdin })
     const verb = e.argv[2] ?? ''
+    timeouts[verb] = e.init?.timeoutMs
     order.push(`run:${verb}`)
     return { value: { exitCode: 0, stdout: JSON.stringify(reply(verb, stdin)), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { runs, registered, commands, submits, session, statuses, order }
+  return { runs, registered, commands, submits, session, statuses, order, timeouts }
 }
 
 const PRES = { isFullscreen: false, columns: 80 }
@@ -111,6 +113,17 @@ test('serves at tool.run', async ($, on) => {
   const need = w.runs.find(x => x.argv[2] === 'need')
   expect(need?.argv).toEqual(['/bin/crook', 'mod', 'need'])
   expect(need?.stdin).toEqual({ session_id: 's1', user_turn: false, question: 'which db?' })
+})
+
+test('spawn runs with a 120 s timeout and the other verbs with the default', async ($, on) => {
+  const w = world(on, ORCH, ping('orchestrator'))
+  await $.session.start(START)
+  await $.tool.run({ tool: 'mcp__crook__spawn', tool_use_id: 't1', child: 'c1', repo: '/r', brief_text: 'b' })
+  await $.tool.run({ tool: 'mcp__crook__task', tool_use_id: 't2', child: 'c1', text: 'go' })
+  await $.tool.run({ tool: 'mcp__crook__stop', tool_use_id: 't3', child: 'c1' })
+  expect(w.timeouts.spawn).toBe(120000)
+  expect(w.timeouts.task).toBeUndefined()
+  expect(w.timeouts.stop).toBeUndefined()
 })
 
 test('a model call is served at tool.run, not by a tool.call answer', async ($, on) => {

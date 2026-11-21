@@ -10,6 +10,7 @@ pub mod config;
 pub mod crew;
 pub mod error;
 pub mod gate;
+pub mod herdr;
 pub mod hook;
 pub mod launch;
 pub mod modverb;

@@ -10,6 +10,7 @@ use crate::gate::{Identity, Role};
 use crate::hook::sessionstart::is_claude;
 use crate::{Env, Error, crew, paths, settings};
 
+pub mod child;
 pub mod plugin_dir;
 pub mod preflight;
 

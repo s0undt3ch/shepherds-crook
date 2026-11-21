@@ -12,7 +12,11 @@ export interface ToolDef {
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
   /** Fixed verb input the model does not choose. */
   fixed?: Record<string, unknown>
+  /** How long the verb may run, where `$.process.run`'s 30 s default is too short. */
+  timeoutMs?: number
 }
+
+const SPAWN_TIMEOUT_MS = 120_000
 
 const str = (description: string) => ({ type: 'string', description })
 const none = { type: 'object', properties: {} } as const
@@ -83,6 +87,8 @@ export const TOOLS: readonly ToolDef[] = [
     name: 'spawn',
     verb: 'spawn',
     roles: ['orchestrator'],
+    // It runs `git worktree add`, which checks out the whole tree, then starts `claude`.
+    timeoutMs: SPAWN_TIMEOUT_MS,
     description: 'Start a child session in a new worktree of one of the project repos, with a brief.',
     inputSchema: {
       type: 'object',
@@ -176,6 +182,6 @@ export async function runTool(
   for (const key of Object.keys(def.inputSchema.properties)) {
     if (input[key] !== undefined) declared[key] = input[key]
   }
-  const reply = await ports.run(def.verb, { ...declared, ...def.fixed, session_id: sessionId, user_turn: userTurn })
+  const reply = await ports.run(def.verb, { ...declared, ...def.fixed, session_id: sessionId, user_turn: userTurn }, def.timeoutMs)
   return reply.ok ? { result: render(def, reply) } : { deny: reply.error ?? 'crook: bad reply' }
 }

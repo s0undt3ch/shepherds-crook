@@ -123,7 +123,7 @@ fn run(args: &[OsString], env: Env) -> u8 {
         Cmd::Open { slug } => launch_verb(env, |env, host| cli::open::plan(env, &slug, host)),
         Cmd::Resume { child } => launch_verb(env, |env, host| cli::resume::plan(env, &child, host)),
         Cmd::Stop { child } => user_verb(env, |env| {
-            cli::stop::run(env, &child, &launch::child::RealLauncher::new(env))
+            cli::stop::run(env, &child, &launch::real::RealLauncher::new(env))
         }),
         Cmd::Init { slug } => user_verb(env, |env| cli::init::run(env, &slug)),
         Cmd::List => user_verb(env, cli::list::run),

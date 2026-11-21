@@ -1,28 +1,19 @@
 //! `crook stop <child>`: archives a child, stops its session and removes its worktrees.
 
-use std::path::{Component, Path};
+use std::path::Path;
 
-use crate::launch::child::{Launcher, archive_and_stop};
+use crate::launch::child::{Launcher, archive_and_stop, verify_worktree};
 use crate::store::{Mode, Store, Touch};
 use crate::{Env, Error, crew};
 
 use super::address;
 
-/// Whether `path` is a direct child of `<repo>/.worktrees/<slug>/`: under it,
-/// not it, with no `..` or `.` to walk out by.
-fn inside_project_worktrees(path: &Path, repo: &str, slug: &str) -> bool {
-    let prefix = Path::new(repo).join(".worktrees").join(slug);
-    path.starts_with(&prefix)
-        && path != prefix
-        && path
-            .components()
-            .all(|c| !matches!(c, Component::ParentDir | Component::CurDir))
-}
-
-/// Stops `arg` (`<child>` or `<slug>/<child>`): refuses, changing nothing, when
-/// a recorded worktree is outside `<repo>/.worktrees/<slug>/` or has
-/// uncommitted changes. Otherwise archives the child, stops its session, then
-/// removes each recorded worktree by its recorded path and forgets its row.
+/// Stops `arg` (`<child>` or `<slug>/<child>`). It refuses, changing nothing,
+/// when a recorded worktree fails `verify_worktree` or has uncommitted changes.
+/// Otherwise it archives the child and stops its session, and removes each
+/// worktree by its recorded path and forgets its row, but only once the session
+/// is confirmed gone: when it may still run, the worktrees stay and `stop` says
+/// why, to be run again.
 pub fn run(env: Env, arg: &str, run: &dyn Launcher) -> Result<String, Error> {
     let (slug, child) = address::resolve(env, arg)?;
     let mut store = Store::open(env, &slug, Mode::ReadWrite)?;
@@ -34,21 +25,17 @@ pub fn run(env: Env, arg: &str, run: &dyn Launcher) -> Result<String, Error> {
     })?;
 
     // Every refusal comes before the first change.
-    let outside: Vec<&str> = rows
-        .iter()
-        .map(|r| r.path.as_str())
-        .filter(|p| !inside_project_worktrees(Path::new(p), &repo, &slug))
-        .collect();
-    if !outside.is_empty() {
-        return Err(Error::Refused(format!(
-            "child {child}: recorded worktrees outside {repo}/.worktrees/{slug}/, not removing: {}",
-            outside.join(", ")
-        )));
+    let mut checked = Vec::new();
+    for r in &rows {
+        let real = verify_worktree(run, &repo, &slug, &child, Path::new(&r.path))?;
+        checked.push((r.path.as_str(), real));
     }
     let mut dirty = Vec::new();
-    for r in &rows {
-        if Path::new(&r.path).exists() && run.worktree_dirty(Path::new(&r.path))? {
-            dirty.push(r.path.as_str());
+    for (path, real) in &checked {
+        if let Some(real) = real
+            && run.worktree_dirty(real)?
+        {
+            dirty.push(*path);
         }
     }
     if !dirty.is_empty() {
@@ -59,22 +46,28 @@ pub fn run(env: Env, arg: &str, run: &dyn Launcher) -> Result<String, Error> {
     }
 
     let stopped = archive_and_stop(&mut store, &child, run)?;
+    if !stopped.session_gone() {
+        return Ok(format!(
+            "archived {child}, but its session may still run ({}); its {} worktrees were kept: \
+             stop the session, then run crook stop {child} again",
+            stopped.describe(),
+            rows.len()
+        ));
+    }
     let mut removed = 0;
     let mut failed = Vec::new();
-    for r in &rows {
-        let path = Path::new(&r.path);
+    for (path, real) in &checked {
         // A worktree already gone from disk has nothing to remove.
-        let res = if path.exists() {
-            run.worktree_remove(Path::new(&repo), path)
-        } else {
-            Ok(())
+        let res = match real {
+            Some(real) => run.worktree_remove(Path::new(&repo), real),
+            None => Ok(()),
         };
         match res {
             Ok(()) => {
-                store.write(Touch::CHILDREN, |tx| crew::remove_worktree_row(tx, &r.path))?;
+                store.write(Touch::CHILDREN, |tx| crew::remove_worktree_row(tx, path))?;
                 removed += 1;
             }
-            Err(e) => failed.push(format!("{}: {e}", r.path)),
+            Err(e) => failed.push(format!("{path}: {e}")),
         }
     }
     if !failed.is_empty() {
@@ -314,6 +307,168 @@ mod tests {
             .collect();
         assert_eq!(removed, [all[0].clone(), all[2].clone()]);
         assert!(w.paths("c1").is_empty());
+    }
+
+    /// Runs `stop c1` after `tamper`, and checks it was refused whole: named,
+    /// no worktree removed, no session stopped, child not archived, rows kept.
+    fn refused_after(listed: Option<Vec<PathBuf>>, tamper: impl FnOnce(&W)) {
+        let w = w();
+        tamper(&w);
+        let before = w.paths("c1");
+        let run = Fake {
+            agents: vec![bg_agent("sid-c1")],
+            listed,
+            ..Fake::default()
+        };
+        let e = w.stop("c1", &run).unwrap_err().to_string();
+        assert!(e.contains("not removable"), "{e}");
+        assert!(run.calls().is_empty(), "never passed on: {:?}", run.calls());
+        assert!(!w.archived("c1"));
+        assert_eq!(w.paths("c1"), before);
+    }
+
+    fn link(from: &Path, to: &Path) {
+        std::os::unix::fs::symlink(to, from).unwrap();
+    }
+
+    #[test]
+    fn stop_refuses_a_symlinked_leaf() {
+        // c1's path points at c2's real worktree: status there is clean, and
+        // removing it would delete another child's work.
+        refused_after(None, |w| {
+            let c1 = w.repo.join(".worktrees/demo/c1");
+            std::fs::remove_dir_all(&c1).unwrap();
+            link(&c1, &w.repo.join(".worktrees/demo/c2"));
+        });
+    }
+
+    #[test]
+    fn stop_refuses_a_symlinked_slug_directory() {
+        refused_after(None, |w| {
+            let wt = w.repo.join(".worktrees");
+            std::fs::rename(wt.join("demo"), w.repo.join("elsewhere")).unwrap();
+            link(&wt.join("demo"), &w.repo.join("elsewhere"));
+        });
+    }
+
+    #[test]
+    fn stop_refuses_a_symlinked_worktrees_directory() {
+        refused_after(None, |w| {
+            std::fs::rename(w.repo.join(".worktrees"), w.repo.join("wt-real")).unwrap();
+            link(&w.repo.join(".worktrees"), &w.repo.join("wt-real"));
+        });
+    }
+
+    #[test]
+    fn stop_refuses_another_projects_directory() {
+        refused_after(None, |w| {
+            let p = w.repo.join(".worktrees/demo2/c1");
+            std::fs::create_dir_all(&p).unwrap();
+            add_row(w, "c1", &p);
+        });
+    }
+
+    #[test]
+    fn stop_refuses_another_children_worktree() {
+        refused_after(None, |w| {
+            // The row for c1 names c2's directory.
+            let c2 = w.paths("c2").remove(0);
+            w.fx.store("demo")
+                .write(Touch::CHILDREN, |tx| {
+                    crew::remove_worktree_row(tx, &c2.display().to_string())?;
+                    Ok(())
+                })
+                .unwrap();
+            add_row(w, "c1", &c2);
+        });
+    }
+
+    #[test]
+    fn stop_refuses_a_worktree_git_does_not_list() {
+        refused_after(Some(Vec::new()), |_| {});
+    }
+
+    fn add_row(w: &W, child: &str, path: &Path) {
+        w.fx.store("demo")
+            .write(Touch::CHILDREN, |tx| {
+                crew::add_worktree(
+                    tx,
+                    &crew::Worktree {
+                        child: child.into(),
+                        repo: w.repo.display().to_string(),
+                        path: path.display().to_string(),
+                        branch: "b".into(),
+                    },
+                )
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn stop_keeps_the_worktrees_while_the_session_may_still_run() {
+        let interactive = |pid| Agent {
+            session_id: "sid-c1".into(),
+            pid,
+            cwd: "/x".into(),
+            kind: "interactive".into(),
+            state: None,
+        };
+        let cases = [
+            (
+                "agents fails",
+                Fake {
+                    agents_fail: true,
+                    ..Fake::default()
+                },
+            ),
+            (
+                "pid mismatch",
+                Fake {
+                    agents: vec![interactive(Some(9))],
+                    ..Fake::default()
+                },
+            ),
+            (
+                "pid missing",
+                Fake {
+                    agents: vec![interactive(None)],
+                    ..Fake::default()
+                },
+            ),
+            (
+                "unknown kind",
+                Fake {
+                    agents: vec![Agent {
+                        kind: "daemon".into(),
+                        ..interactive(Some(1))
+                    }],
+                    ..Fake::default()
+                },
+            ),
+        ];
+        for (name, run) in cases {
+            let w = w();
+            w.fx.store("demo")
+                .write(Touch::CHILDREN, |tx| {
+                    tx.execute("UPDATE children SET claude_pid = 1 WHERE child = 'c1'", [])?;
+                    Ok(())
+                })
+                .unwrap();
+            let before = w.paths("c1");
+            let msg = w.stop("c1", &run).unwrap();
+            assert!(
+                msg.contains("may still run") && msg.contains("again"),
+                "{name}: {msg}"
+            );
+            assert!(w.archived("c1"), "{name}");
+            assert_eq!(w.paths("c1"), before, "{name}: rows kept");
+            assert!(
+                !run.calls().iter().any(|c| matches!(c, Call::Remove(..))),
+                "{name}: {:?}",
+                run.calls()
+            );
+            assert!(before.iter().all(|p| p.is_dir()), "{name}");
+        }
     }
 
     #[test]

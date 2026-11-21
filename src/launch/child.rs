@@ -5,13 +5,10 @@
 //! sit behind `Launcher`, so tests start neither.
 
 use std::ffi::OsString;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
-use crate::agents::{self, Agent};
+use crate::agents::Agent;
 use crate::gate::{Identity, Role};
 use crate::store::{Store, Touch};
 use crate::{Env, Error, crew, herdr, launch, paths, project};
@@ -24,8 +21,13 @@ pub const MAX_LIVE_CHILDREN: i64 = 8;
 
 const PROMPT: &str = include_str!("../../plugin/prompts/child.md");
 
-/// How long `git` and `claude --bg` may run.
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long each command may run. The mod gives `spawn` 120 s in all, and a
+/// spawn runs `git worktree add` then `claude --bg`: 90 s for the checkout of a
+/// large repo and 20 s for `claude --bg` to return leave 10 s for the rest.
+/// Other `git` and `claude` calls are quick.
+pub const WORKTREE_ADD_TIMEOUT: Duration = Duration::from_secs(90);
+pub const CLAUDE_START_TIMEOUT: Duration = Duration::from_secs(20);
+pub const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How a child's `claude` starts: detached with `--bg`, or in a herdr pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,11 +293,83 @@ pub fn parse_worktree_list(porcelain: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Checks a recorded worktree before anything is removed or changed, and
+/// returns its canonical path, or `None` when it is already gone from disk.
+/// `stop` and `wipe` share it. `path` must be:
+/// - not a symlink, and directly under `<repo>/.worktrees/<slug>/` once every
+///   link is resolved (so a linked `.worktrees` or `<slug>` is refused),
+/// - named `<child>` or `<child>.<name>`,
+/// - one of the worktrees `git worktree list` shows in `repo`.
+pub fn verify_worktree(
+    run: &dyn Launcher,
+    repo: &str,
+    slug: &str,
+    child: &str,
+    path: &Path,
+) -> Result<Option<PathBuf>, Error> {
+    let refuse = |why: &str| {
+        Error::Refused(format!(
+            "worktree {} is not removable ({why}); nothing was changed",
+            path.display()
+        ))
+    };
+    let prefix = Path::new(repo).join(".worktrees").join(slug);
+    let lexical_ok = path.starts_with(&prefix)
+        && path.parent() == Some(prefix.as_path())
+        && path
+            .components()
+            .all(|c| !matches!(c, Component::ParentDir | Component::CurDir));
+    if !lexical_ok {
+        return Err(refuse(&format!("not directly under {}", prefix.display())));
+    }
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(refuse(&e.to_string())),
+        Ok(m) if m.file_type().is_symlink() => return Err(refuse("it is a symlink")),
+        Ok(_) => {}
+    }
+    let real_repo = std::fs::canonicalize(repo).map_err(|e| refuse(&format!("repo: {e}")))?;
+    let real_prefix = std::fs::canonicalize(&prefix)
+        .map_err(|e| refuse(&format!("{}: {e}", prefix.display())))?;
+    if real_prefix != real_repo.join(".worktrees").join(slug) {
+        return Err(refuse(&format!(
+            ".worktrees/{slug} resolves outside the repo, to {}",
+            real_prefix.display()
+        )));
+    }
+    let real = std::fs::canonicalize(path).map_err(|e| refuse(&e.to_string()))?;
+    let name = real
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let named = name == child
+        || name
+            .strip_prefix(child)
+            .and_then(|r| r.strip_prefix('.'))
+            .is_some_and(|n| paths::valid_slug(n).is_ok());
+    if real.parent() != Some(real_prefix.as_path()) || !named {
+        return Err(refuse(&format!(
+            "it is not {child} or {child}.<name> under the project"
+        )));
+    }
+    let listed = run.worktree_list(Path::new(repo))?;
+    if !listed
+        .iter()
+        .any(|l| std::fs::canonicalize(l).is_ok_and(|l| l == real))
+    {
+        return Err(refuse("git does not list it as a worktree of the repo"));
+    }
+    Ok(Some(real))
+}
+
 /// What `stop` did to the child's session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stopped {
     Background,
     Pane,
+    /// `claude agents` listed no session for the child.
+    NoSession,
+    /// The session may still run: archived only, for this reason.
     ArchivedOnly(String),
 }
 
@@ -304,8 +378,14 @@ impl Stopped {
         match self {
             Stopped::Background => "stopped the background session".into(),
             Stopped::Pane => "stopped the session and closed its pane".into(),
+            Stopped::NoSession => "no running session".into(),
             Stopped::ArchivedOnly(why) => format!("archived only: {why}"),
         }
+    }
+
+    /// Whether the session is confirmed gone, so its worktrees are safe to remove.
+    pub fn session_gone(&self) -> bool {
+        !matches!(self, Stopped::ArchivedOnly(_))
     }
 }
 
@@ -329,7 +409,7 @@ pub fn archive_and_stop(
         }
     };
     let Some(a) = agents.iter().find(|a| a.session_id == row.session_id) else {
-        return Ok(Stopped::ArchivedOnly("no running session".into()));
+        return Ok(Stopped::NoSession);
     };
     match a.kind.as_str() {
         "background" => {
@@ -349,207 +429,6 @@ pub fn archive_and_stop(
         other => Ok(Stopped::ArchivedOnly(format!(
             "unknown session kind {other:?}"
         ))),
-    }
-}
-
-/// `git` and `claude` on the injected `PATH`.
-pub struct RealLauncher<'a> {
-    env: Env<'a>,
-}
-
-impl<'a> RealLauncher<'a> {
-    pub fn new(env: Env<'a>) -> Self {
-        RealLauncher { env }
-    }
-
-    fn git(&self) -> Result<PathBuf, Error> {
-        find_exe(self.env, "git").ok_or_else(|| Error::Refused("git not found on PATH".into()))
-    }
-
-    fn git_out(&self, args: &[&std::ffi::OsStr]) -> Result<String, Error> {
-        let mut cmd = Command::new(self.git()?);
-        cmd.args(args);
-        run_captured(cmd, COMMAND_TIMEOUT, "git")
-    }
-}
-
-fn find_exe(env: Env, name: &str) -> Option<PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
-    env("PATH")?
-        .split(':')
-        .filter(|d| !d.is_empty())
-        .map(|d| PathBuf::from(d).join(name))
-        .find(|p| {
-            std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        })
-}
-
-/// Runs `cmd` with no stdin and returns its stdout, or an error carrying its
-/// stderr. Waits for the process, not for the pipes to close: a `claude --bg`
-/// leaves a background session that may keep them open.
-fn run_captured(mut cmd: Command, timeout: Duration, what: &str) -> Result<String, Error> {
-    let fail = |msg: String| Error::Io(std::io::Error::other(format!("{what}: {msg}")));
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| fail(e.to_string()))?;
-    let (tx, rx) = mpsc::channel::<(bool, Vec<u8>)>();
-    for (is_err, pipe) in [
-        (
-            false,
-            child
-                .stdout
-                .take()
-                .map(|p| Box::new(p) as Box<dyn Read + Send>),
-        ),
-        (
-            true,
-            child
-                .stderr
-                .take()
-                .map(|p| Box::new(p) as Box<dyn Read + Send>),
-        ),
-    ] {
-        if let Some(mut pipe) = pipe {
-            let tx = tx.clone();
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = pipe.read(&mut buf) {
-                    if n == 0 || tx.send((is_err, buf[..n].to_vec())).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-    }
-    drop(tx);
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if start.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(fail(format!("timed out after {} s", timeout.as_secs())));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-            Err(e) => return Err(fail(e.to_string())),
-        }
-    };
-    // What the process wrote before it exited; a pipe held open by a
-    // descendant ends the wait at the deadline.
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let end = Instant::now() + Duration::from_millis(300);
-    while let Some(left) = end.checked_duration_since(Instant::now()) {
-        match rx.recv_timeout(left) {
-            Ok((true, b)) => err.extend(b),
-            Ok((false, b)) => out.extend(b),
-            Err(_) => break,
-        }
-    }
-    if !status.success() {
-        let err = String::from_utf8_lossy(&err);
-        let msg = err.trim();
-        return Err(fail(if msg.is_empty() {
-            format!("exited with {status}")
-        } else {
-            msg.chars().take(500).collect()
-        }));
-    }
-    Ok(String::from_utf8_lossy(&out).into_owned())
-}
-
-impl Launcher for RealLauncher<'_> {
-    fn check(&self, mode: Mode) -> Result<(), Error> {
-        match mode {
-            Mode::Bg => Ok(()),
-            Mode::Herdr => Err(Error::Refused("herdr panes arrive with Task 20".into())),
-        }
-    }
-
-    fn worktree_add(&self, repo: &Path, path: &Path, branch: &str) -> Result<(), Error> {
-        use std::ffi::OsStr;
-        self.git_out(&[
-            "-C".as_ref(),
-            repo.as_os_str(),
-            "worktree".as_ref(),
-            "add".as_ref(),
-            path.as_os_str(),
-            "-b".as_ref(),
-            OsStr::new(branch),
-        ])
-        .map(drop)
-    }
-
-    fn worktree_remove(&self, repo: &Path, path: &Path) -> Result<(), Error> {
-        self.git_out(&[
-            "-C".as_ref(),
-            repo.as_os_str(),
-            "worktree".as_ref(),
-            "remove".as_ref(),
-            path.as_os_str(),
-        ])
-        .map(drop)
-    }
-
-    fn worktree_list(&self, repo: &Path) -> Result<Vec<PathBuf>, Error> {
-        let out = self.git_out(&[
-            "-C".as_ref(),
-            repo.as_os_str(),
-            "worktree".as_ref(),
-            "list".as_ref(),
-            "--porcelain".as_ref(),
-        ])?;
-        Ok(parse_worktree_list(&out))
-    }
-
-    fn worktree_dirty(&self, path: &Path) -> Result<bool, Error> {
-        let out = self.git_out(&[
-            "-C".as_ref(),
-            path.as_os_str(),
-            "status".as_ref(),
-            "--porcelain".as_ref(),
-        ])?;
-        Ok(!out.trim().is_empty())
-    }
-
-    fn start(&self, mode: Mode, cmd: &StartCmd) -> Result<(), Error> {
-        self.check(mode)?;
-        let mut c = Command::new(&cmd.program);
-        c.args(&cmd.args)
-            .env_clear()
-            .envs(cmd.env.iter().map(|(k, v)| (k, v)))
-            .current_dir(&cmd.cwd);
-        run_captured(c, COMMAND_TIMEOUT, "claude").map(drop)
-    }
-
-    fn agents(&self) -> Result<Vec<Agent>, Error> {
-        agents::list(self.env)
-    }
-
-    fn stop_bg(&self, session_id: &str) -> Result<(), Error> {
-        let claude = launch::claude_program(self.env)?;
-        let mut c = Command::new(claude);
-        c.args(["stop", session_id]);
-        run_captured(c, COMMAND_TIMEOUT, "claude stop").map(drop)
-    }
-
-    fn terminate(&self, pid: u32) -> Result<(), Error> {
-        use nix::sys::signal::{Signal, kill};
-        use nix::unistd::Pid;
-        let raw = i32::try_from(pid)
-            .ok()
-            .filter(|p| *p > 0)
-            .ok_or_else(|| Error::Refused(format!("not a pid: {pid}")))?;
-        kill(Pid::from_raw(raw), Signal::SIGTERM)
-            .map_err(|e| Error::Io(std::io::Error::other(format!("kill {pid}: {e}"))))
-    }
-
-    /// herdr panes arrive with Task 20; a `--bg` or unpaned child has none.
-    fn close_pane(&self, _session_id: &str) -> Result<(), Error> {
-        Ok(())
     }
 }
 
@@ -579,6 +458,8 @@ pub(crate) mod fake {
         pub dirty: BTreeSet<PathBuf>,
         pub agents: Vec<Agent>,
         pub agents_fail: bool,
+        /// What `worktree_list` shows; `None` lists every `<repo>/.worktrees/*/*` on disk.
+        pub listed: Option<Vec<PathBuf>>,
     }
 
     impl Fake {
@@ -611,8 +492,25 @@ pub(crate) mod fake {
             self.log(Call::Remove(repo.into(), path.into()));
             Ok(())
         }
-        fn worktree_list(&self, _repo: &Path) -> Result<Vec<PathBuf>, Error> {
-            Ok(Vec::new())
+        fn worktree_list(&self, repo: &Path) -> Result<Vec<PathBuf>, Error> {
+            if let Some(l) = &self.listed {
+                return Ok(l.clone());
+            }
+            let mut out = vec![repo.to_path_buf()];
+            for slug in std::fs::read_dir(repo.join(".worktrees"))
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                for wt in std::fs::read_dir(slug.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                {
+                    out.push(wt.path());
+                }
+            }
+            Ok(out)
         }
         fn worktree_dirty(&self, path: &Path) -> Result<bool, Error> {
             Ok(self.dirty.contains(path))
@@ -1274,8 +1172,6 @@ mod tests {
         for agents in [
             vec![agent("sid-demo-c1", Some(9999), "interactive")],
             vec![agent("sid-demo-c1", None, "interactive")],
-            vec![agent("someone-else", Some(4242), "interactive")],
-            Vec::new(),
         ] {
             let (w, _) = spawned();
             set_pid(&w, 4242);
@@ -1293,6 +1189,21 @@ mod tests {
             assert!(archived(&w));
         }
 
+        // No row for the session: gone, so its worktrees may go.
+        for agents in [
+            vec![agent("someone-else", Some(4242), "interactive")],
+            Vec::new(),
+        ] {
+            let (w, _) = spawned();
+            let run = Fake {
+                agents,
+                ..Fake::default()
+            };
+            let r = archive_and_stop(&mut w.fx.store("demo"), "c1", &run).unwrap();
+            assert_eq!(r, Stopped::NoSession);
+            assert!(r.session_gone());
+        }
+
         // claude agents failing: only archived, never a blind signal.
         let (w, _) = spawned();
         set_pid(&w, 4242);
@@ -1304,135 +1215,5 @@ mod tests {
         assert!(matches!(r, Stopped::ArchivedOnly(m) if m.contains("boom")));
         assert!(run.calls().is_empty());
         assert!(archived(&w));
-    }
-
-    mod real {
-        use std::os::unix::fs::PermissionsExt;
-        use std::process::Command;
-
-        use super::super::*;
-
-        fn path_env() -> impl Fn(&str) -> Option<String> {
-            |k: &str| (k == "PATH").then(|| std::env::var("PATH").unwrap_or_default())
-        }
-
-        fn git(dir: &Path, args: &[&str]) {
-            let s = Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(["-c", "user.name=t", "-c", "user.email=t@example.test"])
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(s.status.success(), "git {args:?}: {s:?}");
-        }
-
-        #[test]
-        fn git_worktrees_add_list_dirty_remove() {
-            let tmp = tempfile::tempdir().unwrap();
-            let repo = std::fs::canonicalize(tmp.path()).unwrap().join("repo");
-            std::fs::create_dir_all(&repo).unwrap();
-            git(&repo, &["init", "-q", "-b", "main"]);
-            git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
-            let env = path_env();
-            let l = RealLauncher::new(&env);
-            let wt = repo.join(".worktrees/demo/c1");
-            l.worktree_add(&repo, &wt, "crook/demo/c1").unwrap();
-            assert!(wt.join(".git").exists());
-            assert_eq!(l.worktree_list(&repo).unwrap(), [repo.clone(), wt.clone()]);
-            assert!(!l.worktree_dirty(&wt).unwrap());
-            std::fs::write(wt.join("new.txt"), "x").unwrap();
-            assert!(l.worktree_dirty(&wt).unwrap());
-            // A branch that already exists is git's refusal, with its message.
-            let e = l
-                .worktree_add(&repo, &repo.join(".worktrees/demo/c2"), "crook/demo/c1")
-                .unwrap_err()
-                .to_string();
-            assert!(e.contains("git") && e.contains("already"), "{e}");
-            std::fs::remove_file(wt.join("new.txt")).unwrap();
-            l.worktree_remove(&repo, &wt).unwrap();
-            assert!(!wt.exists());
-            assert_eq!(l.worktree_list(&repo).unwrap(), [repo]);
-        }
-
-        fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
-            let p = dir.join(name);
-            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-            p
-        }
-
-        #[test]
-        fn start_runs_claude_on_exactly_the_given_environment_and_cwd() {
-            let tmp = tempfile::tempdir().unwrap();
-            let out = tmp.path().join("out");
-            let claude = script(
-                tmp.path(),
-                "claude",
-                &format!(
-                    "echo \"$PWD|$CROOK_CHILD|${{LEAK-unset}}|$*\" > {}",
-                    out.display()
-                ),
-            );
-            let env = path_env();
-            let cmd = StartCmd {
-                program: claude,
-                args: vec!["--bg".into(), "--".into(), "prompt words".into()],
-                env: vec![("CROOK_CHILD".into(), "c1".into())],
-                cwd: std::fs::canonicalize(tmp.path()).unwrap(),
-            };
-            RealLauncher::new(&env).start(Mode::Bg, &cmd).unwrap();
-            let got = std::fs::read_to_string(out).unwrap();
-            let want = format!("{}|c1|unset|--bg -- prompt words\n", cmd.cwd.display());
-            assert_eq!(got, want);
-        }
-
-        #[test]
-        fn start_does_not_wait_for_a_background_session_holding_the_pipes() {
-            let tmp = tempfile::tempdir().unwrap();
-            let claude = script(tmp.path(), "claude", "sleep 8 &\necho started");
-            let env = path_env();
-            let cmd = StartCmd {
-                program: claude,
-                args: Vec::new(),
-                env: vec![("PATH".into(), "/bin:/usr/bin".into())],
-                cwd: tmp.path().into(),
-            };
-            let t = Instant::now();
-            RealLauncher::new(&env).start(Mode::Bg, &cmd).unwrap();
-            assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
-        }
-
-        #[test]
-        fn start_failure_carries_stderr() {
-            let tmp = tempfile::tempdir().unwrap();
-            let claude = script(
-                tmp.path(),
-                "claude",
-                "echo 'Workspace not trusted' >&2\nexit 1",
-            );
-            let env = path_env();
-            let cmd = StartCmd {
-                program: claude,
-                args: Vec::new(),
-                env: Vec::new(),
-                cwd: tmp.path().into(),
-            };
-            let e = RealLauncher::new(&env).start(Mode::Bg, &cmd).unwrap_err();
-            assert!(e.to_string().contains("Workspace not trusted"), "{e}");
-        }
-
-        #[test]
-        fn herdr_is_not_yet_startable() {
-            let env = path_env();
-            let l = RealLauncher::new(&env);
-            assert!(l.check(Mode::Bg).is_ok());
-            assert!(
-                l.check(Mode::Herdr)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("Task 20")
-            );
-        }
     }
 }

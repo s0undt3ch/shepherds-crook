@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::crew::{self, Outcome, Snap};
 use crate::gate::{self, Entry, Identity, Role};
 use crate::launch::child::{
-    Launcher, RealLauncher, SpawnReq, WorktreeReq, add_worktree, archive_and_stop, spawn_child,
+    Launcher, SpawnReq, WorktreeReq, add_worktree, archive_and_stop, spawn_child,
 };
 use crate::project::{self, ItemKind};
 use crate::store::{Mode, SCHEMA_VERSION, Store, Touch};
@@ -406,7 +406,7 @@ fn run(args: &[String], env: Env, stdin: &mut dyn Read, m: &Machine) -> Result<V
 /// Always writes one JSON object: `{"ok":true,...}` and exit 0, or
 /// `{"ok":false,"error":"..."}` and exit 1.
 pub fn main(args: &[String], env: Env, stdin: &mut dyn Read, stdout: &mut dyn Write) -> i32 {
-    let run = RealLauncher::new(env);
+    let run = crate::launch::real::RealLauncher::new(env);
     let machine = Machine {
         run: &run,
         base_env: &|| std::env::vars_os().collect(),

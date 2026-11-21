@@ -13,6 +13,7 @@ use crate::{Env, Error, crew, paths, settings};
 pub mod child;
 pub mod plugin_dir;
 pub mod preflight;
+pub mod real;
 
 /// Which conversation the session starts: a new id, or one to resume.
 #[derive(Debug, Clone, PartialEq, Eq)]

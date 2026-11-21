@@ -2,6 +2,7 @@ import type { EngineInterface, PromptSubmitInput, PromptSubmitResult, Register }
 
 import { ports } from './adapter.ts'
 import { noteOrigin, turnStart, userTurn } from './core/origin.ts'
+import { filter as orchFilter, onOrchestratorTurn, startOrchestratorWatcher } from './core/orchestrator.ts'
 import { filter, rescue } from './core/park.ts'
 import { TOOLS, findTool, runTool, toolsFor } from './core/tools.ts'
 import { onTurn, startChildWatcher } from './core/watcher.ts'
@@ -57,8 +58,14 @@ async function isChild($: EngineInterface): Promise<boolean> {
   return (await $.env.get('CROOK_ROLE').catch(() => undefined)) === 'child'
 }
 
-async function parkFilter($: EngineInterface, e: PromptSubmitInput, next: (e: PromptSubmitInput) => Promise<PromptSubmitResult>) {
-  return (await isChild($)) ? filter(ports($), currentId($), e, next) : next(e)
+async function isOrchestrator($: EngineInterface): Promise<boolean> {
+  return (await $.env.get('CROOK_ROLE').catch(() => undefined)) === 'orchestrator'
+}
+
+async function roleFilter($: EngineInterface, e: PromptSubmitInput, next: (e: PromptSubmitInput) => Promise<PromptSubmitResult>) {
+  if (await isChild($)) return filter(ports($), currentId($), e, next)
+  if (await isOrchestrator($)) return orchFilter(ports($), currentId($), e, next)
+  return next(e)
 }
 
 async function parkRescue($: EngineInterface, e: PromptSubmitInput, next: (e: PromptSubmitInput) => Promise<PromptSubmitResult>, called: boolean) {
@@ -76,7 +83,10 @@ export const register: Register = on => {
       $.ui.status(why.startsWith('crook:') ? why : `crook: ${why}`)
     } else {
       $.ui.status(`crook: ${String(r.role)}`)
-      if (r.role === 'child' && typeof r.gen === 'string') startChildWatcher(p, { sessionId: currentId($), gen: r.gen })
+      if (typeof r.gen === 'string') {
+        if (r.role === 'child') startChildWatcher(p, { sessionId: currentId($), gen: r.gen })
+        if (r.role === 'orchestrator') startOrchestratorWatcher(p, { sessionId: currentId($), gen: r.gen })
+      }
     }
     // Tools register even when ping fails, by the environment's role, so each one can say why it won't run.
     await registerTools($, (r.ok ? String(r.role) : p.env('CROOK_ROLE')) ?? '')
@@ -84,10 +94,10 @@ export const register: Register = on => {
   })
 
   // The origin is queued before `next`, which resolves only once the turn has started.
-  // In a child the park filter then runs; `noteOrigin` stays first and synchronous to keep queue order.
+  // The role's filter then runs (the park filter in a child, the context in the orchestrator); `noteOrigin` stays first and synchronous to keep queue order.
   on('prompt.submit', ($, e, next) => {
     noteOrigin(e.origin.kind, e.command !== undefined, e.text)
-    return parkFilter($, e, next)
+    return roleFilter($, e, next)
   }).catch(($, e, next) => parkRescue($, e, next, next.called))
 
   on('turn.start', ($, e, next) => {
@@ -96,12 +106,16 @@ export const register: Register = on => {
       calledTake = false
       calledDone = false
     }
-    onTurn({ kind: 'start', agentId: e.agentId, calledTake: false, calledDone: false })
+    const start = { kind: 'start', agentId: e.agentId, calledTake: false, calledDone: false } as const
+    onTurn(start)
+    onOrchestratorTurn(start)
     return next(e)
   })
 
   on('turn.complete', ($, e, next) => {
-    onTurn({ kind: 'complete', agentId: e.agentId, calledTake, calledDone })
+    const end = { kind: 'complete', agentId: e.agentId, calledTake, calledDone } as const
+    onTurn(end)
+    onOrchestratorTurn(end)
     return next(e)
   })
 

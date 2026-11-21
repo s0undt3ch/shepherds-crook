@@ -12,7 +12,7 @@ function world(
   const runs: Run[] = []
   const registered: { name: string; isDeferred?: unknown; inputSchema: unknown }[] = []
   const commands: string[] = []
-  const submits: { text: string; origin: unknown }[] = []
+  const submits: { text: string; origin: unknown; context?: readonly string[] }[] = []
   const statuses: (string | undefined)[] = []
   // `order` interleaves verb runs and prompts entering; `failIds` makes that many `session.id` reads throw.
   const order: string[] = []
@@ -32,7 +32,7 @@ function world(
   on('session.start', () => ({ cwd: '/w' }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('prompt.submit', (_, e) => {
-    submits.push({ text: e.text, origin: e.origin })
+    submits.push({ text: e.text, origin: e.origin, context: e.context })
     order.push(`enter:${e.text}`)
     return { text: e.text }
   })
@@ -315,4 +315,51 @@ test('park filter: an orchestrator composer prompt runs no lift', async ($, on) 
   await $.prompt.submit({ text: '/loop', command: { name: 'loop', args: '' }, origin: { kind: 'composer' }, wait: false })
   expect(w.runs.some(x => x.argv[2] === 'lift')).toBe(false)
   expect(w.submits.map(x => x.text)).toEqual(['hello', '/loop'])
+})
+
+test('the orchestrator watcher wakes once for done children, acks it and shows the status line', async ($, on) => {
+  const clock = mock.clock(on)
+  on('fs.stat', () => ({ value: { kind: 'file', size: 0, mtimeMs: 1, isLink: false } }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  const acked: Record<string, number>[] = []
+  const w = world(on, ORCH, (verb, input) => {
+    if (verb === 'ping') return { ok: true, role: 'orchestrator', gen: '/d/crook/p/gen' }
+    if (verb === 'snapshot') {
+      const ack = input.ack as Record<string, number> | undefined
+      if (ack !== undefined) acked.push(ack)
+      return {
+        ok: true,
+        done_unnotified: ack === undefined ? [{ child: 'c1', done_seq: 4 }] : [],
+        waiting: 1,
+        working: 2,
+        done: 1,
+        untaken: { c1: 3 },
+        card_stale: true,
+        card_version: 1,
+        is_current: true,
+      }
+    }
+    return { ok: true }
+  })
+  await $.session.start(START)
+  await clock.advance(2000)
+  await clock.settle()
+  expect(w.submits.map(x => x.text)).toEqual(['crook: children are done. Call status().'])
+  expect(acked).toEqual([{ c1: 4 }])
+  expect(w.statuses.at(-1)).toBe('crook: 1 waiting on you · 2 working · card stale · c1: 3 untaken')
+})
+
+test('orchestrator context: a composer prompt carries orch-context lines, a scheduled prompt none', async ($, on) => {
+  const w = world(on, ORCH, verb => {
+    if (verb === 'ping') return { ok: true, role: 'orchestrator' }
+    if (verb === 'orch-context') return { ok: true, lines: ['c1: waiting on you'], stale: true }
+    return { ok: true }
+  })
+  await $.session.start(START)
+  await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' }, wait: false })
+  await $.prompt.submit({ text: 'tick', origin: { kind: 'scheduled-trigger' }, wait: false })
+  expect(w.submits[0]?.context).toEqual(['c1: waiting on you', 'the card is stale: move Where it stands on, keeping what is still true'])
+  expect(w.submits[1]?.context).toBeUndefined()
+  expect(w.runs.filter(x => x.argv[2] === 'orch-context')).toHaveLength(1)
+  expect(w.runs.find(x => x.argv[2] === 'orch-context')?.stdin).toEqual({ session_id: 's1', user_turn: true })
 })

@@ -38,13 +38,43 @@ function parseSnap(r: VerbResult): ChildSnap | undefined {
   return r as unknown as ChildSnap
 }
 
+/** What differs between the child's loop and the orchestrator's: the snapshot and when to offer. */
+export interface Role<S> {
+  parse(r: VerbResult): S | undefined
+  cardVersion(s: S): number
+  /** Whether the snapshot calls for an offer, apart from the loop's own idle, stale and failed gates. */
+  ready(s: S): boolean
+  /** One offer goes out per distinct key. */
+  key(s: S): string
+  text(s: S): string
+  /** True when the move from `prev` to `s` makes the last offered state offerable again. */
+  reoffer?(prev: S, s: S): boolean
+  /** Called with each good snapshot. */
+  onRead?(s: S): void
+  /** Called as an offer goes out; what it returns is added to the next snapshot call. */
+  onOffer?(s: S): object | undefined
+}
+
+const childRole: Role<ChildSnap> = {
+  parse: parseSnap,
+  cardVersion: s => s.card_version,
+  ready: s => !s.parked && s.is_current && s.untaken > 0 && !s.task_open,
+  key: s => `${s.newest_seq}:${s.taken}`,
+  text: () => WAKE_UP,
+  reoffer: (prev, s) => prev.parked && !s.parked,
+}
+
 /**
- * The child's inbox watcher. Each tick stats `gen` and reads a snapshot only when its mtime moved
+ * The inbox watcher loop. Each tick stats `gen` and reads a snapshot only when its mtime moved
  * (or `NET_MS` passed); every tick then decides from the last snapshot. It submits one fixed-text
- * wake-up per inbox state (newest seq plus taken count), and only when idle, not parked, current,
- * with untaken tasks and none open.
+ * wake-up per state (the role's key), and only when idle and the role says the snapshot is ready.
  */
-export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: string) => void = noteOwnSubmit) {
+export function createWatcher<S extends { card_version: number }>(
+  p: Ports,
+  ids: WatcherIds,
+  role: Role<S>,
+  noteOwn: (text: string) => void = noteOwnSubmit,
+) {
   let idle = true
   let inFlight = false
   let read = false
@@ -52,11 +82,13 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
   let lastReadAt = 0
   // Set when a turn took a task or called done: the cached snapshot predates that, so wait for a re-read.
   let stale = false
-  let snap: ChildSnap | undefined
+  let snap: S | undefined
   // Set by a failed read: the cache may be older than the state, so nothing is decided until a good read.
   let failed = false
   let offered: string | undefined
   let cardSeen: number | undefined
+  // Extra verb arguments from the last offer, sent on the next read and dropped once a read succeeds.
+  let pending: object | undefined
 
   async function readSnap(mtime: number | null): Promise<void> {
     // The mtime is the one taken before the read, so a commit landing during it is seen next tick.
@@ -65,31 +97,45 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
     read = true
     stale = false
     failed = true
-    const s = parseSnap(await p.run('snapshot', { session_id: await ids.sessionId(), user_turn: false }))
+    const sent = pending
+    const input = { session_id: await ids.sessionId(), user_turn: false, ...sent }
+    const s = role.parse(await p.run('snapshot', input))
     if (s === undefined) return
     failed = false
-    if (snap?.parked === true && !s.parked) offered = undefined
-    cardSeen ??= s.card_version
+    if (sent !== undefined && pending === sent) pending = undefined
+    if (snap !== undefined && role.reoffer?.(snap, s) === true) offered = undefined
+    cardSeen ??= role.cardVersion(s)
     snap = s
+    role.onRead?.(s)
   }
 
   function decide(): void {
     const s = snap
-    if (s === undefined || stale || failed || !idle) return
-    if (s.parked || !s.is_current || s.untaken <= 0 || s.task_open) return
-    const key = `${s.newest_seq}:${s.taken}`
+    if (s === undefined || stale || failed || !idle || !role.ready(s)) return
+    const key = role.key(s)
     if (key === offered) return
     offered = key
-    const text = s.card_version === cardSeen ? WAKE_UP : `${WAKE_UP}\n${CARD_CHANGED}`
-    cardSeen = s.card_version
+    const base = role.text(s)
+    const text = role.cardVersion(s) === cardSeen ? base : `${base}\n${CARD_CHANGED}`
+    cardSeen = role.cardVersion(s)
     // The mod's own prompt.submit hook never hears this submit, so the origin is queued here.
     noteOwn(text)
     // Busy until the wake-up's turn ends, so a change before its turn starts queues no second one.
     idle = false
+    const extra = role.onOffer?.(s)
     // Not awaited: the submit may resolve only once its turn starts, and reads must go on meanwhile.
-    void p.submit(text).catch(() => {
-      idle = true
-    })
+    void p.submit(text).then(
+      () => {
+        // Sent after the submit, so a submit that fails leaves the work unmarked.
+        if (extra === undefined) return
+        pending = extra
+        stale = true
+        void tick()
+      },
+      () => {
+        idle = true
+      },
+    )
   }
 
   async function tick(): Promise<void> {
@@ -119,6 +165,10 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
       void tick()
     },
   }
+}
+
+export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: string) => void = noteOwnSubmit) {
+  return createWatcher(p, ids, childRole, noteOwn)
 }
 
 let shared: ReturnType<typeof createChildWatcher> | undefined

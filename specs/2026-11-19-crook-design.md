@@ -1042,7 +1042,7 @@ measurements.
 | Extra: subagents under `refuse` | Pass. With `crossSessionInbound: "refuse"`, a background subagent's report was still delivered. |
 | 7. False positives | Not run: needs a working build. It measures false asks of the path-only check. |
 | 8. Shared project memory | Dropped with project memory (deferred to Later, 2026-11-20). |
-| 10. The home as cwd | **Gate hit, 2026-11-21.** A new, non-git folder with no trusted ancestor raises the trust dialog in an interactive `claude`, and `claude --bg` refuses (`Workspace not trusted`). Auto memory location not measured. See `spikes/10-home-as-cwd/RESULTS.md`. |
+| 10. The home as cwd | A new, non-git folder with no trusted ancestor raises the trust dialog in an interactive `claude`, and `claude --bg` refuses (`Workspace not trusted`): a one-time accept per project, ruled not blocking (2026-11-21). Inside an already-trusted tree there was no dialog, and the hook's parent pid is the `claude` process. Auto memory went to the main repository's project folder, so its place for a non-git home outside any repo is not yet measured. See `spikes/10-home-as-cwd/RESULTS.md`. |
 | 9. The mod running `crook` | Not run. From a mod in a pane and in `--bg`: `$.process.run([CROOK_BIN, …])` inside `prompt.submit`, `tool.run` and the 2 s tick, with `CROOK_*` inherited; whether `CLAUDECODE` is set there; `$.fs.stat` on `gen` under the Read deny; latency per call. `$.process` is CLI only (`claude-code.d.ts:4190`). |
 
 ## Left to the builder

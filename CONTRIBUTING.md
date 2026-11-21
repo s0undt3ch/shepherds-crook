@@ -44,3 +44,18 @@ prek run --all-files
 `toolr pre-commit private-words` fails when a tracked file matches a regular expression in
 `~/.config/crook-dev/private-words` (or the file named by `CROOK_PRIVATE_WORDS`), one per line. That file stays outside
 the repository. When it is missing the hook passes, so other contributors are not affected.
+
+## The mod and the protocol
+
+`plugin/` is embedded in the binary by `include_dir!` and unpacked at launch, so a change there needs a rebuild.
+
+- `plugin/prompts/*.md` are compiled in with `include_str!` and passed as `--append-system-prompt`. Keep them short.
+- `plugin/skills/crook-protocol/SKILL.md` is the full protocol text. The mod directory is loaded with `--plugin-dir`, so
+  Claude Code finds the skill without any wiring. A Rust test checks that the skill is unpacked.
+- Keep the skill, the two prompts and the README's known gaps consistent with the design.
+
+## End-to-end checklist
+
+`scripts/e2e.sh` walks a manual checklist: open, spawn, task, `need`, `crook next`, answer, `done`, the wake-up, `/clear`,
+`crook resume`, `crook stop` and `crook list`. It starts real Claude Code sessions, so run it yourself, logged in. CI does
+not run it. Run it once without herdr, then once inside a herdr pane.

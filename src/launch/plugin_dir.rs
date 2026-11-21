@@ -141,6 +141,8 @@ mod tests {
         assert!(dir.join(".claude-plugin/plugin.json").is_file());
         assert!(dir.join("hooks/hooks.json").is_file());
         assert!(dir.join("hooks/core/verb.ts").is_file());
+        let skill = std::fs::read_to_string(dir.join("skills/crook-protocol/SKILL.md")).unwrap();
+        assert!(skill.starts_with("---\nname: crook-protocol\n"));
 
         let mut files = Vec::new();
         walk(&dir, &mut files);

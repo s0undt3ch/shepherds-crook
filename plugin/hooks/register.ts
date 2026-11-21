@@ -28,6 +28,11 @@ async function registerTools($: EngineInterface, role: string): Promise<void> {
   }
 }
 
+/** The session id of the moment: after `/clear` it is a new one, and no `session.start` fires for it. */
+function currentId($: EngineInterface): () => Promise<string> {
+  return () => $.session.id()
+}
+
 async function serve($: EngineInterface, name: string, input: Record<string, unknown>) {
   const def = findTool(name)
   if (def === undefined) return { deny: `crook: no such tool ${name}` }
@@ -57,7 +62,7 @@ export const register: Register = on => {
       $.ui.status(why.startsWith('crook:') ? why : `crook: ${why}`)
     } else {
       $.ui.status(`crook: ${String(r.role)}`)
-      if (r.role === 'child' && typeof r.gen === 'string') startChildWatcher(p, { sessionId, gen: r.gen })
+      if (r.role === 'child' && typeof r.gen === 'string') startChildWatcher(p, { sessionId: currentId($), gen: r.gen })
     }
     // Tools register even when ping fails, by the environment's role, so each one can say why it won't run.
     await registerTools($, (r.ok ? String(r.role) : p.env('CROOK_ROLE')) ?? '')

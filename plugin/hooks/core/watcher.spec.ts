@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Ports, VerbResult } from './ports.ts'
 import { CARD_CHANGED, NET_MS, POLL_MS, WAKE_UP, createChildWatcher } from './watcher.ts'
 
-const IDS = { sessionId: 's1', gen: '/d/crook/p/gen' }
+const IDS = { sessionId: async () => 's1', gen: '/d/crook/p/gen' }
 const START = { kind: 'start', calledTake: false, calledDone: false } as const
 const END = { kind: 'complete', calledTake: false, calledDone: false } as const
 
@@ -293,7 +293,7 @@ describe('child watcher', () => {
     expect(w.submits).toEqual([WAKE_UP])
   })
 
-  it('decides on the last good snapshot when a read fails, and reads again when gen moves', async () => {
+  it('does not decide from an older snapshot after a failed read, until a good one', async () => {
     const { w } = world({ untaken: 0 })
     const p = stubPorts(w)
     let fail = false
@@ -302,18 +302,64 @@ describe('child watcher', () => {
       IDS,
       () => {},
     )
-    await watcher.tick()
+    // Busy: a task arrives and is read, so the cache holds an unoffered inbox.
     watcher.onTurn(START)
+    w.snap = { ...w.snap, untaken: 1, newest_seq: 1 }
+    await watcher.tick()
+    // The turn takes it; the re-read at its end fails.
     fail = true
+    w.snap = { ...w.snap, untaken: 0, taken: 1, task_open: true }
+    w.mtime = 2
+    watcher.onTurn({ ...END, calledTake: true })
+    await flush()
+    await poll(w, watcher)
+    expect(w.submits).toEqual([])
+    // A good read decides again.
+    fail = false
+    w.snap = { ...w.snap, untaken: 1, newest_seq: 2, task_open: false }
+    w.mtime = 3
+    await poll(w, watcher)
+    expect(w.submits).toEqual([WAKE_UP])
+  })
+
+  it('stays busy after its own submit until the wake-up turn ends', async () => {
+    const { w, watcher } = world()
+    await watcher.tick()
+    expect(w.submits).toHaveLength(1)
+    // A new task lands before the wake-up's turn starts: no second wake-up queued behind the first.
+    w.snap = { ...w.snap, untaken: 4, newest_seq: 4 }
+    w.mtime = 2
+    await poll(w, watcher)
+    expect(w.submits).toHaveLength(1)
+    await turn(watcher)
+    expect(w.submits).toHaveLength(2)
+  })
+
+  it('reads with the session id of the moment, which changes after /clear', async () => {
+    const { w } = world({ untaken: 0 })
+    let sid = 's1'
+    const p = stubPorts(w)
+    const runs: object[] = []
+    const watcher = createChildWatcher(
+      {
+        ...p,
+        run: async (verb, input) => {
+          runs.push(input)
+          return p.run(verb, input)
+        },
+      },
+      { sessionId: async () => sid, gen: IDS.gen },
+      () => {},
+    )
+    await watcher.tick()
+    sid = 's2'
     w.snap = { ...w.snap, untaken: 1, newest_seq: 1 }
     w.mtime = 2
     await poll(w, watcher)
-    watcher.onTurn(END)
-    await flush()
-    expect(w.submits).toEqual([])
-    fail = false
-    w.mtime = 3
-    await poll(w, watcher)
+    expect(runs).toEqual([
+      { session_id: 's1', user_turn: false },
+      { session_id: 's2', user_turn: false },
+    ])
     expect(w.submits).toEqual([WAKE_UP])
   })
 

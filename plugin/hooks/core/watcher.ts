@@ -7,7 +7,8 @@ export const POLL_MS = 2000
 export const NET_MS = 60_000
 
 export interface WatcherIds {
-  sessionId: string
+  /** Asked on every read: `/clear` moves the process to a new session id with no new `session.start`. */
+  sessionId: () => Promise<string>
   /** The `gen` file `ping` names; crook rewrites it after each coordination commit. */
   gen: string
 }
@@ -52,6 +53,8 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
   // Set when a turn took a task or called done: the cached snapshot predates that, so wait for a re-read.
   let stale = false
   let snap: ChildSnap | undefined
+  // Set by a failed read: the cache may be older than the state, so nothing is decided until a good read.
+  let failed = false
   let offered: string | undefined
   let cardSeen: number | undefined
 
@@ -61,8 +64,10 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
     lastReadAt = p.now()
     read = true
     stale = false
-    const s = parseSnap(await p.run('snapshot', { session_id: ids.sessionId, user_turn: false }))
+    failed = true
+    const s = parseSnap(await p.run('snapshot', { session_id: await ids.sessionId(), user_turn: false }))
     if (s === undefined) return
+    failed = false
     if (snap?.parked === true && !s.parked) offered = undefined
     cardSeen ??= s.card_version
     snap = s
@@ -70,7 +75,7 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
 
   function decide(): void {
     const s = snap
-    if (s === undefined || stale || !idle) return
+    if (s === undefined || stale || failed || !idle) return
     if (s.parked || !s.is_current || s.untaken <= 0 || s.task_open) return
     const key = `${s.newest_seq}:${s.taken}`
     if (key === offered) return
@@ -79,8 +84,12 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
     cardSeen = s.card_version
     // The mod's own prompt.submit hook never hears this submit, so the origin is queued here.
     noteOwn(text)
+    // Busy until the wake-up's turn ends, so a change before its turn starts queues no second one.
+    idle = false
     // Not awaited: the submit may resolve only once its turn starts, and reads must go on meanwhile.
-    void p.submit(text).catch(() => {})
+    void p.submit(text).catch(() => {
+      idle = true
+    })
   }
 
   async function tick(): Promise<void> {
@@ -91,7 +100,7 @@ export function createChildWatcher(p: Ports, ids: WatcherIds, noteOwn: (text: st
       if (!read || stale || mtime !== lastMtime || p.now() - lastReadAt >= NET_MS) await readSnap(mtime)
       decide()
     } catch {
-      // A failed stat or read leaves the last snapshot; the next tick tries again.
+      // A failed stat decides nothing this tick; a failed read blocks decisions until a good one.
     } finally {
       inFlight = false
     }

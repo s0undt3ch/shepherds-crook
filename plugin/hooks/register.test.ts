@@ -13,8 +13,9 @@ function world(
   const registered: { name: string; isDeferred?: unknown; inputSchema: unknown }[] = []
   const commands: string[] = []
   const submits: { text: string; origin: unknown }[] = []
+  const session = { id: 's1' }
   mock.env(on, env)
-  on('session.id', () => ({ value: 's1' }))
+  on('session.id', () => ({ value: session.id }))
   on('ui.status', () => ({ value: undefined }))
   on('session.start', () => ({ cwd: '/w' }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
@@ -36,7 +37,7 @@ function world(
     const verb = e.argv[2] ?? ''
     return { value: { exitCode: 0, stdout: JSON.stringify(reply(verb, stdin)), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { runs, registered, commands, submits }
+  return { runs, registered, commands, submits, session }
 }
 
 const PRES = { isFullscreen: false, columns: 80 }
@@ -215,4 +216,25 @@ test('the child watcher wakes an idle child once per inbox state', async ($, on)
   await clock.settle()
   expect(snapshots().length).toBeGreaterThan(before)
   expect(wakes()).toHaveLength(2)
+})
+
+test('the child watcher reads with the new session id after /clear', async ($, on) => {
+  const clock = mock.clock(on)
+  let mtime = 1
+  on('fs.stat', () => ({ value: { kind: 'file', size: 0, mtimeMs: mtime, isLink: false } }))
+  const w = world(on, CHILD, (verb, input) => {
+    if (verb === 'ping') return { ok: true, role: 'child', gen: '/d/crook/p/gen' }
+    const current = input.session_id === 's2'
+    if (verb === 'snapshot') return { ok: true, untaken: 1, taken: 0, newest_seq: 1, task_open: false, parked: false, is_current: current, current_id: 's2', card_version: 1 }
+    return { ok: true }
+  })
+  await $.session.start(START)
+  await clock.advance(2000)
+  expect(w.submits).toEqual([])
+  // `/clear` moves the process to a new id; no session.start fires for it.
+  w.session.id = 's2'
+  mtime = 2
+  await clock.advance(2000)
+  expect(w.runs.filter(x => x.argv[2] === 'snapshot').at(-1)?.stdin).toEqual({ session_id: 's2', user_turn: false })
+  expect(w.submits.map(x => x.text)).toEqual(['crook: you have tasks waiting. Call take_task.'])
 })

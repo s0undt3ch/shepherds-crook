@@ -9,6 +9,30 @@ use crate::{Env, Error, config, crew, paths, project};
 
 const PROMPT: &str = include_str!("../../plugin/prompts/orchestrator.md");
 
+/// The orchestrator row, read without migrating. A database no `open` has
+/// migrated yet has no such table, so it has no row.
+fn recorded_orchestrator(env: Env, slug: &str) -> Result<(Option<String>, Option<u32>), Error> {
+    let store = Store::open(env, slug, Mode::ReadOnly)?;
+    store.read(|c| {
+        let v: i32 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v == 0 {
+            Ok((None, None))
+        } else {
+            crew::orchestrator(c)
+        }
+    })
+}
+
+/// Whether two paths are the same directory, as written or as resolved
+/// (`/tmp` is `/private/tmp` on macOS).
+fn same_dir(a: &str, b: &Path) -> bool {
+    Path::new(a) == b
+        || matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(x), Ok(y)) if x == y
+        )
+}
+
 /// What `open` does for `slug`: attach-by-message when its orchestrator runs,
 /// else the `claude` start. Nothing is written to the orchestrator row here:
 /// the SessionStart hook records it once claude is up, so a `claude` that fails
@@ -19,8 +43,10 @@ pub fn plan(env: Env, slug: &str, host: &Host) -> Result<Outcome, Error> {
     let cfg = config::load(env)?;
     let home = cfg.project_home(env, slug)?;
     let diary = cfg.diary(env, slug)?;
-    let mut store = Store::open(env, slug, Mode::Migrate)?;
-    let (session_id, pid) = store.read(crew::orchestrator)?;
+
+    // Everything that can refuse comes before the first migration.
+    let mut notes = launch::preflight_notes(env, host)?;
+    let (session_id, pid) = recorded_orchestrator(env, slug)?;
     if let Some(pid) = pid.filter(|p| (host.live)(*p)) {
         return Ok(Outcome::Say(format!(
             "crook: the orchestrator for {slug} is already running (pid {pid}, session {}); \
@@ -28,16 +54,6 @@ pub fn plan(env: Env, slug: &str, host: &Host) -> Result<Outcome, Error> {
             session_id.as_deref().unwrap_or("unknown")
         )));
     }
-
-    let mut notes = Vec::new();
-    if session_id.is_none() {
-        notes.push(format!(
-            "crook: Claude Code will ask you to trust {} the first time; accept it once.",
-            home.display()
-        ));
-    }
-    notes.extend(launch::preflight_notes(env, host)?);
-
     let agents = match (host.agents)() {
         Ok(a) => a,
         Err(e) => {
@@ -47,10 +63,43 @@ pub fn plan(env: Env, slug: &str, host: &Host) -> Result<Outcome, Error> {
             Vec::new()
         }
     };
-    let lines = store.write(Touch::CHILDREN, |tx| {
-        launch::reconcile_with(tx, &agents, host.live)
-    })?;
-    notes.extend(lines.into_iter().map(|l| format!("crook: {l}")));
+    // The row is written by SessionStart, after claude is up (and after the
+    // trust dialog, on a first open), so a second `open` in that window finds
+    // no live pid: `claude agents` shows the session already in the home.
+    if let Some(a) = agents
+        .iter()
+        .find(|a| a.kind == "interactive" && same_dir(&a.cwd, &home))
+    {
+        return Ok(Outcome::Say(format!(
+            "crook: a session is already running in {} (session {}{}); not starting a second \
+             orchestrator",
+            home.display(),
+            a.session_id,
+            a.pid.map_or(String::new(), |p| format!(", pid {p}")),
+        )));
+    }
+    if session_id.is_none() {
+        notes.insert(
+            0,
+            format!(
+                "crook: Claude Code will ask you to trust {} the first time; accept it once.",
+                home.display()
+            ),
+        );
+    }
+
+    let mut store = Store::open(env, slug, Mode::Migrate)?;
+    // Read first: a clean project takes no write transaction and bumps no `gen`.
+    let found = store.read(|c| launch::findings(c, &agents, host.live))?;
+    if !found.stale_pids.is_empty() {
+        store.write(Touch::CHILDREN, |tx| {
+            found
+                .stale_pids
+                .iter()
+                .try_for_each(|c| crew::clear_claude_pid(tx, c))
+        })?;
+    }
+    notes.extend(found.lines.into_iter().map(|l| format!("crook: {l}")));
     notes.push(
         "crook: warning: MCP tools able to read other projects (a loam plot reader, say) \
          are not closed"
@@ -339,5 +388,103 @@ mod tests {
             .read(|c| crate::crew::claude_pid(c, "c1"))
             .unwrap();
         assert_eq!(pid, None);
+    }
+
+    fn agent(kind: &str, sid: &str, cwd: &str) -> Agent {
+        Agent {
+            session_id: sid.into(),
+            pid: Some(9),
+            cwd: cwd.into(),
+            kind: kind.into(),
+            state: None,
+        }
+    }
+
+    fn open_with_agents(fx: &Fx, agents: Vec<Agent>) -> Result<Outcome, Error> {
+        let env = fx.env();
+        let live: &dyn Fn(u32) -> bool = &|_| false;
+        let version: &dyn Fn() -> Result<String, Error> = &ok_version;
+        let new_id = || "new-uuid".to_string();
+        let list = move || Ok(agents.clone());
+        plan(&env, "demo", &fx.host(live, &list, version, &new_id))
+    }
+
+    #[test]
+    fn open_does_not_start_a_second_orchestrator_before_the_row_exists() {
+        let fx = Fx::new();
+        fx.init("demo");
+        // A first orchestrator is up (maybe at the trust dialog): no row yet.
+        let home = fx.home("demo").display().to_string();
+        match open_with_agents(&fx, vec![agent("interactive", "first-sid", &home)]).unwrap() {
+            Outcome::Say(s) => {
+                assert!(
+                    s.contains("first-sid") && s.contains("already running"),
+                    "{s}"
+                );
+            }
+            Outcome::Exec(_) => panic!("started a second orchestrator"),
+        }
+        assert!(
+            !fx.tmp
+                .path()
+                .join("state/crook/demo/settings-orchestrator.json")
+                .exists()
+        );
+        // Other sessions do not block it: another folder, or a background session at the home.
+        for a in [
+            agent("interactive", "s", "/somewhere/else"),
+            agent("background", "s", &home),
+        ] {
+            assert!(matches!(
+                open_with_agents(&fx, vec![a]).unwrap(),
+                Outcome::Exec(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn open_refusal_migrates_nothing() {
+        let fx = Fx::new();
+        let dir = fx.tmp.path().join("state/crook/demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("crook.db");
+        drop(rusqlite::Connection::open(&db).unwrap());
+        let env = fx.env();
+        let live: &dyn Fn(u32) -> bool = &|_| false;
+        let agents: &dyn Fn() -> Result<Vec<Agent>, Error> = &no_agents;
+        let old = || Ok("2.1.317".to_string());
+        let new_id = || "x".to_string();
+        let e = plan(&env, "demo", &fx.host(live, agents, &old, &new_id)).unwrap_err();
+        assert!(e.to_string().contains("2.1.318"), "{e}");
+        let c = rusqlite::Connection::open(&db).unwrap();
+        let v: i32 = c
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        let tables: i32 = c
+            .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((v, tables), (0, 0));
+    }
+
+    #[test]
+    fn open_of_a_clean_project_writes_nothing_and_leaves_gen_alone() {
+        let fx = Fx::new();
+        fx.init("demo");
+        let gen_file = fx.tmp.path().join("state/crook/demo/gen");
+        let before = std::fs::read_to_string(&gen_file).unwrap();
+        exec(open(&fx, &|_| false).unwrap());
+        assert_eq!(std::fs::read_to_string(&gen_file).unwrap(), before);
+        // A stale pid is a change: it is cleared and `gen` moves.
+        fx.add_child("demo", "c1", fx.tmp.path(), "s1", Some(7));
+        let before = std::fs::read_to_string(&gen_file).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        exec(open(&fx, &|_| false).unwrap());
+        assert_ne!(std::fs::read_to_string(&gen_file).unwrap(), before);
+        assert_eq!(
+            fx.store("demo")
+                .read(|c| crate::crew::claude_pid(c, "c1"))
+                .unwrap(),
+            None
+        );
     }
 }

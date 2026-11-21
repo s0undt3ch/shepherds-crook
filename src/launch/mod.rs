@@ -95,15 +95,23 @@ pub fn reconcile(c: &Connection, agents: &[Agent]) -> Result<Vec<String>, Error>
     reconcile_with(c, agents, &is_claude)
 }
 
-/// Reports what a crash between a spawn's rows and its launch can leave, and
-/// forgets claude pids that are no longer a live claude:
+/// What reconcile found, read-only: lines to report, and the children whose
+/// recorded claude pid is no longer a live claude.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Findings {
+    pub lines: Vec<String>,
+    pub stale_pids: Vec<String>,
+}
+
+/// Reads what a crash between a spawn's rows and its launch can leave:
 /// - a child row whose worktree is gone from disk;
-/// - a running session in a child's worktree that no row of that child knows.
-pub fn reconcile_with(
+/// - a running session in a child's worktree that no row of that child knows;
+/// - a recorded claude pid that is not a live claude (listed, not yet cleared).
+pub fn findings(
     c: &Connection,
     agents: &[Agent],
     live: &dyn Fn(u32) -> bool,
-) -> Result<Vec<String>, Error> {
+) -> Result<Findings, Error> {
     let mut st = c.prepare(
         "SELECT child, worktree, session_id, claude_pid FROM children
          WHERE archived = 0 ORDER BY child",
@@ -118,10 +126,10 @@ pub fn reconcile_with(
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut lines = Vec::new();
+    let mut out = Findings::default();
     for (child, worktree, session_id, pid) in &kids {
         if !Path::new(worktree).exists() {
-            lines.push(format!(
+            out.lines.push(format!(
                 "child {child}: worktree {worktree} is missing on disk"
             ));
         }
@@ -129,21 +137,35 @@ pub fn reconcile_with(
             .and_then(|p| u32::try_from(p).ok())
             .is_some_and(|p| !live(p));
         if stale {
-            crew::clear_claude_pid(c, child)?;
+            out.stale_pids.push(child.clone());
         }
         for a in agents {
             let known = a.session_id == *session_id
                 || crew::is_fork(c, child, &a.session_id)?
                 || crew::held(c, child, &a.session_id)?;
             if !known && agents::cwd_inside(&a.cwd, worktree) {
-                lines.push(format!(
+                out.lines.push(format!(
                     "child {child}: session {} is running in {} but no row of {child} knows it",
                     a.session_id, a.cwd
                 ));
             }
         }
     }
-    Ok(lines)
+    Ok(out)
+}
+
+/// `findings`, then forgets the stale pids on `c` (a transaction, for the
+/// caller to commit). `open` reads first and writes only when this would.
+pub fn reconcile_with(
+    c: &Connection,
+    agents: &[Agent],
+    live: &dyn Fn(u32) -> bool,
+) -> Result<Vec<String>, Error> {
+    let f = findings(c, agents, live)?;
+    for child in &f.stale_pids {
+        crew::clear_claude_pid(c, child)?;
+    }
+    Ok(f.lines)
 }
 
 /// What a launch needs from the machine, injected so tests start nothing:

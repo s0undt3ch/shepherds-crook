@@ -86,8 +86,8 @@ fn claude_name(comm: &str) -> bool {
 }
 
 /// Records the session. `Some` is the context to answer with instead, when a
-/// session claims a child whose claude process is another one, still running:
-/// taking its row would lift a park.
+/// session claims a child (or the orchestrator) whose claude process is another
+/// one, still running: taking a child's row would lift a park.
 fn record(
     c: &Connection,
     id: &Identity,
@@ -126,7 +126,20 @@ fn record(
         }
         // A fork of the orchestrator must not take over its row.
         (Role::Orchestrator, _) if source != "fork" => {
-            crew::record_orchestrator(c, session_id, ppid)?;
+            let (current, pid) = crew::orchestrator(c)?;
+            // Another live claude holds the row: a second `crook open` raced the
+            // first. Taking the row would orphan the first orchestrator.
+            let held = pid.is_some_and(|p| p != ppid && is_claude(p));
+            if held && current.as_deref() != Some(session_id) {
+                return Ok(Some(format!(
+                    "crook: this session is not the orchestrator; the orchestrator is session {}",
+                    current.unwrap_or_default()
+                )));
+            }
+            // With its own id, it only gets the card: the recorded pid stays.
+            if !held {
+                crew::record_orchestrator(c, session_id, ppid)?;
+            }
         }
         _ => {}
     }

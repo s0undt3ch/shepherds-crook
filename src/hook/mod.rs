@@ -500,6 +500,65 @@ mod tests {
         assert!(!s.read(|c| crew::is_fork(c, "c1", "b1")).unwrap());
     }
 
+    fn orch_row(f: &Fixture) -> (Option<String>, Option<u32>) {
+        f.store().read(crew::orchestrator).unwrap()
+    }
+
+    #[test]
+    fn a_second_orchestrator_does_not_take_the_row_of_a_live_one() {
+        let f = Fixture::new();
+        let claude = live_claude(f.tmp.path());
+        let pid = claude.0.id();
+        let mut env: Vec<(&str, String)> = ORCH.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        env.push(("PATH", std::env::var("PATH").unwrap_or_default()));
+        let env = as_refs(&env);
+        f.store()
+            .write(Touch::empty(), |tx| {
+                crew::record_orchestrator(tx, "orch-1", pid)
+            })
+            .unwrap();
+        // Another claude, another id: refused, row unchanged.
+        let second = json!({"session_id": "orch-2", "source": "startup"}).to_string();
+        let (code, out) = f.call("SessionStart", &second, &env, pid + 1);
+        assert_eq!(code, 0);
+        assert_eq!(
+            context(&out),
+            "crook: this session is not the orchestrator; the orchestrator is session orch-1"
+        );
+        assert_eq!(orch_row(&f), (Some("orch-1".into()), Some(pid)));
+        // The recorded id from another process: it gets the card, the pid stays.
+        let same = json!({"session_id": "orch-1", "source": "resume"}).to_string();
+        let (_, out) = f.call("SessionStart", &same, &env, pid + 1);
+        assert!(
+            !context(&out).contains("not the orchestrator"),
+            "{}",
+            context(&out)
+        );
+        assert_eq!(orch_row(&f), (Some("orch-1".into()), Some(pid)));
+        // The hook's own parent is the recorded pid: normal restart of the same process.
+        let (_, out) = f.call("SessionStart", &second, &env, pid);
+        assert!(!context(&out).contains("not the orchestrator"));
+        assert_eq!(orch_row(&f), (Some("orch-2".into()), Some(pid)));
+    }
+
+    #[test]
+    fn an_orchestrator_replaces_the_row_of_a_dead_one() {
+        let f = Fixture::new();
+        let mut env: Vec<(&str, String)> = ORCH.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        env.push(("PATH", std::env::var("PATH").unwrap_or_default()));
+        let env = as_refs(&env);
+        let dead = dead_pid();
+        f.store()
+            .write(Touch::empty(), |tx| {
+                crew::record_orchestrator(tx, "old", dead)
+            })
+            .unwrap();
+        let input = json!({"session_id": "new", "source": "startup"}).to_string();
+        let (_, out) = f.call("SessionStart", &input, &env, 4242);
+        assert!(!context(&out).contains("not the orchestrator"));
+        assert_eq!(orch_row(&f), (Some("new".into()), Some(4242)));
+    }
+
     #[test]
     fn forged_session_start_does_not_lift_a_park() {
         let f = Fixture::new();

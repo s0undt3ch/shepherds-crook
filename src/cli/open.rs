@@ -42,7 +42,7 @@ fn move_to_workspace(
     host: &Host,
     cfg: &config::Config,
 ) -> Result<String, Error> {
-    std::fs::create_dir_all(home)?;
+    paths::make_home(home, slug)?;
     let label = cfg.orchestrator_label();
     let tab = herdr::open_orchestrator_tab(
         env,
@@ -150,7 +150,7 @@ pub fn plan(env: Env, slug: &str, host: &Host) -> Result<Outcome, Error> {
             .into(),
     );
 
-    std::fs::create_dir_all(&home)?;
+    paths::make_home(&home, slug)?;
     std::fs::create_dir_all(&diary)?;
     let prep = launch::prepare(env, slug, Role::Orchestrator, &host.crook_bin)?;
     let record = store.read(project::get)?;

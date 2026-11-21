@@ -1,6 +1,35 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{Env, Error};
+
+/// The file crook writes in each project home it makes, naming the project:
+/// `wipe` touches only a home that carries it, and `init` adopts only such a home.
+pub const HOME_MARKER: &str = ".crook";
+
+fn marker_text(slug: &str) -> String {
+    format!("crook project home: {slug}\n")
+}
+
+/// Whether `home` is the home crook made for `slug`.
+pub fn is_crook_home(home: &Path, slug: &str) -> bool {
+    std::fs::read_to_string(home.join(HOME_MARKER)).is_ok_and(|t| t == marker_text(slug))
+}
+
+/// Writes the marker that makes `home` crook's home for `slug`.
+pub fn mark_home(home: &Path, slug: &str) -> Result<(), Error> {
+    std::fs::write(home.join(HOME_MARKER), marker_text(slug))?;
+    Ok(())
+}
+
+/// Makes `home` for `slug`, with its marker, when nothing is there yet. An
+/// existing directory is left as it is, so it never becomes crook's to wipe.
+pub fn make_home(home: &Path, slug: &str) -> Result<(), Error> {
+    if std::fs::symlink_metadata(home).is_ok() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(home)?;
+    mark_home(home, slug)
+}
 
 pub fn valid_slug(s: &str) -> Result<(), Error> {
     let ok = !s.is_empty()

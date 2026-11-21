@@ -1,6 +1,31 @@
+use std::path::Path;
+
 use crate::project::{self, ItemKind, Record};
 use crate::store::{Mode, Store, Touch};
 use crate::{Env, Error, config, paths, privacy};
+
+/// Makes `home` crook's, or refuses before any change: a missing or empty
+/// directory gets the marker, a home crook made for `slug` is kept, and
+/// anything else is the user's, which `wipe` would otherwise empty.
+fn adopt_home(home: &Path, slug: &str) -> Result<(), Error> {
+    let mut entries = match std::fs::read_dir(home) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return paths::make_home(home, slug),
+        Err(e) => return Err(e.into()),
+    };
+    if entries.next().is_none() {
+        return paths::mark_home(home, slug);
+    }
+    if paths::is_crook_home(home, slug) {
+        return Ok(());
+    }
+    Err(Error::Refused(format!(
+        "the project home {} already exists and crook did not make it (no {} naming {slug}); \
+         nothing was created: pick another name, or set `home` in config.toml elsewhere",
+        home.display(),
+        paths::HOME_MARKER
+    )))
+}
 
 /// Creates the project record, `<home>/<slug>/` and the diary, and records the
 /// diary as a notes folder. Makes no `repos/` folder.
@@ -21,7 +46,7 @@ pub fn run(env: Env, slug: &str) -> Result<String, Error> {
     if paths::project_dir(env, slug)?.join("crook.db").is_file() {
         return Err(Error::Refused(format!("project {slug} already exists")));
     }
-    std::fs::create_dir_all(&home)?;
+    adopt_home(&home, slug)?;
     std::fs::create_dir_all(&diary)?;
     project::init(env, slug)?;
     let diary_text = diary
@@ -125,6 +150,47 @@ mod tests {
         let e = run(&env, "demo").unwrap_err();
         assert!(e.to_string().contains("already exists"), "{e}");
         assert!(!t.path().join("data").exists());
+    }
+
+    #[test]
+    fn init_marks_the_home_it_makes() {
+        let t = tempfile::tempdir().unwrap();
+        let env = env_in(t.path(), &[]);
+        run(&env, "demo").unwrap();
+        assert!(paths::is_crook_home(
+            &t.path().join("data/crook/demo"),
+            "demo"
+        ));
+        // An empty directory is made crook's too.
+        let empty = t.path().join("data/crook/other");
+        std::fs::create_dir_all(&empty).unwrap();
+        run(&env, "other").unwrap();
+        assert!(paths::is_crook_home(&empty, "other"));
+    }
+
+    #[test]
+    fn init_adopts_only_a_home_crook_made_for_the_slug() {
+        let t = tempfile::tempdir().unwrap();
+        let env = env_in(t.path(), &[]);
+        run(&env, "demo").unwrap();
+        let home = t.path().join("data/crook/demo");
+        std::fs::write(home.join("diary/n.md"), "n").unwrap();
+        std::fs::remove_dir_all(t.path().join("state")).unwrap();
+        run(&env, "demo").unwrap();
+        assert!(home.join("diary/n.md").is_file());
+
+        // The same home claimed for another slug, or a directory with no marker.
+        for marker in [Some("crook project home: other\n"), None] {
+            let _ = std::fs::remove_dir_all(t.path().join("state"));
+            match marker {
+                Some(m) => std::fs::write(home.join(paths::HOME_MARKER), m).unwrap(),
+                None => std::fs::remove_file(home.join(paths::HOME_MARKER)).unwrap(),
+            }
+            let e = run(&env, "demo").unwrap_err();
+            assert!(e.to_string().contains("crook did not make it"), "{e}");
+            assert!(!t.path().join("state/crook/demo").exists());
+            assert!(home.join("diary/n.md").is_file());
+        }
     }
 
     #[test]

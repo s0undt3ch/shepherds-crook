@@ -69,10 +69,15 @@ fn wipe_removes_a_project_and_keeps_the_diary() {
         "{}",
         String::from_utf8_lossy(&o.stderr)
     );
-    assert!(String::from_utf8_lossy(&o.stdout).contains("wiped demo"));
-    assert!(home.join("diary").is_dir() && !home.join("scratch.txt").exists());
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("wiped demo"), "{out}");
+    // A file crook did not make stays, and is named.
+    assert!(home.join("diary").is_dir() && home.join("scratch.txt").is_file());
+    assert!(out.contains("scratch.txt"), "{out}");
     assert!(!tmp.path().join("state/crook/demo").exists());
 
+    // The home is still crook's, so it can be adopted again.
+    std::fs::remove_file(home.join("scratch.txt")).unwrap();
     init(tmp.path());
     let o = run(tmp.path(), &["wipe", "demo", "--with-diary"], &[]);
     assert_eq!(
@@ -82,4 +87,52 @@ fn wipe_removes_a_project_and_keeps_the_diary() {
         String::from_utf8_lossy(&o.stderr)
     );
     assert!(!home.exists());
+}
+
+/// The review's reproduction: `home` points where the user keeps repos, and a
+/// project is named after one of them. Neither `init` nor `wipe` may touch it.
+#[test]
+fn a_home_override_never_adopts_or_wipes_an_existing_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let code = tmp.path().join("code");
+    let repo = code.join("api");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join("main.rs"), "fn main() {}\n").unwrap();
+    let cfg = tmp.path().join("cfg/crook/config.toml");
+    std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+    std::fs::write(&cfg, format!("home = {:?}\n", code.display().to_string())).unwrap();
+
+    let o = run(tmp.path(), &["init", "api"], &[]);
+    assert_ne!(o.status.code(), Some(0));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("crook did not make it"), "{err}");
+    assert!(!tmp.path().join("state/crook/api").exists());
+    assert!(!repo.join("diary").exists());
+
+    // A project whose home crook did not make (adopted before this check
+    // existed) is wiped without touching that home.
+    std::fs::write(&cfg, "").unwrap();
+    init_slug(tmp.path(), "api");
+    std::fs::write(&cfg, format!("home = {:?}\n", code.display().to_string())).unwrap();
+    let o = run(tmp.path(), &["wipe", "api", "--with-diary"], &[]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("crook did not make it"), "{out}");
+    assert!(repo.join(".git").is_dir() && repo.join("main.rs").is_file());
+    assert!(!tmp.path().join("state/crook/api").exists());
+}
+
+fn init_slug(tmp: &Path, slug: &str) {
+    let o = run(tmp, &["init", slug], &[]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
 }

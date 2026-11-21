@@ -40,7 +40,7 @@ enum Cmd {
     Unpark { child: String },
     /// Stop a child, archive it and remove its worktrees: `<child>` or `<slug>/<child>`
     Stop { child: String },
-    /// Remove a finished project's worktrees, home and state; keeps the diary and the branches
+    /// Remove a finished project's worktrees, state and what crook made in its home; keeps the diary and the branches
     Wipe {
         slug: String,
         /// Remove the diary too (refused for a diary under `diary_root`)

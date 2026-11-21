@@ -1,4 +1,4 @@
-//! `crook wipe <slug>`: removes a finished project's worktrees, home and state.
+//! `crook wipe <slug>`: removes a finished project's worktrees, state and what crook made in its home.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,8 @@ use crate::{Env, Error, config, crew, paths, project};
 
 /// Wipes project `slug` and returns what it has to say: a summary, any
 /// worktree in a record repo that no row knows (never removed), warnings, and
-/// the `crook/<slug>/*` branches left behind (never deleted).
+/// the `crook/<slug>/*` branches left behind (never deleted). In the home it
+/// removes only what crook made, and lists the rest (`remove_home`).
 ///
 /// It refuses, changing nothing, while a session of the project is live, when
 /// `claude agents` cannot say, when a recorded worktree fails `verify_worktree`
@@ -172,7 +173,7 @@ pub fn run(
         }
     }
 
-    remove_home(&home, !with_diary)?;
+    let (home_gone, left) = remove_home(&home, slug, !with_diary)?;
     drop(store);
     std::fs::remove_dir_all(&state)?;
 
@@ -181,13 +182,16 @@ pub fn run(
     } else {
         format!("; kept the diary {}", diary.display())
     };
+    let home_part = if home_gone {
+        format!(", the home {}", home.display())
+    } else {
+        String::new()
+    };
     lines.insert(
         0,
-        format!(
-            "wiped {slug}: removed {removed} worktrees, the home {} and the state{kept}",
-            home.display()
-        ),
+        format!("wiped {slug}: removed {removed} worktrees{home_part} and the state{kept}"),
     );
+    lines.splice(1..1, left);
     let prefix = format!("crook/{slug}/");
     for repo in &repos {
         match run.branches(Path::new(repo), &prefix) {
@@ -234,18 +238,38 @@ fn unrecorded(
         .collect()
 }
 
-/// Removes the contents of `home`, keeping `diary/` when `keep_diary`, and
-/// `home` itself unless something is kept. A symlink inside is unlinked, never followed.
-fn remove_home(home: &Path, keep_diary: bool) -> Result<(), Error> {
+/// Removes what crook made in `home`, and nothing else: `diary/` unless
+/// `keep_diary`, then the marker and `home` itself once nothing else is in it.
+/// A home without crook's marker for `slug` is left whole. Returns whether
+/// `home` is gone, and a line for each thing left that crook did not make. A
+/// symlinked diary is unlinked, never followed.
+fn remove_home(home: &Path, slug: &str, keep_diary: bool) -> Result<(bool, Vec<String>), Error> {
     let entries = match std::fs::read_dir(home) {
         Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((true, Vec::new())),
         Err(e) => return Err(e.into()),
     };
+    if !paths::is_crook_home(home, slug) {
+        return Ok((
+            false,
+            vec![format!(
+                "left the home {} as it is: crook did not make it (no {} naming {slug})",
+                home.display(),
+                paths::HOME_MARKER
+            )],
+        ));
+    }
     let mut kept = false;
+    let mut theirs = Vec::new();
     for entry in entries {
         let entry = entry?;
-        if keep_diary && entry.file_name() == "diary" {
+        let name = entry.file_name();
+        if name == paths::HOME_MARKER {
+            continue;
+        }
+        if name != "diary" {
+            theirs.push(name.to_string_lossy().into_owned());
+        } else if keep_diary {
             kept = true;
         } else if entry.file_type()?.is_dir() {
             std::fs::remove_dir_all(entry.path())?;
@@ -253,10 +277,20 @@ fn remove_home(home: &Path, keep_diary: bool) -> Result<(), Error> {
             std::fs::remove_file(entry.path())?;
         }
     }
-    if !kept {
-        std::fs::remove_dir(home)?;
+    if kept || !theirs.is_empty() {
+        theirs.sort();
+        let left = (!theirs.is_empty()).then(|| {
+            format!(
+                "left in the home {}, not made by crook: {}",
+                home.display(),
+                theirs.join(", ")
+            )
+        });
+        return Ok((false, left.into_iter().collect()));
     }
-    Ok(())
+    std::fs::remove_file(home.join(paths::HOME_MARKER))?;
+    std::fs::remove_dir(home)?;
+    Ok((true, Vec::new()))
 }
 
 #[cfg(test)]
@@ -492,9 +526,14 @@ mod tests {
             lines[0].contains("wiped demo") && lines[0].contains("3 worktrees"),
             "{lines:?}"
         );
-        // The home is emptied but for the diary; the state dir is gone.
-        assert!(!home.join("scratch.txt").exists() && !home.join("sub").exists());
+        // The home keeps the diary and what crook did not make, named; the
+        // state dir is gone.
+        assert!(home.join("scratch.txt").is_file() && home.join("sub/deep/x").is_file());
         assert!(home.join("diary/note.md").is_file());
+        assert!(
+            lines[1].contains("not made by crook: scratch.txt, sub"),
+            "{lines:?}"
+        );
         assert!(!w.state().exists());
     }
 
@@ -696,11 +735,40 @@ mod tests {
         let w = world();
         let home = w.fx.home("demo");
         w.wipe(true, &Fake::default()).unwrap();
+        assert!(!home.join("diary").exists() && home.join("scratch.txt").is_file());
+
+        let w = world();
+        let home = w.fx.home("demo");
+        std::fs::remove_file(home.join("scratch.txt")).unwrap();
+        std::fs::remove_dir_all(home.join("sub")).unwrap();
+        let lines = w.wipe(true, &Fake::default()).unwrap();
         assert!(
             !home.exists(),
             "--with-diary removes the diary and the home"
         );
+        assert!(lines[0].contains("the home"), "{lines:?}");
         assert!(!w.state().exists());
+    }
+
+    #[test]
+    fn wipe_leaves_a_home_crook_did_not_make() {
+        for marker in [None, Some("crook project home: other\n")] {
+            let w = world();
+            let home = w.fx.home("demo");
+            match marker {
+                None => std::fs::remove_file(home.join(paths::HOME_MARKER)).unwrap(),
+                Some(m) => std::fs::write(home.join(paths::HOME_MARKER), m).unwrap(),
+            }
+            let lines = w.wipe(true, &Fake::default()).unwrap();
+            assert!(home.join("diary/note.md").is_file(), "{marker:?}");
+            assert!(home.join("scratch.txt").is_file(), "{marker:?}");
+            assert!(
+                lines.iter().any(|l| l.contains("crook did not make it")),
+                "{lines:?}"
+            );
+            assert!(!lines[0].contains("the home"), "{lines:?}");
+            assert!(!w.state().exists());
+        }
     }
 
     #[test]
@@ -754,15 +822,19 @@ mod tests {
     }
 
     #[test]
-    fn wipe_unlinks_a_symlink_inside_the_home_without_following_it() {
+    fn wipe_unlinks_a_symlinked_diary_without_following_it() {
         let w = world();
+        let home = w.fx.home("demo");
         let outside = w.fx.tmp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("keep"), "k").unwrap();
-        std::os::unix::fs::symlink(&outside, w.fx.home("demo").join("link")).unwrap();
-        w.wipe(false, &Fake::default()).unwrap();
+        std::fs::remove_dir_all(home.join("diary")).unwrap();
+        std::os::unix::fs::symlink(&outside, home.join("diary")).unwrap();
+        std::os::unix::fs::symlink(&outside, home.join("link")).unwrap();
+        w.wipe(true, &Fake::default()).unwrap();
         assert!(outside.join("keep").is_file());
-        assert!(!w.fx.home("demo").join("link").exists());
+        assert!(home.join("diary").symlink_metadata().is_err());
+        assert!(home.join("link").symlink_metadata().is_ok(), "not crook's");
     }
 
     #[test]

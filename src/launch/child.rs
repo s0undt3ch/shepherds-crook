@@ -819,11 +819,12 @@ mod tests {
         );
         assert_eq!(run.starts()[0].1.cwd, path);
         // No link is made under the home.
-        let home: Vec<_> = std::fs::read_dir(w.fx.home("demo"))
+        let mut home: Vec<_> = std::fs::read_dir(w.fx.home("demo"))
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(home, ["diary"]);
+        home.sort();
+        assert_eq!(home, [crate::paths::HOME_MARKER, "diary"]);
     }
 
     #[test]

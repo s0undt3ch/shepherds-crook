@@ -1,8 +1,11 @@
 //! `crook stop <child>`: archives a child, stops its session and removes its worktrees.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
-use crate::launch::child::{Launcher, archive_and_stop, verify_worktree};
+use crate::launch::child::{
+    Launcher, archive_and_stop, describe_sessions, sessions_inside, verify_worktree,
+};
 use crate::store::{Mode, Store, Touch};
 use crate::{Env, Error, crew};
 
@@ -12,15 +15,17 @@ use super::address;
 /// when a recorded worktree fails `verify_worktree` or has uncommitted changes.
 /// Otherwise it archives the child and stops its session, and removes each
 /// worktree by its recorded path and forgets its row, but only once the session
-/// is confirmed gone: when it may still run, the worktrees stay and `stop` says
-/// why, to be run again.
+/// is confirmed gone and `claude agents` shows no session inside any of them:
+/// otherwise the worktrees stay and `stop` says why, to be run again. Another
+/// session inside one (a fork, the user's own `claude`) refuses the whole stop.
 pub fn run(env: Env, arg: &str, run: &dyn Launcher) -> Result<String, Error> {
     let (slug, child) = address::resolve(env, arg)?;
     let mut store = Store::open(env, &slug, Mode::ReadWrite)?;
-    let (repo, rows) = store.read(|c| {
+    let (repo, rows, session_id) = store.read(|c| {
         Ok((
             crew::child_repo(c, &child)?,
             crew::worktrees(c, Some(&child))?,
+            crew::resumable(c, &child)?.session_id,
         ))
     })?;
 
@@ -44,12 +49,52 @@ pub fn run(env: Env, arg: &str, run: &dyn Launcher) -> Result<String, Error> {
             dirty.join(", ")
         )));
     }
+    let dirs: Vec<&Path> = checked
+        .iter()
+        .flat_map(|(path, real)| [Some(Path::new(*path)), real.as_deref()])
+        .flatten()
+        .collect();
+    // When `claude agents` cannot say, the stop below archives only.
+    if let Ok(agents) = run.agents() {
+        let others: Vec<_> = sessions_inside(&agents, &dirs)
+            .into_iter()
+            .filter(|a| a.session_id != session_id)
+            .collect();
+        if !others.is_empty() {
+            return Err(Error::Refused(format!(
+                "other sessions run in {child}'s worktrees: {}; nothing was changed: \
+                 stop them first",
+                describe_sessions(&others)
+            )));
+        }
+    }
 
     let stopped = archive_and_stop(&mut store, &child, run)?;
     if !stopped.session_gone() {
         return Ok(format!(
             "archived {child}, but its session may still run ({}); its {} worktrees were kept: \
              stop the session, then run crook stop {child} again",
+            stopped.describe(),
+            rows.len()
+        ));
+    }
+    // A stopped session may take a moment to exit, and any other may have
+    // started meanwhile: nothing is removed while one shows inside.
+    let until = Instant::now() + run.exit_wait();
+    let still = loop {
+        let still = match run.agents() {
+            Ok(agents) => describe_sessions(&sessions_inside(&agents, &dirs)),
+            Err(e) => format!("claude agents cannot say: {e}"),
+        };
+        if still.is_empty() || Instant::now() >= until {
+            break still;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    if !still.is_empty() {
+        return Ok(format!(
+            "archived {child} ({}), but its {} worktrees were kept while a session may run \
+             in them: {still}; run crook stop {child} again once it has exited",
             stopped.describe(),
             rows.len()
         ));
@@ -520,6 +565,62 @@ mod tests {
                 run.calls()
             );
             assert!(before.iter().all(|p| p.is_dir()), "{name}");
+        }
+    }
+
+    #[test]
+    fn stop_refuses_while_another_session_runs_in_a_worktree() {
+        let w = w();
+        let all = w.paths("c1");
+        let run = Fake {
+            agents: vec![
+                bg_agent("sid-c1"),
+                Agent {
+                    session_id: "fork-1".into(),
+                    pid: Some(77),
+                    cwd: all[1].join("sub").display().to_string(),
+                    kind: "interactive".into(),
+                    state: None,
+                },
+            ],
+            ..Fake::default()
+        };
+        let e = w.stop("c1", &run).unwrap_err().to_string();
+        assert!(
+            e.contains("fork-1") && e.contains("nothing was changed"),
+            "{e}"
+        );
+        assert!(!w.archived("c1"));
+        assert_eq!(w.paths("c1"), all);
+        assert!(run.calls().is_empty(), "{:?}", run.calls());
+    }
+
+    /// The child's own session, stopped but still listed in its worktree,
+    /// keeps the worktrees; once it is gone they are removed.
+    #[test]
+    fn stop_removes_worktrees_only_once_no_session_is_inside() {
+        for sticky in [true, false] {
+            let w = w();
+            let all = w.paths("c1");
+            let run = Fake {
+                agents: vec![Agent {
+                    cwd: all[0].display().to_string(),
+                    ..bg_agent("sid-c1")
+                }],
+                sticky,
+                ..Fake::default()
+            };
+            let msg = w.stop("c1", &run).unwrap();
+            assert!(w.archived("c1"));
+            let removed = run.calls().iter().any(|c| matches!(c, Call::Remove(..)));
+            if sticky {
+                assert!(msg.contains("sid-c1") && msg.contains("again"), "{msg}");
+                assert!(!removed, "{:?}", run.calls());
+                assert_eq!(w.paths("c1"), all);
+            } else {
+                assert!(msg.contains("removed 3 worktrees"), "{msg}");
+                assert!(w.paths("c1").is_empty());
+            }
         }
     }
 

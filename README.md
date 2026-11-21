@@ -45,7 +45,7 @@ These are for you, run outside any session. A session's model cannot call them.
 | `crook open <slug>` | Starts the orchestrator, or attaches to the live one |
 | `crook resume <child>` | Restarts a child's session with crook's flags |
 | `crook unpark <child>` | Lifts a child's park by hand |
-| `crook stop <child>` | Stops a child, archives it and removes its worktrees; refused if one has uncommitted changes |
+| `crook stop <child>` | Stops a child, archives it and removes its worktrees; refused if one has uncommitted changes or another session runs in it |
 | `crook wipe <slug> [--with-diary]` | Removes a finished project's worktrees, state and what crook made in its home; keeps the diary, the branches and anything else in the home, which it lists |
 | `crook list` | One line per project |
 | `crook status` | Live children across projects |

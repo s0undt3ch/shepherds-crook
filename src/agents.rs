@@ -32,24 +32,27 @@ struct Raw {
     status: Option<String>,
 }
 
-/// A row without a session id cannot be matched to anything, so it is dropped
-/// rather than failing the whole list.
+/// Fails closed: a row that does not read as expected fails the whole list,
+/// so a live session is never taken for a gone one. A row without a session id
+/// is kept with an empty one, which matches no recorded session but still
+/// shows its `cwd` to the checks that look for sessions inside a worktree.
 pub fn parse(json: &str) -> Result<Vec<Agent>, Error> {
     let rows: Vec<serde_json::Value> =
         serde_json::from_str(json).map_err(|e| Error::Agents(format!("unreadable output: {e}")))?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|v| serde_json::from_value::<Raw>(v).ok())
-        .filter_map(|r| {
-            Some(Agent {
-                session_id: r.session_id?,
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let r = serde_json::from_value::<Raw>(v)
+                .map_err(|e| Error::Agents(format!("unreadable row {i}: {e}")))?;
+            Ok(Agent {
+                session_id: r.session_id.unwrap_or_default(),
                 pid: r.pid,
                 cwd: r.cwd,
                 kind: r.kind,
                 state: r.state.or(r.status),
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Whether `cwd` is `root` or below it, compared as written and then
@@ -180,9 +183,22 @@ mod tests {
     }
 
     #[test]
-    fn rows_without_a_session_id_are_skipped() {
+    fn rows_without_a_session_id_keep_their_cwd() {
         let a = parse(r#"[{"cwd":"/a"},{"sessionId":"s","cwd":"/b"}]"#).unwrap();
-        assert_eq!(a.len(), 1);
+        assert_eq!(a.len(), 2);
+        assert_eq!((a[0].session_id.as_str(), a[0].cwd.as_str()), ("", "/a"));
+    }
+
+    #[test]
+    fn a_row_that_does_not_read_fails_the_list() {
+        for json in [
+            r#"[{"sessionId":"s","pid":"4242","cwd":"/a"},{"sessionId":"t","cwd":"/b"}]"#,
+            r#"[{"sessionId":7,"cwd":"/a"}]"#,
+            r#"[{"sessionId":"s","cwd":"/a"},"nope"]"#,
+        ] {
+            let e = parse(json).unwrap_err();
+            assert!(e.to_string().contains("unreadable row"), "{json}: {e}");
+        }
     }
 
     #[test]

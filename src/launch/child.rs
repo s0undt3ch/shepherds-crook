@@ -86,6 +86,10 @@ pub trait Launcher {
     /// Closes the herdr pane running the session, found while the session still
     /// runs. No pane (no herdr, or none for the session) is not an error.
     fn close_pane(&self, session_id: &str) -> Result<(), Error>;
+    /// How long `stop` waits for a stopped session to leave `claude agents`.
+    fn exit_wait(&self) -> Duration {
+        Duration::from_secs(3)
+    }
 }
 
 /// A spawn: what the orchestrator asked for, and the machine it runs on.
@@ -388,6 +392,38 @@ pub fn verify_worktree(
     Ok(Some(real))
 }
 
+/// The `claude agents` rows whose cwd is one of `dirs` or below it: the
+/// sessions that removing those directories would pull the floor from under.
+pub fn sessions_inside<'a>(agents: &'a [Agent], dirs: &[&Path]) -> Vec<&'a Agent> {
+    agents
+        .iter()
+        .filter(|a| {
+            dirs.iter()
+                .filter_map(|d| d.to_str())
+                .any(|d| crate::agents::cwd_inside(&a.cwd, d))
+        })
+        .collect()
+}
+
+/// `sessions_inside` rows, for a message.
+pub fn describe_sessions(found: &[&Agent]) -> String {
+    found
+        .iter()
+        .map(|a| {
+            let id = if a.session_id.is_empty() {
+                "with no id"
+            } else {
+                a.session_id.as_str()
+            };
+            match a.pid {
+                Some(pid) => format!("session {id} (pid {pid}) in {}", a.cwd),
+                None => format!("session {id} in {}", a.cwd),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// What `stop` did to the child's session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stopped {
@@ -502,6 +538,9 @@ pub(crate) mod fake {
         pub branch_list: std::collections::BTreeMap<PathBuf, Vec<String>>,
         /// Runs inside `stop_bg` and `agents`, to change the disk mid-stop.
         pub on_stop: Option<Box<dyn Fn()>>,
+        /// Sessions stay listed after `stop_bg` or `terminate`, as one that
+        /// has not exited yet would.
+        pub sticky: bool,
     }
 
     impl Fake {
@@ -585,7 +624,20 @@ pub(crate) mod fake {
             if self.agents_fail {
                 return Err(Error::Agents("boom".into()));
             }
-            Ok(self.agents.clone())
+            let calls = self.calls();
+            let stopped = |a: &Agent| {
+                calls.iter().any(|c| match c {
+                    Call::StopBg(s) => *s == a.session_id,
+                    Call::Terminate(p) => a.pid == Some(*p),
+                    _ => false,
+                })
+            };
+            Ok(self
+                .agents
+                .iter()
+                .filter(|a| self.sticky || !stopped(a))
+                .cloned()
+                .collect())
         }
         fn stop_bg(&self, session_id: &str) -> Result<(), Error> {
             self.log(Call::StopBg(session_id.into()));
@@ -604,6 +656,9 @@ pub(crate) mod fake {
                 return Err(Error::Refused("herdr failed".into()));
             }
             Ok(())
+        }
+        fn exit_wait(&self) -> Duration {
+            Duration::ZERO
         }
     }
 }

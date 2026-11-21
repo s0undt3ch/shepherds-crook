@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::launch::child::{Launcher, verify_worktree};
+use crate::launch::child::{Launcher, describe_sessions, sessions_inside, verify_worktree};
 use crate::store::{Mode, Store};
 use crate::{Env, Error, config, crew, paths, project};
 
@@ -12,7 +12,9 @@ use crate::{Env, Error, config, crew, paths, project};
 /// the `crook/<slug>/*` branches left behind (never deleted). In the home it
 /// removes only what crook made, and lists the rest (`remove_home`).
 ///
-/// It refuses, changing nothing, while a session of the project is live, when
+/// It refuses, changing nothing, while a session of the project is live (the
+/// orchestrator, any child archived or not, a fork or an id a child held, or
+/// any session whose cwd is in a recorded worktree or the home), when
 /// `claude agents` cannot say, when a recorded worktree fails `verify_worktree`
 /// or has uncommitted changes, and for `--with-diary` with a `diary_root`.
 /// Removal then goes worktrees, home, state dir, so a crash part-way leaves a
@@ -54,7 +56,13 @@ pub fn run(
 
     let mut store = Store::open(env, slug, Mode::ReadWrite)?;
     let (record, orchestrator, children, rows) = store.read(|c| {
-        let mut st = c.prepare("SELECT child, session_id FROM children WHERE archived = 0")?;
+        // An archived child may still run: its stop may not have confirmed it gone.
+        let mut st = c.prepare(
+            "SELECT child, session_id FROM children
+             UNION SELECT child, session_id FROM forks
+             UNION SELECT child, session_id FROM child_sessions
+             ORDER BY 1, 2",
+        )?;
         let children = st
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -84,6 +92,12 @@ pub fn run(
                 "child {child} (session {sid}): run crook stop {slug}/{child}"
             ));
         }
+    }
+    let mut dirs: Vec<&Path> = rows.iter().map(|r| Path::new(&r.path)).collect();
+    dirs.push(&home);
+    let inside = sessions_inside(&agents, &dirs);
+    if !inside.is_empty() {
+        live.push(describe_sessions(&inside));
     }
     if !live.is_empty() {
         return Err(Error::Refused(format!(
@@ -462,14 +476,67 @@ mod tests {
         }
     }
 
+    /// An archived child may still run (its stop could not confirm it gone),
+    /// and so may a fork or any id the child held.
     #[test]
-    fn wipe_ignores_archived_sessions_and_other_projects() {
+    fn wipe_refuses_archived_and_forked_sessions() {
+        for sid in ["sid-c2", "fork-c1", "old-c1"] {
+            let w = world();
+            w.fx.store("demo")
+                .write(Touch::CHILDREN, |tx| {
+                    crew::archive(tx, "c2")?;
+                    crew::add_fork(tx, "c1", "fork-c1")?;
+                    tx.execute(
+                        "INSERT INTO child_sessions(child, session_id) VALUES ('c1', 'old-c1')",
+                        [],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            let before = w.paths();
+            let run = Fake {
+                agents: vec![agent(sid), agent("another-project")],
+                ..Fake::default()
+            };
+            let e = w.wipe(false, &run).unwrap_err().to_string();
+            assert!(e.contains(sid) && e.contains("live"), "{sid}: {e}");
+            w.assert_untouched(&before, &run);
+        }
+    }
+
+    /// Any session whose cwd is in a recorded worktree or the home, whatever
+    /// its id: the user's own `claude`, say.
+    #[test]
+    fn wipe_refuses_a_session_inside_a_worktree_or_the_home() {
+        for n in 0..3 {
+            let w = world();
+            let cwd = match n {
+                0 => w.paths()[1].join("sub"),
+                1 => w.fx.home("demo"),
+                _ => w.fx.home("demo").join("diary"),
+            };
+            let before = w.paths();
+            let run = Fake {
+                agents: vec![
+                    agent("another-project"),
+                    Agent {
+                        cwd: cwd.display().to_string(),
+                        ..agent("users-own")
+                    },
+                ],
+                ..Fake::default()
+            };
+            let e = w.wipe(false, &run).unwrap_err().to_string();
+            assert!(
+                e.contains("users-own") && e.contains(&cwd.display().to_string()),
+                "{e}"
+            );
+            w.assert_untouched(&before, &run);
+        }
+        // A session elsewhere does not block it.
         let w = world();
-        w.fx.store("demo")
-            .write(Touch::CHILDREN, |tx| crew::archive(tx, "c2"))
-            .unwrap();
         let run = Fake {
-            agents: vec![agent("sid-c2"), agent("another-project")],
+            agents: vec![agent("another-project")],
             ..Fake::default()
         };
         w.wipe(false, &run).unwrap();

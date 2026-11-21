@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use crate::agents::{self, Agent};
 use crate::gate::{Identity, Role};
 use crate::hook::sessionstart::is_claude;
-use crate::{Env, Error, crew, paths, settings};
+use crate::{Env, Error, crew, herdr, paths, settings};
 
 pub mod child;
 pub mod plugin_dir;
@@ -95,11 +95,6 @@ pub fn crook_bin() -> Result<PathBuf, Error> {
     Ok(std::fs::canonicalize(std::env::current_exe()?)?)
 }
 
-/// `reconcile_with`, with the live check `crook hook SessionStart` uses.
-pub fn reconcile(c: &Connection, agents: &[Agent]) -> Result<Vec<String>, Error> {
-    reconcile_with(c, agents, &is_claude)
-}
-
 /// What reconcile found, read-only: lines to report, and the children whose
 /// recorded claude pid is no longer a live claude.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -108,15 +103,29 @@ pub struct Findings {
     pub stale_pids: Vec<String>,
 }
 
-/// Reads what a crash between a spawn's rows and its launch can leave:
+/// What reconcile reads from the machine, live; nothing of it is stored.
+pub struct Look<'a> {
+    /// `claude agents`, or `None` when it could not say: then no session is
+    /// taken for missing.
+    pub agents: Option<&'a [Agent]>,
+    pub live: &'a dyn Fn(u32) -> bool,
+    /// The herdr pane holding a pid, looked up each time; `None` without herdr.
+    pub pane_of_pid: Option<&'a dyn Fn(u32) -> Option<String>>,
+}
+
+/// Reads what a crash, or a launch that failed, can leave, and says what to
+/// do about each:
 /// - a child row whose worktree is gone from disk;
+/// - a `worktrees` row whose path is gone from disk (one line per path), and
+///   a worktree an archived child still has;
+/// - a child with no running session (its claude never started, or exited),
+///   which still holds one of the `MAX_LIVE_CHILDREN` slots;
 /// - a running session in a child's worktree that no row of that child knows;
+/// - with herdr, a child's interactive session that no herdr pane holds;
 /// - a recorded claude pid that is not a live claude (listed, not yet cleared).
-pub fn findings(
-    c: &Connection,
-    agents: &[Agent],
-    live: &dyn Fn(u32) -> bool,
-) -> Result<Findings, Error> {
+pub fn findings(c: &Connection, slug: &str, look: &Look) -> Result<Findings, Error> {
+    let agents = look.agents.unwrap_or_default();
+    let live = look.live;
     let mut st = c.prepare(
         "SELECT child, worktree, session_id, claude_pid FROM children
          WHERE archived = 0 ORDER BY child",
@@ -132,41 +141,94 @@ pub fn findings(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut out = Findings::default();
+    let mut reported = std::collections::BTreeSet::new();
     for (child, worktree, session_id, pid) in &kids {
         if !Path::new(worktree).exists() {
+            reported.insert(worktree.clone());
             out.lines.push(format!(
-                "child {child}: worktree {worktree} is missing on disk"
+                "child {child}: worktree {worktree} is missing on disk: \
+                 crook stop {slug}/{child} forgets it"
             ));
         }
-        let stale = pid
-            .and_then(|p| u32::try_from(p).ok())
-            .is_some_and(|p| !live(p));
-        if stale {
+        let pid = pid.and_then(|p| u32::try_from(p).ok());
+        if pid.is_some_and(|p| !live(p)) {
             out.stale_pids.push(child.clone());
         }
+        let mut running = Vec::new();
         for a in agents {
             let known = a.session_id == *session_id
                 || crew::is_fork(c, child, &a.session_id)?
                 || crew::held(c, child, &a.session_id)?;
-            if !known && agents::cwd_inside(&a.cwd, worktree) {
+            if known {
+                running.push(a);
+            } else if agents::cwd_inside(&a.cwd, worktree) {
                 out.lines.push(format!(
                     "child {child}: session {} is running in {} but no row of {child} knows it",
                     a.session_id, a.cwd
                 ));
             }
         }
+        if look.agents.is_some() && running.is_empty() && !pid.is_some_and(live) {
+            out.lines.push(format!(
+                "child {child}: no session is running (its claude never started, or exited), \
+                 and it still counts toward the {}-child cap: crook resume {slug}/{child} \
+                 to start it, or crook stop {slug}/{child} if it is done",
+                child::MAX_LIVE_CHILDREN
+            ));
+        }
+        if let Some(pane_of) = look.pane_of_pid {
+            for a in running.iter().filter(|a| a.kind == "interactive") {
+                if let Some(p) = a.pid
+                    && pane_of(p).is_none()
+                {
+                    out.lines.push(format!(
+                        "child {child}: session {} (pid {p}) runs in no herdr pane",
+                        a.session_id
+                    ));
+                }
+            }
+        }
+    }
+    let archived: std::collections::BTreeSet<String> = {
+        let mut st = c.prepare("SELECT child FROM children WHERE archived = 1")?;
+        st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?
+    };
+    for w in crew::worktrees(c, None)? {
+        let child = &w.child;
+        if !Path::new(&w.path).exists() {
+            if reported.insert(w.path.clone()) {
+                out.lines.push(format!(
+                    "child {child}: worktree {} is recorded but missing on disk, and its row \
+                     keeps that name taken: crook stop {slug}/{child} forgets it",
+                    w.path
+                ));
+            }
+        } else if archived.contains(child) {
+            out.lines.push(format!(
+                "child {child} is archived but its worktree {} was kept: \
+                 run crook stop {slug}/{child} again",
+                w.path
+            ));
+        }
     }
     Ok(out)
 }
 
-/// `findings`, then forgets the stale pids on `c` (a transaction, for the
-/// caller to commit). `open` reads first and writes only when this would.
+/// `findings` without herdr, then forgets the stale pids on `c` (a
+/// transaction, for the caller to commit). `open` reads first and writes only
+/// when this would.
 pub fn reconcile_with(
     c: &Connection,
+    slug: &str,
     agents: &[Agent],
     live: &dyn Fn(u32) -> bool,
 ) -> Result<Vec<String>, Error> {
-    let f = findings(c, agents, live)?;
+    let look = Look {
+        agents: Some(agents),
+        live,
+        pane_of_pid: None,
+    };
+    let f = findings(c, slug, &look)?;
     for child in &f.stale_pids {
         crew::clear_claude_pid(c, child)?;
     }
@@ -183,6 +245,8 @@ pub struct Host<'a> {
     pub new_id: &'a dyn Fn() -> String,
     pub version: &'a dyn Fn() -> Result<String, Error>,
     pub agents: &'a dyn Fn() -> Result<Vec<Agent>, Error>,
+    /// The herdr pane holding a pid, looked up live; `None` without herdr.
+    pub pane_of_pid: Option<&'a dyn Fn(u32) -> Option<String>>,
     pub managed_dirs: Vec<PathBuf>,
 }
 
@@ -193,6 +257,7 @@ pub fn with_real_host<R>(env: Env, f: impl FnOnce(&Host) -> R) -> Result<R, Erro
     let version = || agents::claude_version(env);
     let list = || agents::list(env);
     let new_id = || uuid::Uuid::new_v4().to_string();
+    let pane = |pid| herdr::pane_of_pid(env, pid);
     let host = Host {
         base_env: std::env::vars_os().collect(),
         crook_bin: crook_bin()?,
@@ -200,6 +265,7 @@ pub fn with_real_host<R>(env: Env, f: impl FnOnce(&Host) -> R) -> Result<R, Erro
         new_id: &new_id,
         version: &version,
         agents: &list,
+        pane_of_pid: herdr::present(env).then_some(&pane as &dyn Fn(u32) -> Option<String>),
         managed_dirs: preflight::default_dirs(),
     };
     Ok(f(&host))
@@ -470,10 +536,13 @@ mod tests {
             child(&mut s, "ok", &here, "s1", None);
             child(&mut s, "gone", "/no/such/worktree", "s2", None);
             let lines = s
-                .write(Touch::CHILDREN, |tx| reconcile_with(tx, &[], &|_| false))
+                .write(Touch::CHILDREN, |tx| {
+                    reconcile_with(tx, "p", &[], &|_| false)
+                })
                 .unwrap();
-            assert_eq!(lines.len(), 1, "{lines:?}");
-            assert!(lines[0].contains("gone") && lines[0].contains("/no/such/worktree"));
+            let missing: Vec<_> = lines.iter().filter(|l| l.contains("missing")).collect();
+            assert_eq!(missing.len(), 1, "{lines:?}");
+            assert!(missing[0].contains("gone") && missing[0].contains("/no/such/worktree"));
         }
 
         #[test]
@@ -483,7 +552,9 @@ mod tests {
             s.write(Touch::CHILDREN, |tx| crate::crew::archive(tx, "gone"))
                 .unwrap();
             let lines = s
-                .write(Touch::CHILDREN, |tx| reconcile_with(tx, &[], &|_| false))
+                .write(Touch::CHILDREN, |tx| {
+                    reconcile_with(tx, "p", &[], &|_| false)
+                })
                 .unwrap();
             assert!(lines.is_empty(), "{lines:?}");
         }
@@ -500,11 +571,69 @@ mod tests {
             ];
             let lines = s
                 .write(Touch::CHILDREN, |tx| {
-                    reconcile_with(tx, &agents, &|_| false)
+                    reconcile_with(tx, "p", &agents, &|_| false)
                 })
                 .unwrap();
             assert_eq!(lines.len(), 1, "{lines:?}");
             assert!(lines[0].contains("stranger") && lines[0].contains("c1"));
+        }
+
+        /// The spawn worktree in both tables, gone: one line, not two.
+        #[test]
+        fn a_missing_worktree_in_both_tables_is_reported_once() {
+            let (_t, mut s) = store();
+            child(&mut s, "c1", "/no/such/wt", "s1", None);
+            s.write(Touch::CHILDREN, |tx| {
+                crate::crew::add_worktree(
+                    tx,
+                    &crate::crew::Worktree {
+                        child: "c1".into(),
+                        repo: "/r".into(),
+                        path: "/no/such/wt".into(),
+                        branch: "b".into(),
+                    },
+                )
+            })
+            .unwrap();
+            let lines = s
+                .write(Touch::CHILDREN, |tx| {
+                    reconcile_with(tx, "p", &[], &|_| false)
+                })
+                .unwrap();
+            let n = lines.iter().filter(|l| l.contains("/no/such/wt")).count();
+            assert_eq!(n, 1, "{lines:?}");
+        }
+
+        /// Panes are looked up live through herdr, for interactive sessions only.
+        #[test]
+        fn a_running_child_in_no_herdr_pane_is_reported() {
+            let (tmp, mut s) = store();
+            let wt = tmp.path().display().to_string();
+            child(&mut s, "c1", &wt, "s1", None);
+            let agents = [agent("s1", &wt)];
+            let asked = std::cell::Cell::new(0);
+            let none = |_: u32| {
+                asked.set(asked.get() + 1);
+                None
+            };
+            let some = |_: u32| Some("p-1".to_string());
+            let lines = |pane: Option<&dyn Fn(u32) -> Option<String>>| {
+                let look = Look {
+                    agents: Some(&agents),
+                    live: &|_| false,
+                    pane_of_pid: pane,
+                };
+                s.read(|c| findings(c, "p", &look)).unwrap().lines
+            };
+            let l = lines(Some(&none));
+            assert!(
+                l.iter()
+                    .any(|x| x.contains("c1") && x.contains("no herdr pane")),
+                "{l:?}"
+            );
+            assert_eq!(asked.get(), 1);
+            assert!(lines(Some(&some)).is_empty());
+            assert!(lines(None).is_empty(), "no herdr, nothing to say");
         }
 
         #[test]
@@ -513,8 +642,10 @@ mod tests {
             let wt = tmp.path().display().to_string();
             child(&mut s, "dead", &wt, "s1", Some(111));
             child(&mut s, "alive", &wt, "s2", Some(222));
-            s.write(Touch::CHILDREN, |tx| reconcile_with(tx, &[], &|p| p == 222))
-                .unwrap();
+            s.write(Touch::CHILDREN, |tx| {
+                reconcile_with(tx, "p", &[], &|p| p == 222)
+            })
+            .unwrap();
             let pid = |c: &str| s.read(|conn| crate::crew::claude_pid(conn, c)).unwrap();
             assert_eq!(pid("dead"), None);
             assert_eq!(pid("alive"), Some(222));
@@ -628,6 +759,7 @@ pub(crate) mod fixture {
                 new_id,
                 version,
                 agents,
+                pane_of_pid: None,
                 managed_dirs: Vec::new(),
             }
         }

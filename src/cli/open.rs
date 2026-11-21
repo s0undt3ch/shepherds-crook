@@ -87,15 +87,16 @@ pub fn plan(env: Env, slug: &str, host: &Host) -> Result<Outcome, Error> {
             "{running}; not starting a second one"
         )));
     }
-    let agents = match (host.agents)() {
-        Ok(a) => a,
+    let listed = match (host.agents)() {
+        Ok(a) => Some(a),
         Err(e) => {
             notes.push(format!(
-                "crook: warning: {e}; sessions running without a row were not checked"
+                "crook: warning: {e}; which children have a running session was not checked"
             ));
-            Vec::new()
+            None
         }
     };
+    let agents = listed.as_deref().unwrap_or_default();
     // The row is written by SessionStart, after claude is up (and after the
     // trust dialog, on a first open), so a second `open` in that window finds
     // no live pid: `claude agents` shows the session already in the home.
@@ -134,7 +135,12 @@ pub fn plan(env: Env, slug: &str, host: &Host) -> Result<Outcome, Error> {
 
     let mut store = Store::open(env, slug, Mode::Migrate)?;
     // Read first: a clean project takes no write transaction and bumps no `gen`.
-    let found = store.read(|c| launch::findings(c, &agents, host.live))?;
+    let look = launch::Look {
+        agents: listed.as_deref(),
+        live: host.live,
+        pane_of_pid: host.pane_of_pid,
+    };
+    let found = store.read(|c| launch::findings(c, slug, &look))?;
     if !found.stale_pids.is_empty() {
         store.write(Touch::CHILDREN, |tx| {
             found
@@ -711,6 +717,88 @@ mod tests {
             .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
             .unwrap();
         assert_eq!((v, tables), (0, 0));
+    }
+
+    fn open_notes(fx: &Fx, agents: Vec<Agent>) -> String {
+        match open_with_agents(fx, agents).unwrap() {
+            Outcome::Exec(p) => p.notes.join("\n"),
+            Outcome::Say(s) => panic!("expected exec, got {s}"),
+        }
+    }
+
+    /// A child whose claude never started holds a slot silently unless open
+    /// says so, with the remedy; one with a running session is not named.
+    #[test]
+    fn open_reports_a_child_with_no_running_session() {
+        let fx = Fx::new();
+        fx.init("demo");
+        let wt = fx.tmp.path().join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        fx.add_child("demo", "c1", &wt, "s1", None);
+        fx.add_child("demo", "c2", &wt, "s2", None);
+        let running = Agent {
+            pid: None,
+            ..agent("background", "s2", "/x")
+        };
+        let all = open_notes(&fx, vec![running]);
+        assert!(
+            all.contains("child c1: no session is running")
+                && all.contains("crook resume demo/c1")
+                && all.contains("crook stop demo/c1"),
+            "{all}"
+        );
+        assert!(!all.contains("child c2"), "{all}");
+        // When `claude agents` cannot say, nobody is called missing.
+        let env = fx.env();
+        let live: &dyn Fn(u32) -> bool = &|_| false;
+        let version: &dyn Fn() -> Result<String, Error> = &ok_version;
+        let new_id = || "x".to_string();
+        let down = || Err(Error::Agents("timed out after 5 s".into()));
+        let p = exec(plan(&env, "demo", &fx.host(live, &down, version, &new_id)).unwrap());
+        assert!(!p.notes.join("\n").contains("no session is running"));
+    }
+
+    /// `worktrees` rows are checked too: a path gone from disk (a failed
+    /// `git worktree add`), and a worktree an archived child kept. Nothing is
+    /// deleted.
+    #[test]
+    fn open_reports_worktree_rows() {
+        let fx = Fx::new();
+        fx.init("demo");
+        let base = fx.tmp.path();
+        let (wt, kept) = (base.join("wt"), base.join("kept"));
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&kept).unwrap();
+        fx.add_child("demo", "c1", &wt, "s1", None);
+        fx.add_child("demo", "old", &kept, "s9", None);
+        let gone = base.join("wt-failed").display().to_string();
+        fx.store("demo")
+            .write(Touch::CHILDREN, |tx| {
+                for (child, path) in [("c1", gone.clone()), ("old", kept.display().to_string())] {
+                    crew::add_worktree(
+                        tx,
+                        &crew::Worktree {
+                            child: child.into(),
+                            repo: "/r".into(),
+                            path,
+                            branch: "b".into(),
+                        },
+                    )?;
+                }
+                crew::archive(tx, "old")
+            })
+            .unwrap();
+        let all = open_notes(&fx, vec![agent("background", "s1", "/x")]);
+        assert!(
+            all.contains(&gone) && all.contains("crook stop demo/c1"),
+            "{all}"
+        );
+        assert!(
+            all.contains(&kept.display().to_string()) && all.contains("crook stop demo/old again"),
+            "{all}"
+        );
+        let rows = fx.store("demo").read(|c| crew::worktrees(c, None)).unwrap();
+        assert_eq!(rows.len(), 2, "open deletes nothing");
     }
 
     #[test]

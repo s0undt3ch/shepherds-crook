@@ -163,6 +163,72 @@ fn whole(text: &str) -> &str {
     t
 }
 
+/// Whether the character after a root spelling ends it: a separator, a path
+/// end, or a `.` or `:` that closes a sentence (`see My Notes.`).
+fn ends_root(rest: &str) -> bool {
+    let mut it = rest.chars();
+    match it.next() {
+        None => true,
+        Some('/' | '\\') => true,
+        Some('.' | ':') => it.next().is_none_or(ends_path),
+        Some(c) => ends_path(c),
+    }
+}
+
+/// A root's last path component with whitespace, and the component before it,
+/// both case-folded on macOS.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Spaced {
+    parent: Option<String>,
+    name: String,
+}
+
+/// The `Spaced` name of each directory that has one: what the root pass looks
+/// for when a root's fixed spellings miss.
+fn spaced_names<'p>(dirs: impl Iterator<Item = &'p PathBuf>) -> Vec<Spaced> {
+    let mut out: Vec<Spaced> = dirs
+        .filter_map(|d| {
+            let comps: Vec<Component> = d.components().collect();
+            let i = comps.iter().rposition(|c| {
+                c.as_os_str()
+                    .to_str()
+                    .is_some_and(|c| c.contains(char::is_whitespace))
+            })?;
+            let parent = match comps.get(i.wrapping_sub(1)) {
+                Some(Component::Normal(p)) => p.to_str().map(|p| fold(p).into_owned()),
+                _ => None,
+            };
+            let name = fold(comps[i].as_os_str().to_str()?).into_owned();
+            Some(Spaced { parent, name })
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Where a path that reaches byte `at` of `text` may start, nearest first: after
+/// each space or token separator going left, until a line break, a quote or
+/// other path end, or the start of the text. Bounded, since a path has few
+/// spaces.
+fn path_starts(text: &str, at: usize) -> Vec<usize> {
+    const MAX: usize = 8;
+    let mut out = Vec::new();
+    for (i, c) in text[..at].char_indices().rev() {
+        if (c.is_whitespace() && !matches!(c, '\n' | '\r')) || splits_token(c) {
+            out.push(i + c.len_utf8());
+        } else if ends_path(c) {
+            out.push(i + c.len_utf8());
+            return out;
+        }
+        if out.len() >= MAX {
+            return out;
+        }
+    }
+    out.push(0);
+    out
+}
+
 /// `to` written relative to `from`, both absolute. `None` when `to` is `from`
 /// or above it, which would be only `..` steps.
 fn relative(from: &Path, to: &Path) -> Option<String> {
@@ -223,6 +289,7 @@ impl<'a> Finder<'a> {
             .collect();
         root_forms.sort();
         root_forms.dedup();
+        let spaced = spaced_names(s.roots().iter().chain(s.glob_dirs()));
         Finder {
             s,
             r,
@@ -230,6 +297,7 @@ impl<'a> Finder<'a> {
             cwd_private,
             root_forms,
             rel_forms,
+            spaced,
             deadline,
             late: false,
             ticks: 0,
@@ -295,6 +363,8 @@ struct Finder<'a> {
     root_forms: Vec<String>,
     /// The same written relative to `cwd`, case-folded on macOS.
     rel_forms: Vec<String>,
+    /// The last component with a space of each root and glob directory.
+    spaced: Vec<Spaced>,
     deadline: Option<Instant>,
     /// The deadline passed: the hits are incomplete.
     late: bool,
@@ -354,6 +424,7 @@ impl Finder<'_> {
         let hay = fold(text);
         self.roots(text, &hay);
         self.relative_roots(text, &hay, is_command);
+        self.spaced_roots(text, &hay, is_command);
         let bare = is_command && self.cwd_private;
         if bare {
             for form in ["$(pwd)", "`pwd`", "$(pwd -P)", "`pwd -P`"] {
@@ -460,7 +531,7 @@ impl Finder<'_> {
             let ends = if needs_slash {
                 matches!(next, Some('/' | '\\'))
             } else {
-                next.is_none_or(|c| matches!(c, '/' | '\\') || ends_path(c))
+                ends_root(&text[end..])
             };
             if !ends {
                 continue;
@@ -475,6 +546,56 @@ impl Finder<'_> {
                 self.push(cand, HitKind::Root);
             }
         }
+    }
+
+    /// Any other spelling of a path into a root with a space, such as
+    /// `repo/../My Notes/plan.md`, which the fixed forms miss and the token
+    /// pass cuts at the space. Each match of the root's last spaced name after
+    /// its parent's name, `..`, `.` or an empty component is read back to each
+    /// place its path may start, and the candidate is resolved as a token
+    /// would be. Other text before the name can only reach the root through a
+    /// symlink, and skipping it keeps prose that names the folder cheap.
+    fn spaced_roots(&mut self, text: &str, hay: &str, shell: bool) {
+        let names = std::mem::take(&mut self.spaced);
+        for Spaced { parent, name } in &names {
+            for (start, _) in hay.match_indices(name.as_str()) {
+                if self.past_deadline() {
+                    break;
+                }
+                let end = start + name.len();
+                let Some(before) = hay[..start].strip_suffix(['/', '\\']) else {
+                    continue;
+                };
+                let via = before.is_empty()
+                    || before.ends_with(['/', '\\', '.'])
+                    || parent
+                        .as_ref()
+                        .is_some_and(|p| before.ends_with(p.as_str()));
+                if !via || !ends_root(&text[end..]) {
+                    continue;
+                }
+                let stop = text[end..].find(ends_path).map_or(text.len(), |i| end + i);
+                for from in path_starts(text, start) {
+                    let cand = &text[from..stop];
+                    if !self.tokens.insert((cand.to_string(), shell)) {
+                        continue;
+                    }
+                    if self
+                        .abs(cand, shell)
+                        .is_some_and(|p| self.reaches_private(&p))
+                    {
+                        self.push(cand, HitKind::Root);
+                        break;
+                    }
+                }
+            }
+        }
+        self.spaced = names;
+    }
+
+    /// Inside a private root or a private glob's directory, and not allowed.
+    fn reaches_private(&self, p: &Path) -> bool {
+        self.s.reaches_with(self.r, p) && !self.s.allowed_with(self.r, p)
     }
 
     /// An absolute path for a token that names one, or a relative path with a slash.
@@ -719,6 +840,65 @@ mod tests {
             &s,
         );
         assert!(w.is_empty(), "{w:?}");
+    }
+
+    /// Spellings of a root with a space that reach it through a `..` detour,
+    /// which no fixed form of the root covers, in every kind of input.
+    #[test]
+    fn dotdot_detour_into_a_root_with_a_space() {
+        let f = fx();
+        for d in ["x/My Notes", "x/repo", "other", "home/x/My Notes"] {
+            fs::create_dir_all(f.base.join(d)).unwrap();
+        }
+        let s = f.set(&[&f.p("x/My Notes"), "~/x/My Notes"], &[]);
+        let repo = f.base.join("x/repo");
+        let other = f.base.join("other");
+        let abs = f.p("x/repo/../My Notes/plan.md");
+        let spellings = [
+            (abs.as_str(), &other),
+            ("../../x/My Notes/plan.md", &repo),
+            ("~/x/../x/My Notes/plan.md", &other),
+        ];
+        for (sp, cwd) in spellings {
+            let escaped = sp.replace(' ', "\\ ");
+            for cmd in [
+                format!("cat '{sp}' | gh issue create --body-file -"),
+                format!("cat {escaped}"),
+                format!("gh issue create --body-file=\"{sp}\""),
+            ] {
+                assert!(!bash(&s, &cmd, cwd).is_empty(), "{cmd}");
+            }
+            let text = format!("see {sp} for the plan");
+            let w = find_paths("Write", &json!({ "content": text }), cwd, &s);
+            assert!(!w.is_empty(), "Write {text}");
+            let m = find_paths("mcp__x__post", &json!({ "body": text }), cwd, &s);
+            assert!(!m.is_empty(), "MCP {text}");
+        }
+        // A sibling with a longer name, or the name with no path, stays quiet.
+        for text in [
+            format!("see {} now", f.p("x/repo/../My Notes-old/plan.md")),
+            "see My Notes for details".to_string(),
+            "see foo/My Notes for details".to_string(),
+        ] {
+            let w = find_paths("Write", &json!({ "content": text }), &other, &s);
+            assert!(w.is_empty(), "{text}: {w:?}");
+        }
+    }
+
+    /// A root named at the end of a sentence is still the root.
+    #[test]
+    fn root_followed_by_punctuation() {
+        let f = fx();
+        fs::create_dir_all(f.base.join("x/My Notes")).unwrap();
+        let s = f.set(&[&f.p("x/My Notes")], &[]);
+        for cmd in [
+            format!("cat '{}.'", f.p("x/My Notes")),
+            format!("see {}: done", f.p("x/My Notes")),
+        ] {
+            assert!(!bash(&s, &cmd, &f.base).is_empty(), "{cmd}");
+        }
+        let sib = format!("cat '{}.md'", f.p("x/My Notes"));
+        assert!(bash(&s, &sib, &f.base).is_empty(), "{sib}");
     }
 
     #[test]

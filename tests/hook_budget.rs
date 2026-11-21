@@ -182,3 +182,33 @@ fn too_large_to_check_asks_in_budget() {
     );
     assert!(took < BUDGET, "answered in {took:?}, budget {BUDGET:?}");
 }
+
+/// A 5 MB `Write` that names a folder with a root's spaced name after its
+/// parent's name every 40 lines, each read back to every start its line allows
+/// and resolved, and the detour into the root at its end.
+#[test]
+#[ignore = "release-only budget test"]
+fn spaced_root_names_budget() {
+    let w = World::new();
+    let spaced = w.base.join("My Notes");
+    std::fs::create_dir_all(&spaced).unwrap();
+    w.add(ItemKind::Private, &spaced);
+    let parent = w.base.file_name().unwrap().to_str().unwrap().to_string();
+    let decoy = format!(" in ../{parent}/My Notes/a.md");
+    let mut n = 0;
+    let mut content = String::new();
+    for (i, line) in prose(WRITE_BYTES, 11, 6).lines().enumerate() {
+        content.push_str(line);
+        if i % 40 == 0 {
+            n += 1;
+            content.push_str(&decoy);
+        }
+        content.push('\n');
+    }
+    let detour = format!("{}/repo/../My Notes/plan.md", w.base.display());
+    content.push_str(&format!("see {detour}\n"));
+    let (took, v) = w.write(&content);
+    eprintln!("5 MB write with {n} spaced names checked in {took:?}");
+    assert_eq!(reason(&v), format!("crook: private reference: {detour}"));
+    assert!(took < BUDGET, "checked in {took:?}, budget {BUDGET:?}");
+}

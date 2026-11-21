@@ -120,6 +120,19 @@ impl Set {
         })
     }
 
+    /// `contains_with`, or inside the literal directory of a private glob
+    /// whether or not the glob matches, as the root pass asks for those too.
+    pub(crate) fn reaches_with(&self, r: &Resolver, abs: &Path) -> bool {
+        r.variants(abs).iter().any(|v| {
+            self.roots
+                .iter()
+                .chain(&self.glob_dirs)
+                .any(|d| v.starts_with(d))
+                || v.ancestors()
+                    .any(|a| self.globs.iter().any(|g| g.is_match(a)))
+        })
+    }
+
     /// Judged on the resolved path alone: a lexical spelling inside an allow
     /// root must not allow a symlink that leads out of it. A missing path
     /// resolves to its existing prefix plus the lexical tail.

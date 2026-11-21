@@ -136,6 +136,8 @@ jobs:
       # users: `gh attestation verify` can prove the archive was produced by
       # this workflow against this exact commit.
       - name: Attest archive provenance
+        # A fork's pull request gets no OIDC token, and its archives never ship.
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/crook-*.tar.gz

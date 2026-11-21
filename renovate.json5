@@ -1,0 +1,192 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // `config:recommended` brings the dependency dashboard, monorepo
+  // groupings, and semantic commit prefixes. The pin-helper makes
+  // every GitHub Action update keep the repo's existing
+  // `sha # vX.Y.Z` pinning style.
+  extends: [
+    "config:recommended",
+    "helpers:pinGitHubActionDigestsToSemver",
+  ],
+
+  timezone: "Etc/UTC",
+  schedule: ["before 6am on monday"],
+
+  // Open fix PRs for OSV advisories. Direct deps are covered; transitive ones
+  // in Cargo.lock or uv.lock can get a PR too. Where none appears,
+  // `lockFileMaintenance` below or a manual `cargo update -p` /
+  // `toolr project venv lock` remains the fallback. Security PRs bypass the
+  // weekly schedule above.
+  osvVulnerabilityAlerts: true,
+
+  // Once a month, regenerate the lockfiles (`cargo update`, `uv lock`) to
+  // pull every dep, direct and transitive, up to the newest version its
+  // existing manifest range already allows. This does NOT widen the ranges
+  // themselves (the regular per-dep PRs do that); it keeps the locked graph
+  // current, so transitive drift is caught before it turns into an OSV advisory.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 6am on the first day of the month"],
+  },
+
+  // The packslip CLI pin in ci.yml, and the version named in release.yml's
+  // cross-reference comment, have no native manager.
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Track the packslip CLI pin next to the jdx/packslip action",
+      managerFilePatterns: [
+        "/^\\.github/workflows/ci\\.yml$/",
+        "/^\\.github/workflows/release\\.yml$/",
+      ],
+      matchStrings: [
+        "PACKSLIP_VERSION: (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "github:jdx/packslip@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+      ],
+      depNameTemplate: "jdx/packslip",
+      datasourceTemplate: "github-tags",
+      extractVersionTemplate: "^v?(?<version>.*)$",
+    },
+    {
+      customType: "regex",
+      description: "Track the mise version every workflow installs",
+      managerFilePatterns: ["/^\\.github/env$/"],
+      matchStrings: ["MISE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      depNameTemplate: "jdx/mise",
+      datasourceTemplate: "github-releases",
+    },
+    {
+      // CI's toolr binary must match the toolr-py in tools/uv.lock; the
+      // "toolr release" group below bumps all the pins in one PR.
+      customType: "regex",
+      description: "Track the toolr binary .github/actions/setup-toolr installs",
+      managerFilePatterns: ["/^\\.github/env$/"],
+      matchStrings: ["TOOLR_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      depNameTemplate: "s0undt3ch/ToolR",
+      // Same datasource as the aqua pin in mise.toml, so both move together;
+      // the pin test keeps the group PR red until PyPI (tools/uv.lock) catches up.
+      datasourceTemplate: "github-tags",
+      extractVersionTemplate: "^v?(?<version>.*)$",
+    },
+    {
+      // Same dep as the `rust` pin in mise.toml (the mise manager's datasource and
+      // package), so the "Rust toolchain" group below moves both in one PR.
+      customType: "regex",
+      description: "Track the crate rust-version alongside the mise Rust pin",
+      managerFilePatterns: ["/^Cargo\\.toml$/"],
+      matchStrings: ['rust-version = "(?<currentValue>\\d+\\.\\d+\\.\\d+)"'],
+      depNameTemplate: "rust",
+      packageNameTemplate: "rust",
+      datasourceTemplate: "rust-version",
+    },
+  ],
+
+  assignees: ["s0undt3ch"],
+  labels: ["dependencies"],
+
+  // A later matching rule wins, so the order below matters: the "toolr release"
+  // rules come last and override `github-actions` and `mise tools` for the ToolR pins.
+  packageRules: [
+    // ---- Ecosystem labels ----
+    {
+      description: "Tag Rust crate updates",
+      matchManagers: ["cargo"],
+      addLabels: ["dependencies:rust"],
+    },
+    {
+      description: "Tag Python (pyproject.toml) updates",
+      matchManagers: ["pep621"],
+      addLabels: ["dependencies:python"],
+    },
+    {
+      // package.json keeps exact pins, as the vitest pair must share a version.
+      description: "Tag npm updates and keep their pins exact",
+      matchManagers: ["npm"],
+      rangeStrategy: "pin",
+      addLabels: ["dependencies:typescript"],
+    },
+    {
+      description: "Tag GitHub Actions updates",
+      matchManagers: ["github-actions"],
+      addLabels: ["dependencies:github-actions"],
+    },
+
+    // ---- Grouping to cut PR noise ----
+    {
+      // mise.toml and Cargo.toml must name the same toolchain. Give each
+      // release a week before forcing it on contributors.
+      description: "Bump the mise Rust pin and the crate rust-version together",
+      groupName: "Rust toolchain",
+      matchManagers: ["mise", "custom.regex"],
+      matchDepNames: ["rust"],
+      addLabels: ["dependencies:rust"],
+      minimumReleaseAge: "7 days",
+    },
+    {
+      // GHA digest pins drift constantly; reviewing one weekly PR is
+      // saner than ~20 individual ones.
+      description: "Group all GitHub Actions updates",
+      groupName: "github-actions",
+      matchManagers: ["github-actions"],
+    },
+    {
+      // Same group as the actions so the packslip CLI pin and the
+      // jdx/packslip action pin always move in one PR.
+      description: "Group the packslip CLI pin with GitHub Actions",
+      groupName: "github-actions",
+      matchManagers: ["custom.regex"],
+      matchDepNames: ["jdx/packslip"],
+      addLabels: ["dependencies:github-actions"],
+    },
+    {
+      // mise CLI tools (the pre-commit-hook binaries, prek, uv and so on).
+      // Match by manager and *exclude* the toolchains we keep as their own
+      // reviewable PRs, so a tool added to mise.toml later is grouped
+      // automatically. Every pin in mise.toml is exact: a `latest` pin has
+      // no version for Renovate to bump.
+      description: "Group mise CLI tooling updates",
+      groupName: "mise tools",
+      matchManagers: ["mise"],
+      matchDepNames: ["!rust", "!node", "!aqua:s0undt3ch/ToolR", "!s0undt3ch/ToolR"],
+    },
+    {
+      // The coverage provider must match the vitest it plugs into.
+      description: "Bump vitest and its coverage provider together",
+      groupName: "vitest",
+      matchManagers: ["npm"],
+      matchPackageNames: ["vitest", "@vitest/coverage-v8"],
+    },
+
+    // ---- Keep every in-repo pin of the ToolR release in lockstep ----
+    {
+      // `tools/pyproject.toml` / `tools/uv.lock`: the `toolr-py` floor driving
+      // the tools venv (pep621 manager). A bare name yields no update, hence the
+      // `>=` floor. `update-lockfile` keeps the floor and bumps only the lock.
+      // The same `groupName` as the rule below means one PR across both. The
+      // schedule override lands the bump on the next Renovate run after a
+      // release publishes, not the following Monday.
+      description: "Track the toolr-py release in the tools venv ASAP",
+      groupName: "toolr release",
+      matchManagers: ["pep621"],
+      matchFileNames: ["tools/pyproject.toml", "tools/uv.lock"],
+      matchPackageNames: ["toolr-py"],
+      rangeStrategy: "update-lockfile",
+      schedule: ["at any time"],
+      recreateWhen: "always",
+    },
+    {
+      // Same groupName as above keeps this in the same PR as the toolr-py
+      // lock bump; it is its own rule because the manager set differs.
+      description: "Track the toolr release in mise / GH Actions ASAP",
+      groupName: "toolr release",
+      matchManagers: ["mise", "github-actions", "custom.regex"],
+      matchFileNames: ["mise.toml", ".github/env", ".github/**"],
+      matchPackageNames: ["aqua:s0undt3ch/ToolR", "s0undt3ch/ToolR"],
+      schedule: ["at any time"],
+      // If a PR for this bump is open and a *further* release lands before it
+      // merges, update the PR to the newest version rather than leave it stale.
+      recreateWhen: "always",
+    },
+  ],
+}

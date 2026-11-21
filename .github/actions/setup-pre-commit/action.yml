@@ -1,0 +1,81 @@
+name: setup-pre-commit
+description: Install prek (and its Rust prerequisites) via mise, then prime the prek hook cache.
+
+inputs:
+  cache-seed:
+    description: Cache seed to use for prek
+    required: true
+    default: prek-action
+  mise-version:
+    description: >-
+      Version of mise to install via jdx/mise-action. Callers should pass the
+      `MISE_VERSION` env var from the top-level workflow so every job uses the
+      same pinned mise build (and shares the matching mise-install cache).
+    required: true
+
+outputs:
+  prek-version:
+    description: Prek version installed
+    value: ${{ steps.prek-version.outputs.prek-version }}
+  prek-home:
+    description: Prek home directory
+    value: ${{ steps.setup-prek-home.outputs.prek-home }}
+
+runs:
+  using: composite
+
+  steps:
+
+    - name: Set up mise
+      uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+      with:
+        version: ${{ inputs.mise-version }}
+        cache: true
+        cache_key_prefix: mise|${{ inputs.cache-seed }}|${{ inputs.mise-version }}|${{ runner.os }}|${{ runner.arch }}|pre-commit
+
+    # The `clippy` pre-commit hook runs `cargo clippy`, which needs the
+    # `clippy` rustup component on the mise-pinned toolchain. mise declares it
+    # in `mise.toml` but only installs components when it actually installs the
+    # toolchain: on a mise-cache hit it short-circuits ("all tools are
+    # installed") and `~/.rustup` (outside mise's cached scope) may lack it, so
+    # the hook fails with `'cargo-clippy' is not installed`. `rustup component
+    # add` is idempotent and targets the active (mise-exported
+    # `RUSTUP_TOOLCHAIN`) toolchain, so it follows the pin with no version
+    # hardcoded.
+    - name: Ensure rust components (clippy, rustfmt)
+      shell: bash
+      run: rustup component add clippy rustfmt
+
+    - name: Get prek version
+      id: prek-version
+      shell: bash
+      run: |
+        PREK_VERSION=$(prek --version | awk '{print $2}')
+        echo "PREK_VERSION=$PREK_VERSION"
+        echo "prek-version=$PREK_VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Setup prek home
+      shell: bash
+      id: setup-prek-home
+      run: |
+        PREK_HOME=${{ github.workspace }}/.cache/prek
+        echo "prek-home=${PREK_HOME}" >> "$GITHUB_OUTPUT"
+        echo "PREK_HOME=${PREK_HOME}" >> "$GITHUB_ENV"
+        echo "PREK_COLOR=always" >> "$GITHUB_ENV"
+
+    - name: Set up prek hooks cache
+      id: cache-prek-hooks
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.setup-prek-home.outputs.prek-home }}
+        key: |-
+          prek-home|${{ inputs.cache-seed }}|${{ runner.os }}|${{ runner.arch }}|${{
+            steps.prek-version.outputs.prek-version }}|${{
+            hashFiles(format('{0}/**/.pre-commit-config.yaml', github.workspace))
+          }}
+
+    - name: Install prek hooks
+      shell: bash
+      if: ${{ steps.cache-prek-hooks.outputs.cache-hit != 'true' }}
+      run: |
+        prek install --install-hooks

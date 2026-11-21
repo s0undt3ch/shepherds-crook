@@ -61,3 +61,34 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      # Hooks backed by toolr commands in tools/. They need the `toolr` binary
+      # (pinned in mise.toml; Setup ToolR provides it in CI).
+      - id: check-gate-needs
+        name: Keep pipeline gate jobs needing every other job
+        # Auto-fix style: the command rewrites each gate's wiring in place; prek sees the
+        # modified workflow and fails the commit until the fresh file is staged.
+        entry: toolr pre-commit check-gate-needs
+        language: system
+        pass_filenames: false
+        files: >
+          (?x)^(
+            \.github/workflows/.*\.yml$|
+            tools/precommit/(workflows|_common)\.py$
+          )$
+
+      - id: private-words
+        name: Keep private words out of the tracked tree
+        entry: toolr pre-commit private-words
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # The mod's type-check needs Claude Code's own declaration file, which is
+      # not vendored (licence), so CI skips this hook (`SKIP: tsc`).
+      - id: tsc
+        name: tsc (the mod)
+        entry: npm run typecheck
+        language: system
+        pass_filenames: false
+        files: ^plugin/.*\.ts$

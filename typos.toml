@@ -1,0 +1,14 @@
+# Typo-checker configuration.
+#
+# Commit SHAs collide with typos' dictionary (e.g. `e979ba0` -> `ba` ->
+# `by`/`be`). Rather than skipping whole generated files, ignore the
+# SHA-shaped hex structurally so real typos in those files are still caught.
+# (Commit *messages* are spell-checked at the source by the commit-msg typos hook.)
+[default]
+extend-ignore-re = [
+    # full 40-char SHAs: action pins, and git revert / cherry-pick boilerplate
+    # in commit messages.
+    '\b[0-9a-f]{40}\b',
+    # short SHAs the changelog renders in backticks, e.g. `91f45b8`.
+    '`[0-9a-f]{7,40}`',
+]

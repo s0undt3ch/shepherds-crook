@@ -56,18 +56,24 @@ pub fn plan(env: Env, host: &Host) -> Result<Outcome, Error> {
         return Ok(Outcome::Say("nothing waiting".into()));
     };
     let name = format!("{}/{}", t.slug, t.child);
+    let mut notes = Vec::new();
     if herdr::present(env)
         && let Some(pane) = t.pid.and_then(|pid| herdr::pane_of_pid(env, pid))
     {
-        herdr::focus(env, &pane)?;
-        return Ok(Outcome::Say(format!("{name}: focused pane {pane}")));
+        match herdr::focus(env, &pane) {
+            Ok(()) => return Ok(Outcome::Say(format!("{name}: focused pane {pane}"))),
+            Err(e) => notes.push(format!(
+                "crook: could not focus pane {pane}: {e}; attaching instead"
+            )),
+        }
     }
+    notes.push(format!("crook: attaching to {name}"));
     Ok(Outcome::Exec(Plan {
         program: launch::claude_program(env)?,
         args: vec!["attach".into(), t.session.into()],
         env: host.base_env.clone(),
         cwd: PathBuf::from("."),
-        notes: vec![format!("crook: attaching to {name}")],
+        notes,
     }))
 }
 
@@ -211,6 +217,30 @@ mod tests {
                 !herdr_calls(&fx)
                     .iter()
                     .any(|c| c.starts_with("agent focus"))
+            );
+
+            // The pane is found but focus fails: attach, with the reason as a note.
+            let fx = world();
+            std::fs::write(
+                fx.tmp.path().join("bin/herdr"),
+                std::fs::read_to_string(fx.tmp.path().join("bin/herdr"))
+                    .unwrap()
+                    .replace(
+                        "*) printf",
+                        "'agent focus'*) echo 'no such agent' >&2; exit 1;;\n*) printf",
+                    ),
+            )
+            .unwrap();
+            let Outcome::Exec(p) = next(&fx, true, vec![agent(4242)]) else {
+                panic!("expected attach after a failed focus");
+            };
+            assert_eq!(p.args, ["attach", "sid-c1"]);
+            assert!(
+                p.notes
+                    .iter()
+                    .any(|n| n.contains("could not focus pane w1:p2")),
+                "{:?}",
+                p.notes
             );
 
             // Outside herdr, herdr is not asked at all.

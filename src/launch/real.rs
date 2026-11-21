@@ -228,11 +228,10 @@ impl Launcher for RealLauncher<'_> {
                 .pane
                 .as_ref()
                 .ok_or_else(|| Error::Refused("a herdr start needs a pane launch".into()))?;
-            let ws = (self.env)("HERDR_WORKSPACE_ID").unwrap_or_default();
             let address = format!("{}/{}", p.slug, p.child);
             return herdr::spawn_pane(
                 self.env,
-                &ws,
+                &p.slug,
                 &cmd.cwd,
                 &[p.crook_bin.clone().into(), "launch".into(), address.into()],
             );
@@ -540,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn herdr_start_splits_a_pane_that_runs_crook_launch() {
+    fn herdr_start_goes_through_the_project_workspace() {
         let p = Panes::new();
         let env = p.env(true);
         let l = RealLauncher::new(&env);
@@ -556,11 +555,15 @@ mod tests {
             }),
         };
         l.check(Mode::Herdr).unwrap();
-        // The stand-in answers the split without a pane id, so the start stops there.
+        // The stand-in lists no workspaces and answers the create without ids,
+        // so the start stops there, having asked for the project's workspace.
         assert!(l.start(Mode::Herdr, &cmd).is_err());
         assert_eq!(
             p.calls(),
-            ["pane split --current --direction right --cwd /r/.worktrees/demo/c1 --no-focus"]
+            [
+                "workspace list",
+                "workspace create --label crook-demo --cwd /r/.worktrees/demo/c1 --no-focus"
+            ]
         );
         // Without a pane launch there is nothing to type.
         let bare = StartCmd { pane: None, ..cmd };

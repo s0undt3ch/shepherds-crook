@@ -51,8 +51,15 @@ fn str_at<'a>(v: &'a Value, pointer: &str) -> Result<&'a str, Error> {
     })
 }
 
-/// The id of the workspace labelled `crook-<slug>`, made when none exists.
-pub fn workspace(env: Env, slug: &str) -> Result<String, Error> {
+/// A project's workspace. `root_pane` is the empty pane a new workspace
+/// starts with, so the first child can use it; an existing one has none to give.
+pub struct Workspace {
+    pub id: String,
+    pub root_pane: Option<String>,
+}
+
+/// The workspace labelled `crook-<slug>`, made in `cwd` without focus when none exists.
+pub fn workspace(env: Env, slug: &str, cwd: &Path) -> Result<Workspace, Error> {
     let label = format!("crook-{slug}");
     let list = json(env, ["workspace", "list"])?;
     let found = list
@@ -63,13 +70,27 @@ pub fn workspace(env: Env, slug: &str) -> Result<String, Error> {
         .find(|w| w["label"].as_str() == Some(&label))
         .and_then(|w| w["workspace_id"].as_str());
     if let Some(id) = found {
-        return Ok(id.to_string());
+        return Ok(Workspace {
+            id: id.to_string(),
+            root_pane: None,
+        });
     }
     let made = json(
         env,
-        ["workspace", "create", "--label", &label, "--no-focus"],
+        [
+            OsStr::new("workspace"),
+            OsStr::new("create"),
+            OsStr::new("--label"),
+            OsStr::new(&label),
+            OsStr::new("--cwd"),
+            cwd.as_os_str(),
+            OsStr::new("--no-focus"),
+        ],
     )?;
-    Ok(str_at(&made, "/result/workspace/workspace_id")?.to_string())
+    Ok(Workspace {
+        id: str_at(&made, "/result/workspace/workspace_id")?.to_string(),
+        root_pane: Some(str_at(&made, "/result/root_pane/pane_id")?.to_string()),
+    })
 }
 
 /// `word` as one shell word for both `sh` and `fish`: bare when it is plain,
@@ -115,26 +136,33 @@ fn pane_command(env: Env, command: &[OsString]) -> Result<String, Error> {
     Ok(words.join(" "))
 }
 
-/// Splits a pane beside the calling one, in `cwd` and without taking focus,
-/// and types `command` into it. `--current` puts it in the workspace of the
-/// orchestrator that spawned it, so `_ws` is not used to place it. A pane left
-/// empty by a failed `run` is closed.
-pub fn spawn_pane(env: Env, _ws: &str, cwd: &Path, command: &[OsString]) -> Result<(), Error> {
+/// Types `command` into a pane of the project's workspace, in `cwd` and without
+/// taking focus: the root pane of a workspace just made, else a split of one of
+/// its panes. A pane left idle by a failed `run` is closed.
+pub fn spawn_pane(env: Env, slug: &str, cwd: &Path, command: &[OsString]) -> Result<(), Error> {
     let line = pane_command(env, command)?;
-    let made = json(
-        env,
-        [
-            OsStr::new("pane"),
-            OsStr::new("split"),
-            OsStr::new("--current"),
-            OsStr::new("--direction"),
-            OsStr::new("right"),
-            OsStr::new("--cwd"),
-            cwd.as_os_str(),
-            OsStr::new("--no-focus"),
-        ],
-    )?;
-    let pane = str_at(&made, "/result/pane/pane_id")?.to_string();
+    let ws = workspace(env, slug, cwd)?;
+    let pane = match ws.root_pane {
+        Some(root) => root,
+        None => {
+            let panes = json(env, ["pane", "list", "--workspace", ws.id.as_str()])?;
+            let anchor = str_at(&panes, "/result/panes/0/pane_id")?.to_string();
+            let made = json(
+                env,
+                [
+                    OsStr::new("pane"),
+                    OsStr::new("split"),
+                    OsStr::new(&anchor),
+                    OsStr::new("--direction"),
+                    OsStr::new("right"),
+                    OsStr::new("--cwd"),
+                    cwd.as_os_str(),
+                    OsStr::new("--no-focus"),
+                ],
+            )?;
+            str_at(&made, "/result/pane/pane_id")?.to_string()
+        }
+    };
     if let Err(e) = call(env, ["pane", "run", pane.as_str(), line.as_str()]) {
         let _ = close(env, &pane);
         return Err(e);
@@ -284,9 +312,25 @@ mod tests {
         }
     }
 
+    const HAS_WS: (&str, &str, i32) = (
+        "workspace list",
+        r#"{"result":{"workspaces":[{"label":"other","workspace_id":"w1"},{"label":"crook-demo","workspace_id":"w7"}]}}"#,
+        0,
+    );
+    const WS_PANES: (&str, &str, i32) = (
+        "pane list --workspace w7",
+        r#"{"result":{"panes":[{"pane_id":"w7:p1"}]}}"#,
+        0,
+    );
     const SPLIT: (&str, &str, i32) = (
         "pane split",
-        r#"{"result":{"pane":{"pane_id":"w1:p9"},"type":"pane_info"}}"#,
+        r#"{"result":{"pane":{"pane_id":"w7:p9"},"type":"pane_info"}}"#,
+        0,
+    );
+    const NO_WS: (&str, &str, i32) = ("workspace list", r#"{"result":{"workspaces":[]}}"#, 0);
+    const MADE_WS: (&str, &str, i32) = (
+        "workspace create",
+        r#"{"result":{"workspace":{"workspace_id":"w9"},"root_pane":{"pane_id":"w9:p1"}}}"#,
         0,
     );
 
@@ -294,13 +338,16 @@ mod tests {
         a.iter().map(OsString::from).collect()
     }
 
+    const LAUNCH: &str = "env -u CLAUDECODE -u CROOK_PROJECT -u CROOK_ROLE -u CROOK_CHILD";
+
     #[test]
     fn spawn_pane_argv() {
-        let f = Fake::new(&[SPLIT]);
+        // The project's workspace exists: split one of its panes, no focus.
+        let f = Fake::new(&[HAS_WS, WS_PANES, SPLIT]);
         let env = f.env(&[]);
         spawn_pane(
             &env,
-            "w1",
+            "demo",
             Path::new("/r/.worktrees/demo/c1"),
             &os(&["/abs/crook", "launch", "demo/c1"]),
         )
@@ -308,16 +355,41 @@ mod tests {
         assert_eq!(
             f.calls(),
             [
-                "pane split --current --direction right --cwd /r/.worktrees/demo/c1 --no-focus",
-                "pane run w1:p9 env -u CLAUDECODE -u CROOK_PROJECT -u CROOK_ROLE -u CROOK_CHILD \
-                 '/abs/crook' launch 'demo/c1'",
+                "workspace list".to_string(),
+                "pane list --workspace w7".to_string(),
+                "pane split w7:p1 --direction right --cwd /r/.worktrees/demo/c1 --no-focus"
+                    .to_string(),
+                format!("pane run w7:p9 {LAUNCH} '/abs/crook' launch 'demo/c1'"),
             ]
         );
     }
 
     #[test]
+    fn spawn_pane_uses_the_root_pane_of_a_new_workspace() {
+        let f = Fake::new(&[NO_WS, MADE_WS]);
+        let env = f.env(&[]);
+        spawn_pane(
+            &env,
+            "demo",
+            Path::new("/r/.worktrees/demo/c1"),
+            &os(&["/abs/crook", "launch", "demo/c1"]),
+        )
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            [
+                "workspace list".to_string(),
+                "workspace create --label crook-demo --cwd /r/.worktrees/demo/c1 --no-focus"
+                    .to_string(),
+                format!("pane run w9:p1 {LAUNCH} '/abs/crook' launch 'demo/c1'"),
+            ],
+            "no split: the new workspace's empty root pane runs the child"
+        );
+    }
+
+    #[test]
     fn spawn_pane_carries_only_the_xdg_paths() {
-        let f = Fake::new(&[SPLIT]);
+        let f = Fake::new(&[HAS_WS, WS_PANES, SPLIT]);
         let env = f.env(&[
             ("XDG_DATA_HOME", "/d ata"),
             ("XDG_STATE_HOME", "/s'tate"),
@@ -326,71 +398,68 @@ mod tests {
         ]);
         spawn_pane(
             &env,
-            "w1",
+            "demo",
             Path::new("/w"),
             &os(&["/abs/crook", "launch", "demo/c1"]),
         )
         .unwrap();
-        let run = f.calls().remove(1);
+        let run = f.calls().pop().unwrap();
         assert_eq!(
             run,
-            "pane run w1:p9 env -u CLAUDECODE -u CROOK_PROJECT -u CROOK_ROLE -u CROOK_CHILD \
-             XDG_STATE_HOME='/s'\\''tate' XDG_DATA_HOME='/d ata' '/abs/crook' launch 'demo/c1'"
+            format!(
+                "pane run w7:p9 {LAUNCH} XDG_STATE_HOME='/s'\\''tate' XDG_DATA_HOME='/d ata' \
+                 '/abs/crook' launch 'demo/c1'"
+            )
         );
         assert!(!run.contains("sk-secret") && !run.contains("orchestrator"));
     }
 
     #[test]
     fn spawn_pane_refuses_what_fish_would_read_differently() {
-        let f = Fake::new(&[SPLIT]);
+        let f = Fake::new(&[HAS_WS, WS_PANES, SPLIT]);
         for bad in ["/a\\b/crook", "/a\nb/crook", "/a\u{1b}b"] {
             let env = f.env(&[]);
-            let e =
-                spawn_pane(&env, "w1", Path::new("/w"), &os(&[bad, "launch", "d/c"])).unwrap_err();
+            let e = spawn_pane(&env, "demo", Path::new("/w"), &os(&[bad, "launch", "d/c"]))
+                .unwrap_err();
             assert!(matches!(e, Error::Refused(_)), "{bad:?}: {e}");
         }
         let env = f.env(&[("XDG_STATE_HOME", "/s\\x")]);
-        assert!(spawn_pane(&env, "w1", Path::new("/w"), &os(&["/c"])).is_err());
-        assert!(f.calls().is_empty(), "nothing was split: {:?}", f.calls());
+        assert!(spawn_pane(&env, "demo", Path::new("/w"), &os(&["/c"])).is_err());
+        assert!(f.calls().is_empty(), "nothing was made: {:?}", f.calls());
     }
 
     #[test]
     fn spawn_pane_closes_the_pane_when_run_fails() {
-        let f = Fake::new(&[SPLIT, ("pane run", "", 1)]);
+        let f = Fake::new(&[HAS_WS, WS_PANES, SPLIT, ("pane run", "", 1)]);
         let env = f.env(&[]);
-        assert!(spawn_pane(&env, "w1", Path::new("/w"), &os(&["/c", "launch", "d/c"])).is_err());
+        assert!(spawn_pane(&env, "demo", Path::new("/w"), &os(&["/c", "launch", "d/c"])).is_err());
         assert_eq!(
             f.calls().last().map(String::as_str),
-            Some("pane close w1:p9")
+            Some("pane close w7:p9")
         );
     }
 
     #[test]
     fn spawn_pane_without_herdr_on_path_is_refused() {
         let env = |k: &str| (k == "PATH").then(|| "/nonexistent".to_string());
-        let e = spawn_pane(&env, "w", Path::new("/w"), &os(&["/c"])).unwrap_err();
+        let e = spawn_pane(&env, "demo", Path::new("/w"), &os(&["/c"])).unwrap_err();
         assert!(e.to_string().contains("herdr not found"), "{e}");
     }
 
     #[test]
     fn workspace_finds_or_creates() {
-        let list = r#"{"result":{"workspaces":[{"label":"other","workspace_id":"w1"},{"label":"crook-demo","workspace_id":"w7"}]}}"#;
-        let f = Fake::new(&[("workspace list", list, 0)]);
+        let f = Fake::new(&[HAS_WS]);
         let env = f.env(&[]);
-        assert_eq!(workspace(&env, "demo").unwrap(), "w7");
+        let w = workspace(&env, "demo", Path::new("/w")).unwrap();
+        assert_eq!((w.id.as_str(), w.root_pane), ("w7", None));
         assert_eq!(f.calls(), ["workspace list"]);
 
-        let empty = r#"{"result":{"workspaces":[]}}"#;
-        let made = r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#;
-        let f = Fake::new(&[("workspace list", empty, 0), ("workspace create", made, 0)]);
+        let f = Fake::new(&[NO_WS, MADE_WS]);
         let env = f.env(&[]);
-        assert_eq!(workspace(&env, "demo").unwrap(), "w9");
+        let w = workspace(&env, "demo", Path::new("/w")).unwrap();
         assert_eq!(
-            f.calls(),
-            [
-                "workspace list",
-                "workspace create --label crook-demo --no-focus"
-            ]
+            (w.id.as_str(), w.root_pane.as_deref()),
+            ("w9", Some("w9:p1"))
         );
     }
 

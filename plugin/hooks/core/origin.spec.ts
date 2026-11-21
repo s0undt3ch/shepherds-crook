@@ -62,14 +62,22 @@ describe('userTurn', () => {
     expect(o.userTurn()).toBe(true)
   })
 
-  it('keeps the order when turn.start carries no matching text', () => {
+  it('treats unmatched text as a machine turn and leaves the queue alone', () => {
     const o = createOrigin()
-    o.noteOwnSubmit()
-    o.noteOrigin('composer', false)
-    o.turnStart('rewritten 1')
+    o.noteOrigin('composer', false, 'typed')
+    o.turnStart('crook: wake')
     expect(o.userTurn()).toBe(false)
-    o.turnStart('rewritten 2')
+    expect(o.pending()).toBe(1)
+    o.turnStart('typed')
     expect(o.userTurn()).toBe(true)
+  })
+
+  it('takes the newest entry when texts repeat', () => {
+    const o = createOrigin()
+    o.noteOrigin('composer', false, 'continue')
+    o.noteOrigin('scheduled-trigger', false, 'continue')
+    o.turnStart('continue')
+    expect(o.userTurn()).toBe(false)
   })
 
   it('does not queue a slash command, which starts no turn', () => {

@@ -13,9 +13,8 @@ interface Entry {
  * Tracks whether the turn now running began with a prompt the user typed.
  *
  * `turn.start` carries the prompt's text but not its origin, so each submitted prompt's origin is
- * queued and the turn that starts takes its entry: by text when one matches (dropping older
- * entries, whose turn never started), else the oldest. A turn with no text, or an empty queue, is
- * a machine turn.
+ * queued and the turn that starts takes the newest entry with its text (dropping older entries,
+ * whose turn never started). A turn matching no entry, or with no text, is a machine turn.
  */
 export function createOrigin() {
   let queue: Entry[] = []
@@ -41,9 +40,10 @@ export function createOrigin() {
         latched = false
         return
       }
-      const at = queue.findIndex(en => en.text === text)
-      const entry = at >= 0 ? queue.splice(0, at + 1).at(-1) : queue.shift()
-      latched = entry?.user ?? false
+      // The newest match wins, so a stale entry with the same text cannot. No match fails closed: the
+      // mod's own wake-ups are never queued by the hook, and must not take a user's entry.
+      const at = queue.findLastIndex(en => en.text === text)
+      latched = at >= 0 ? (queue.splice(0, at + 1).at(-1)?.user ?? false) : false
     },
     userTurn: (): boolean => latched,
     pending: (): number => queue.length,

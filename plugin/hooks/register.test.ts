@@ -139,7 +139,7 @@ test('userTurn tracking: a wake-up then a composer prompt gives a machine turn, 
     await $.tool.run({ tool: 'mcp__crook__status', tool_use_id: 't' })
     return (w.runs.filter(x => x.argv[2] === 'status').at(-1)?.stdin as { user_turn: boolean }).user_turn
   }
-  await $.prompt.submit({ text: 'crook: wake', origin: { kind: 'plugin', name: 'crook' }, wait: false })
+  // The mod's own submit is not heard by its own prompt.submit hook, so the wake-up is never queued.
   await $.prompt.submit({ text: 'typed', origin: { kind: 'composer' }, wait: false })
   await $.turn.start({ text: 'crook: wake', turnId: 'a' })
   expect(await asked()).toBe(false)

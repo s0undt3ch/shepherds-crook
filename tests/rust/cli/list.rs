@@ -1,14 +1,15 @@
-mod common;
-
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
 
-use common::crook;
+use crate::common::crook;
 use crook::crew::{self, Child};
 use crook::store::{Mode, Store, Touch};
 
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/agents.json");
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/rust/fixtures/agents.json"
+);
 
 fn env_for(xdg: &Path) -> impl Fn(&str) -> Option<String> + use<> {
     let x = xdg.display().to_string();

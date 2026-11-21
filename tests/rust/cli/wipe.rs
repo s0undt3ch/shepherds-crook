@@ -1,12 +1,10 @@
 //! `crook wipe` as the binary runs it: the gate, and a project with nothing live.
 
-mod common;
-
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
 
-use common::crook;
+use crate::common::crook;
 
 fn init(tmp: &Path) {
     let o = run(tmp, &["init", "demo"], &[]);

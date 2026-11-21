@@ -58,14 +58,22 @@ pub fn run(
     let (record, orchestrator, children, rows) = store.read(|c| {
         // An archived child may still run: its stop may not have confirmed it gone.
         let mut st = c.prepare(
-            "SELECT child, session_id FROM children
-             UNION SELECT child, session_id FROM forks
-             UNION SELECT child, session_id FROM child_sessions
-             ORDER BY 1, 2",
+            "SELECT child, session_id, 1 FROM children
+             UNION SELECT child, session_id, 0 FROM forks
+             UNION SELECT child, session_id, 0 FROM child_sessions
+             ORDER BY 1, 2, 3 DESC",
         )?;
-        let children = st
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        let mut children = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)? == 1,
+                ))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
+        // The current id is also a held one: keep its `children` row only.
+        children.dedup_by(|b, a| a.0 == b.0 && a.1 == b.1);
         Ok((
             project::get(c)?,
             crew::orchestrator(c)?.0,
@@ -86,11 +94,13 @@ pub fn run(
     {
         live.push(format!("the orchestrator (session {sid})"));
     }
-    for (child, sid) in &children {
+    for (child, sid, current) in &children {
         if agents.iter().any(|a| &a.session_id == sid) {
-            live.push(format!(
-                "child {child} (session {sid}): run crook stop {slug}/{child}"
-            ));
+            live.push(if *current {
+                format!("child {child} (session {sid}): run crook stop {slug}/{child}")
+            } else {
+                format!("child {child}'s fork or earlier session {sid}: stop that session itself")
+            });
         }
     }
     let mut dirs: Vec<&Path> = rows.iter().map(|r| Path::new(&r.path)).collect();
@@ -500,6 +510,13 @@ mod tests {
             };
             let e = w.wipe(false, &run).unwrap_err().to_string();
             assert!(e.contains(sid) && e.contains("live"), "{sid}: {e}");
+            let remedy = if sid == "sid-c2" {
+                "crook stop demo/c2"
+            } else {
+                "stop that session itself"
+            };
+            assert!(e.contains(remedy), "{sid}: {e}");
+            assert_eq!(e.matches(sid).count(), 1, "named once: {e}");
             w.assert_untouched(&before, &run);
         }
     }

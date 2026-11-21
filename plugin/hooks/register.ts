@@ -1,7 +1,8 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, PromptSubmitInput, PromptSubmitResult, Register } from 'claude-code'
 
 import { ports } from './adapter.ts'
 import { noteOrigin, turnStart, userTurn } from './core/origin.ts'
+import { filter, rescue } from './core/park.ts'
 import { TOOLS, findTool, runTool, toolsFor } from './core/tools.ts'
 import { onTurn, startChildWatcher } from './core/watcher.ts'
 
@@ -51,6 +52,19 @@ async function adopt($: EngineInterface, origin: string): Promise<string> {
   return r.ok ? 'crook: this session is now the child' : r.error ?? 'crook: adopt failed'
 }
 
+// The launcher sets the role in the environment, so it is known before `session.start`'s ping returns.
+async function isChild($: EngineInterface): Promise<boolean> {
+  return (await $.env.get('CROOK_ROLE').catch(() => undefined)) === 'child'
+}
+
+async function parkFilter($: EngineInterface, e: PromptSubmitInput, next: (e: PromptSubmitInput) => Promise<PromptSubmitResult>) {
+  return (await isChild($)) ? filter(ports($), currentId($), e, next) : next(e)
+}
+
+async function parkRescue($: EngineInterface, e: PromptSubmitInput, next: (e: PromptSubmitInput) => Promise<PromptSubmitResult>, called: boolean) {
+  return called || !(await isChild($)) ? next(e) : rescue(ports($), currentId($), e, next, false)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const p = ports($)
@@ -70,10 +84,11 @@ export const register: Register = on => {
   })
 
   // The origin is queued before `next`, which resolves only once the turn has started.
+  // In a child the park filter then runs; `noteOrigin` stays first and synchronous to keep queue order.
   on('prompt.submit', ($, e, next) => {
     noteOrigin(e.origin.kind, e.command !== undefined, e.text)
-    return next(e)
-  })
+    return parkFilter($, e, next)
+  }).catch(($, e, next) => parkRescue($, e, next, next.called))
 
   on('turn.start', ($, e, next) => {
     if (e.agentId === undefined) {

@@ -13,14 +13,27 @@ function world(
   const registered: { name: string; isDeferred?: unknown; inputSchema: unknown }[] = []
   const commands: string[] = []
   const submits: { text: string; origin: unknown }[] = []
-  const session = { id: 's1' }
+  const statuses: (string | undefined)[] = []
+  // `order` interleaves verb runs and prompts entering; `failIds` makes that many `session.id` reads throw.
+  const order: string[] = []
+  const session = { id: 's1', failIds: 0 }
   mock.env(on, env)
-  on('session.id', () => ({ value: session.id }))
-  on('ui.status', () => ({ value: undefined }))
+  on('session.id', () => {
+    if (session.failIds > 0) {
+      session.failIds--
+      throw new Error('id unavailable')
+    }
+    return { value: session.id }
+  })
+  on('ui.status', (_, e) => {
+    statuses.push(e.text)
+    return { value: undefined }
+  })
   on('session.start', () => ({ cwd: '/w' }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('prompt.submit', (_, e) => {
     submits.push({ text: e.text, origin: e.origin })
+    order.push(`enter:${e.text}`)
     return { text: e.text }
   })
   on('tool.register', (_, e) => {
@@ -35,9 +48,10 @@ function world(
     const stdin = JSON.parse(String(e.init?.stdin ?? '{}')) as Record<string, unknown>
     runs.push({ argv: e.argv, stdin })
     const verb = e.argv[2] ?? ''
+    order.push(`run:${verb}`)
     return { value: { exitCode: 0, stdout: JSON.stringify(reply(verb, stdin)), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { runs, registered, commands, submits, session }
+  return { runs, registered, commands, submits, session, statuses, order }
 }
 
 const PRES = { isFullscreen: false, columns: 80 }
@@ -237,4 +251,68 @@ test('the child watcher reads with the new session id after /clear', async ($, o
   await clock.advance(2000)
   expect(w.runs.filter(x => x.argv[2] === 'snapshot').at(-1)?.stdin).toEqual({ session_id: 's2', user_turn: false })
   expect(w.submits.map(x => x.text)).toEqual(['crook: you have tasks waiting. Call take_task.'])
+})
+
+test('park filter: a composer prompt in a child runs lift before it enters', async ($, on) => {
+  const w = world(on, CHILD, ping('child'))
+  await $.session.start(START)
+  w.order.length = 0
+  await $.prompt.submit({ text: 'postgres', origin: { kind: 'composer' }, wait: false })
+  expect(w.order).toEqual(['run:lift', 'enter:postgres'])
+  expect(w.runs.find(x => x.argv[2] === 'lift')?.stdin).toEqual({ session_id: 's1', user_turn: true })
+})
+
+test('park filter: a bridge prompt in a child runs lift', async ($, on) => {
+  const w = world(on, CHILD, ping('child'))
+  await $.session.start(START)
+  w.order.length = 0
+  await $.prompt.submit({ text: 'yes', origin: { kind: 'bridge' }, wait: false })
+  expect(w.order).toEqual(['run:lift', 'enter:yes'])
+})
+
+test('park filter: machine prompts and slash commands in a child pass without lift', async ($, on) => {
+  const w = world(on, CHILD, ping('child'))
+  await $.session.start(START)
+  await $.prompt.submit({ text: 'done', origin: { kind: 'task-notification' }, wait: false })
+  await $.prompt.submit({ text: 'report', origin: { kind: 'peer' }, wait: false })
+  await $.prompt.submit({ text: 'tick', origin: { kind: 'scheduled-trigger' }, wait: false })
+  await $.prompt.submit({ text: '/compact', command: { name: 'compact', args: '' }, origin: { kind: 'composer' }, wait: false })
+  expect(w.runs.some(x => x.argv[2] === 'lift')).toBe(false)
+  expect(w.submits.map(x => x.text)).toEqual(['done', 'report', 'tick', '/compact'])
+})
+
+test('park filter: /loop in a child is dropped with a status line', async ($, on) => {
+  const w = world(on, CHILD, ping('child'))
+  await $.session.start(START)
+  const r = await $.prompt.submit({ text: '/loop 5m /x', command: { name: 'loop', args: '5m /x' }, origin: { kind: 'composer' }, wait: false })
+  expect(r).toEqual({ drop: 'crook: /loop is not allowed in a child' })
+  expect(w.statuses.at(-1)).toBe('crook: /loop is not allowed in a child')
+  expect(w.submits).toEqual([])
+  expect(w.runs.some(x => x.argv[2] === 'lift')).toBe(false)
+})
+
+test('park filter: a failed lift shows on the status line and the prompt still enters', async ($, on) => {
+  const w = world(on, CHILD, verb => (verb === 'lift' ? { ok: false, error: 'refused' } : { ok: true, role: 'child' }))
+  await $.session.start(START)
+  await $.prompt.submit({ text: 'yes', origin: { kind: 'composer' }, wait: false })
+  expect(w.statuses.at(-1)).toBe('crook: park lift failed')
+  expect(w.submits.map(x => x.text)).toEqual(['yes'])
+})
+
+test('park filter: when the filter throws, its catch still lifts and lets a composer prompt in', async ($, on) => {
+  const w = world(on, CHILD, ping('child'))
+  await $.session.start(START)
+  w.session.failIds = 1
+  w.order.length = 0
+  await $.prompt.submit({ text: 'answer', origin: { kind: 'composer' }, wait: false })
+  expect(w.order).toEqual(['run:lift', 'enter:answer'])
+})
+
+test('park filter: an orchestrator composer prompt runs no lift', async ($, on) => {
+  const w = world(on, ORCH, ping('orchestrator'))
+  await $.session.start(START)
+  await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' }, wait: false })
+  await $.prompt.submit({ text: '/loop', command: { name: 'loop', args: '' }, origin: { kind: 'composer' }, wait: false })
+  expect(w.runs.some(x => x.argv[2] === 'lift')).toBe(false)
+  expect(w.submits.map(x => x.text)).toEqual(['hello', '/loop'])
 })

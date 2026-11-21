@@ -16,7 +16,7 @@ use crate::launch::child::{
 };
 use crate::project::{self, ItemKind};
 use crate::store::{Mode, SCHEMA_VERSION, Store, Touch};
-use crate::{Env, Error};
+use crate::{Env, Error, herdr};
 
 #[derive(Debug, Deserialize)]
 pub struct Request {
@@ -176,6 +176,17 @@ fn child_write<T: Serialize>(
     Ok(ok(out))
 }
 
+/// Raises a herdr notification for the child's write, once it has committed.
+/// A failure goes to stderr: stdout is the reply, and the write already stands.
+fn announce(env: Env, id: &Identity, what: &str) {
+    let (true, Some(child)) = (herdr::present(env), id.child.as_deref()) else {
+        return;
+    };
+    if let Err(e) = herdr::notify(env, &format!("crook: {} {what}", id.slug), child) {
+        let _ = writeln!(std::io::stderr(), "crook: herdr notification failed: {e}");
+    }
+}
+
 fn snapshot(env: Env, id: &Identity, req: &Request) -> Result<Value, Error> {
     let a: SnapshotArgs = args(req)?;
     let mut store = Store::open(env, &id.slug, Mode::ReadWrite)?;
@@ -283,14 +294,16 @@ fn dispatch(
         ),
         "need" => {
             let a: Need = args(req)?;
-            child_write(env, id, req, Touch::STATUS, true, |tx, child| {
+            let reply = child_write(env, id, req, Touch::STATUS, true, |tx, child| {
                 crew::need(tx, child, &a.question)?;
                 Ok(json!({}))
-            })
+            })?;
+            announce(env, id, "needs you");
+            Ok(reply)
         }
         "done" => {
             let a: Done = args(req)?;
-            child_write(
+            let reply = child_write(
                 env,
                 id,
                 req,
@@ -300,7 +313,9 @@ fn dispatch(
                     crew::done(tx, child, a.outcome, a.pr_url.as_deref())?;
                     Ok(json!({}))
                 },
-            )
+            )?;
+            announce(env, id, "is done");
+            Ok(reply)
         }
         "lift" => child_write(env, id, req, Touch::STATUS, true, |tx, child| {
             Ok(json!({ "lifted": crew::lift(tx, child)? }))

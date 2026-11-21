@@ -11,6 +11,44 @@ use super::address;
 
 const PROMPT: &str = include_str!("../../plugin/prompts/child.md");
 
+/// Refuses a child whose session runs: a live recorded pid, or a session or
+/// fork of it in `claude agents`. Without `claude agents`, a note says it
+/// could not look.
+pub(super) fn ensure_not_running(
+    store: &Store,
+    child: &str,
+    row: &crew::Resumable,
+    host: &Host,
+    notes: &mut Vec<String>,
+) -> Result<(), Error> {
+    if let Some(pid) = row.claude_pid.filter(|p| (host.live)(*p)) {
+        return Err(Error::Refused(format!(
+            "child {child} is already running (claude pid {pid})"
+        )));
+    }
+    match (host.agents)() {
+        Ok(agents) => {
+            let running = store.read(|c| {
+                for a in &agents {
+                    if a.session_id == row.session_id || crew::is_fork(c, child, &a.session_id)? {
+                        return Ok(Some(a.session_id.clone()));
+                    }
+                }
+                Ok(None)
+            })?;
+            if let Some(sid) = running {
+                return Err(Error::Refused(format!(
+                    "child {child} is already running (session {sid})"
+                )));
+            }
+        }
+        Err(e) => notes.push(format!(
+            "crook: warning: {e}; a running session of {child} would not have been noticed"
+        )),
+    }
+    Ok(())
+}
+
 /// The `claude` start for a child's current session, with the flags, environment
 /// and cwd it was spawned with. Refuses a child that is running: forgetting the
 /// recorded pid would lift the SessionStart guard that protects its row.
@@ -29,31 +67,7 @@ pub fn plan(env: Env, arg: &str, host: &Host) -> Result<Outcome, Error> {
             row.worktree
         )));
     }
-    if let Some(pid) = row.claude_pid.filter(|p| (host.live)(*p)) {
-        return Err(Error::Refused(format!(
-            "child {child} is already running (claude pid {pid})"
-        )));
-    }
-    match (host.agents)() {
-        Ok(agents) => {
-            let running = store.read(|c| {
-                for a in &agents {
-                    if a.session_id == row.session_id || crew::is_fork(c, &child, &a.session_id)? {
-                        return Ok(Some(a.session_id.clone()));
-                    }
-                }
-                Ok(None)
-            })?;
-            if let Some(sid) = running {
-                return Err(Error::Refused(format!(
-                    "child {child} is already running (session {sid})"
-                )));
-            }
-        }
-        Err(e) => notes.push(format!(
-            "crook: warning: {e}; a running session of {child} would not have been noticed"
-        )),
-    }
+    ensure_not_running(&store, &child, &row, host, &mut notes)?;
     store.write(Touch::CHILDREN, |tx| crew::clear_claude_pid(tx, &child))?;
 
     let prep = launch::prepare(env, &slug, Role::Child, &host.crook_bin)?;

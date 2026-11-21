@@ -15,13 +15,15 @@ fn env_for(xdg: &Path) -> impl Fn(&str) -> Option<String> + use<> {
     move |k: &str| (k == "XDG_STATE_HOME").then(|| x.clone())
 }
 
-/// A `claude` that prints the fixture, so no test runs the live command.
+/// A `claude` that prints the fixture, and `attach <id>` as the line `attach <id>`,
+/// so no test runs the live command.
 fn fake_bin(dir: &Path) {
     let bin = dir.join("claude");
     std::fs::write(
         &bin,
         format!(
-            "#!/bin/sh\n[ \"$1 $2\" = \"agents --json\" ] || exit 3\nexec /bin/cat {FIXTURE}\n"
+            "#!/bin/sh\n[ \"$1\" = attach ] && {{ echo \"attach $2\"; exit 0; }}\n\
+             [ \"$1 $2\" = \"agents --json\" ] || exit 3\nexec /bin/cat {FIXTURE}\n"
         ),
     )
     .unwrap();
@@ -287,13 +289,18 @@ fn next_prints_the_oldest_waiting_child() {
     .unwrap();
     let o = run(tmp.path(), &["next"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    assert_eq!(out(&o).trim(), "alpha/c2");
+    // Outside herdr, `next` runs `claude attach <session id>`.
+    assert_eq!(out(&o).trim(), "attach bbbb-background");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("alpha/c2"));
     s.write(Touch::STATUS, |tx| {
         tx.execute("UPDATE status SET changed_at = 50 WHERE child = 'c3'", [])?;
         Ok(())
     })
     .unwrap();
-    assert_eq!(out(&run(tmp.path(), &["next"])).trim(), "alpha/c3");
+    assert_eq!(
+        out(&run(tmp.path(), &["next"])).trim(),
+        "attach unknown-session"
+    );
 }
 
 #[test]

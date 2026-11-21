@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crate::agents::{self, Agent};
-use crate::{Env, Error, launch};
+use crate::{Env, Error, herdr, launch};
 
 use super::child::{
     CLAUDE_START_TIMEOUT, GIT_TIMEOUT, Launcher, Mode, StartCmd, WORKTREE_ADD_TIMEOUT,
@@ -51,7 +51,7 @@ fn stop_command(claude: &Path, session_id: &str) -> Command {
     c
 }
 
-fn find_exe(env: Env, name: &str) -> Option<PathBuf> {
+pub(crate) fn find_exe(env: Env, name: &str) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     env("PATH")?
         .split(':')
@@ -65,7 +65,11 @@ fn find_exe(env: Env, name: &str) -> Option<PathBuf> {
 /// Runs `cmd` with no stdin and returns its stdout, or an error carrying its
 /// stderr. Waits for the process, not for the pipes to close: a `claude --bg`
 /// leaves a background session that may keep them open.
-fn run_captured(mut cmd: Command, timeout: Duration, what: &str) -> Result<String, Error> {
+pub(crate) fn run_captured(
+    mut cmd: Command,
+    timeout: Duration,
+    what: &str,
+) -> Result<String, Error> {
     let fail = |msg: String| Error::Io(std::io::Error::other(format!("{what}: {msg}")));
     let mut child = cmd
         .stdin(Stdio::null())
@@ -143,7 +147,7 @@ impl Launcher for RealLauncher<'_> {
     fn check(&self, mode: Mode) -> Result<(), Error> {
         match mode {
             Mode::Bg => Ok(()),
-            Mode::Herdr => Err(Error::Refused("herdr panes arrive with Task 20".into())),
+            Mode::Herdr => herdr::find(self.env).map(drop),
         }
     }
 
@@ -219,6 +223,20 @@ impl Launcher for RealLauncher<'_> {
 
     fn start(&self, mode: Mode, cmd: &StartCmd) -> Result<(), Error> {
         self.check(mode)?;
+        if mode == Mode::Herdr {
+            let p = cmd
+                .pane
+                .as_ref()
+                .ok_or_else(|| Error::Refused("a herdr start needs a pane launch".into()))?;
+            let ws = (self.env)("HERDR_WORKSPACE_ID").unwrap_or_default();
+            let address = format!("{}/{}", p.slug, p.child);
+            return herdr::spawn_pane(
+                self.env,
+                &ws,
+                &cmd.cwd,
+                &[p.crook_bin.clone().into(), "launch".into(), address.into()],
+            );
+        }
         let mut c = Command::new(&cmd.program);
         c.args(&cmd.args)
             .env_clear()
@@ -248,13 +266,21 @@ impl Launcher for RealLauncher<'_> {
             .ok()
             .filter(|p| *p > 0)
             .ok_or_else(|| Error::Refused(format!("not a pid: {pid}")))?;
-        kill(Pid::from_raw(raw), Signal::SIGTERM)
-            .map_err(|e| Error::Io(std::io::Error::other(format!("kill {pid}: {e}"))))
+        match kill(Pid::from_raw(raw), Signal::SIGTERM) {
+            // Already gone, as when its pane closed first: what was asked for.
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+            Err(e) => Err(Error::Io(std::io::Error::other(format!("kill {pid}: {e}")))),
+        }
     }
 
-    /// herdr panes arrive with Task 20; a `--bg` or unpaned child has none.
-    fn close_pane(&self, _session_id: &str) -> Result<(), Error> {
-        Ok(())
+    fn close_pane(&self, session_id: &str) -> Result<(), Error> {
+        if !herdr::present(self.env) {
+            return Ok(());
+        }
+        match herdr::pane_for(self.env, session_id) {
+            Some(pane) => herdr::close(self.env, &pane),
+            None => Ok(()),
+        }
     }
 }
 
@@ -366,6 +392,7 @@ mod tests {
             args: vec!["--bg".into(), "--".into(), "prompt words".into()],
             env: vec![("CROOK_CHILD".into(), "c1".into())],
             cwd: std::fs::canonicalize(tmp.path()).unwrap(),
+            pane: None,
         };
         RealLauncher::new(&env).start(Mode::Bg, &cmd).unwrap();
         let got = std::fs::read_to_string(out).unwrap();
@@ -383,6 +410,7 @@ mod tests {
             args: Vec::new(),
             env: vec![("PATH".into(), "/bin:/usr/bin".into())],
             cwd: tmp.path().into(),
+            pane: None,
         };
         let t = Instant::now();
         RealLauncher::new(&env).start(Mode::Bg, &cmd).unwrap();
@@ -403,6 +431,7 @@ mod tests {
             args: Vec::new(),
             env: Vec::new(),
             cwd: tmp.path().into(),
+            pane: None,
         };
         let e = RealLauncher::new(&env).start(Mode::Bg, &cmd).unwrap_err();
         assert!(e.to_string().contains("Workspace not trusted"), "{e}");
@@ -428,15 +457,135 @@ mod tests {
     }
 
     #[test]
-    fn herdr_is_not_yet_startable() {
-        let env = path_env();
+    fn worktree_add_then_the_two_herdr_calls_fit_the_spawn_budget() {
+        use crate::launch::child::HERDR_TIMEOUT;
+        assert!(WORKTREE_ADD_TIMEOUT + 2 * HERDR_TIMEOUT < Duration::from_secs(120));
+    }
+
+    /// A temp `PATH` holding a `herdr` that logs its argv and a `claude` that
+    /// lists one interactive session, `sid`, running as pid 4242.
+    struct Panes {
+        tmp: tempfile::TempDir,
+    }
+
+    impl Panes {
+        fn new() -> Panes {
+            let tmp = tempfile::tempdir().unwrap();
+            let log = tmp.path().join("log");
+            script(
+                tmp.path(),
+                "herdr",
+                &format!(
+                    "echo \"$@\" >> {}\n\
+                     case \"$*\" in\n\
+                     'pane list') printf '%s' '{{\"result\":{{\"panes\":[{{\"pane_id\":\"w1:p1\"}},{{\"pane_id\":\"w1:p2\",\"agent\":\"claude\"}}]}}}}';;\n\
+                     'pane process-info --pane w1:p2') printf '%s' '{{\"result\":{{\"process_info\":{{\"foreground_processes\":[{{\"pid\":4242}}]}}}}}}';;\n\
+                     'pane process-info'*) printf '%s' '{{\"result\":{{\"process_info\":{{\"foreground_processes\":[]}}}}}}';;\n\
+                     *) printf '%s' '{{\"result\":{{\"type\":\"ok\"}}}}';;\n\
+                     esac",
+                    log.display()
+                ),
+            );
+            script(
+                tmp.path(),
+                "claude",
+                "printf '%s' '[{\"sessionId\":\"sid\",\"pid\":4242,\"cwd\":\"/w\",\"kind\":\"interactive\"}]'",
+            );
+            Panes { tmp }
+        }
+
+        fn env<'a>(&'a self, herdr: bool) -> impl Fn(&str) -> Option<String> + 'a {
+            move |k: &str| match k {
+                "PATH" => Some(self.tmp.path().display().to_string()),
+                "HERDR_ENV" if herdr => Some("1".into()),
+                _ => None,
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            std::fs::read_to_string(self.tmp.path().join("log"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    #[test]
+    fn close_pane_closes_the_pane_found_by_the_session_pid() {
+        let p = Panes::new();
+        let env = p.env(true);
+        RealLauncher::new(&env).close_pane("sid").unwrap();
+        assert_eq!(
+            p.calls().last().map(String::as_str),
+            Some("pane close w1:p2")
+        );
+    }
+
+    #[test]
+    fn close_pane_without_a_pane_or_herdr_is_not_an_error() {
+        let p = Panes::new();
+        let env = p.env(true);
+        let l = RealLauncher::new(&env);
+        l.close_pane("unknown-session").unwrap();
+        assert!(
+            !p.calls().iter().any(|c| c.starts_with("pane close")),
+            "{:?}",
+            p.calls()
+        );
+        // Outside herdr, herdr is not asked at all.
+        let env = p.env(false);
+        RealLauncher::new(&env).close_pane("sid").unwrap();
+        assert!(p.calls().is_empty(), "{:?}", p.calls());
+    }
+
+    #[test]
+    fn herdr_start_splits_a_pane_that_runs_crook_launch() {
+        let p = Panes::new();
+        let env = p.env(true);
+        let l = RealLauncher::new(&env);
+        let cmd = StartCmd {
+            program: "/x/claude".into(),
+            args: vec!["--session-id".into(), "secret-looking-arg".into()],
+            env: vec![("TOKEN".into(), "sk-secret".into())],
+            cwd: "/r/.worktrees/demo/c1".into(),
+            pane: Some(super::super::child::PaneLaunch {
+                slug: "demo".into(),
+                child: "c1".into(),
+                crook_bin: "/abs/crook".into(),
+            }),
+        };
+        l.check(Mode::Herdr).unwrap();
+        // The stand-in answers the split without a pane id, so the start stops there.
+        assert!(l.start(Mode::Herdr, &cmd).is_err());
+        assert_eq!(
+            p.calls(),
+            ["pane split --current --direction right --cwd /r/.worktrees/demo/c1 --no-focus"]
+        );
+        // Without a pane launch there is nothing to type.
+        let bare = StartCmd { pane: None, ..cmd };
+        assert!(matches!(
+            l.start(Mode::Herdr, &bare),
+            Err(Error::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn herdr_check_needs_herdr_on_path_and_terminate_forgives_a_gone_pid() {
+        let env = |k: &str| (k == "PATH").then(|| "/nonexistent".to_string());
         let l = RealLauncher::new(&env);
         assert!(l.check(Mode::Bg).is_ok());
         assert!(
             l.check(Mode::Herdr)
                 .unwrap_err()
                 .to_string()
-                .contains("Task 20")
+                .contains("herdr not found")
         );
+        // A pid that is no process: the session is already gone.
+        let mut gone = Command::new("true").spawn().unwrap();
+        let pid = gone.id();
+        gone.wait().unwrap();
+        l.terminate(pid).unwrap();
+        assert!(l.terminate(0).is_err());
     }
 }

@@ -70,12 +70,17 @@ pub(super) fn rows(env: Env, agents: &[Agent]) -> Vec<Row> {
         let Ok(kids) = Store::open(env, &slug, Mode::ReadOnly).and_then(|s| s.read(load)) else {
             continue;
         };
-        out.extend(kids.into_iter().map(|k| Row {
-            agent_state: k.agent(agents).and_then(|a| a.state.clone()),
-            slug: slug.clone(),
-            child: k.child,
-            state: k.state,
-            changed_at: k.changed_at,
+        out.extend(kids.into_iter().map(|k| {
+            let agent = k.agent(agents);
+            Row {
+                agent_state: agent.and_then(|a| a.state.clone()),
+                pid: agent.and_then(|a| a.pid),
+                session: agent.map_or_else(|| k.session_id.clone(), |a| a.session_id.clone()),
+                slug: slug.clone(),
+                child: k.child,
+                state: k.state,
+                changed_at: k.changed_at,
+            }
         }));
     }
     out

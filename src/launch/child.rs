@@ -19,7 +19,7 @@ use super::{LaunchOpts, Session};
 pub const MAX_BRIEF_CHARS: usize = 4000;
 pub const MAX_LIVE_CHILDREN: i64 = 8;
 
-const PROMPT: &str = include_str!("../../plugin/prompts/child.md");
+pub(crate) const PROMPT: &str = include_str!("../../plugin/prompts/child.md");
 
 /// How long each command may run. The mod gives `spawn` 120 s in all, and a
 /// spawn runs `git worktree add` then `claude --bg`: 90 s for the checkout of a
@@ -28,6 +28,10 @@ const PROMPT: &str = include_str!("../../plugin/prompts/child.md");
 pub const WORKTREE_ADD_TIMEOUT: Duration = Duration::from_secs(90);
 pub const CLAUDE_START_TIMEOUT: Duration = Duration::from_secs(20);
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long each `herdr` call may run. A herdr spawn is `git worktree add`,
+/// then a pane split and a pane run: 90 + 5 + 5 s stays inside the mod's 120 s.
+pub const HERDR_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How a child's `claude` starts: detached with `--bg`, or in a herdr pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +47,17 @@ pub struct StartCmd {
     pub args: Vec<OsString>,
     pub env: Vec<(OsString, OsString)>,
     pub cwd: PathBuf,
+    /// What a herdr pane types instead of `program` and `args`: only
+    /// `crook launch`, which rebuilds both from the child's rows. `None` for `--bg`.
+    pub pane: Option<PaneLaunch>,
+}
+
+/// The `crook launch <slug>/<child>` a herdr pane runs to start a child.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneLaunch {
+    pub slug: String,
+    pub child: String,
+    pub crook_bin: PathBuf,
 }
 
 /// What `spawn`, `worktree` and `stop` ask of the machine, injected so tests
@@ -68,6 +83,8 @@ pub trait Launcher {
     fn stop_bg(&self, session_id: &str) -> Result<(), Error>;
     /// SIGTERM.
     fn terminate(&self, pid: u32) -> Result<(), Error>;
+    /// Closes the herdr pane running the session, found while the session still
+    /// runs. No pane (no herdr, or none for the session) is not an error.
     fn close_pane(&self, session_id: &str) -> Result<(), Error>;
 }
 
@@ -103,7 +120,7 @@ fn same_path(a: &str, b: &str) -> bool {
         )
 }
 
-fn launch_prompt(slug: &str, child: &str) -> String {
+pub(crate) fn launch_prompt(slug: &str, child: &str) -> String {
     format!("You are child {child} of crook-{slug}. Your project card is above.")
 }
 
@@ -219,6 +236,11 @@ pub fn spawn_child(store: &mut Store, req: &SpawnReq, run: &dyn Launcher) -> Res
             args,
             env: launch::env(req.base_env.iter().cloned(), &id, &req.crook_bin),
             cwd: worktree,
+            pane: (mode == Mode::Herdr).then(|| PaneLaunch {
+                slug: slug.into(),
+                child: child.into(),
+                crook_bin: req.crook_bin.clone(),
+            }),
         },
     )?;
     Ok(req.session_id.clone())
@@ -426,8 +448,13 @@ pub fn archive_and_stop(
         }
         "interactive" => match (row.claude_pid, a.pid) {
             (Some(recorded), Some(running)) if recorded == running => {
+                // The pane is found by the session's pid, which is gone once
+                // signalled, so it closes first. Closing it hangs up the
+                // session; the SIGTERM covers a session that outlives that.
+                // A close error does not skip the signal.
+                let closed = run.close_pane(&row.session_id);
                 run.terminate(recorded)?;
-                run.close_pane(&row.session_id)?;
+                closed?;
                 Ok(Stopped::Pane)
             }
             _ => Ok(Stopped::ArchivedOnly(
@@ -470,6 +497,7 @@ pub(crate) mod fake {
         /// What `worktree_list` shows; `None` lists every `<repo>/.worktrees/*/*` on disk.
         pub listed: Option<Vec<PathBuf>>,
         pub fail_stop_bg: bool,
+        pub fail_close_pane: bool,
         /// What `branches` shows for each repo.
         pub branch_list: std::collections::BTreeMap<PathBuf, Vec<String>>,
         /// Runs inside `stop_bg` and `agents`, to change the disk mid-stop.
@@ -572,6 +600,9 @@ pub(crate) mod fake {
         }
         fn close_pane(&self, session_id: &str) -> Result<(), Error> {
             self.log(Call::ClosePane(session_id.into()));
+            if self.fail_close_pane {
+                return Err(Error::Refused("herdr failed".into()));
+            }
             Ok(())
         }
     }
@@ -1194,7 +1225,7 @@ mod tests {
         assert_eq!(run.calls(), [Call::StopBg("sid-demo-c1".into())]);
         assert!(archived(&w));
 
-        // A herdr child whose pid claude agents confirms: SIGTERM, then its pane.
+        // A herdr child whose pid claude agents confirms: its pane, then SIGTERM.
         let (w, _) = spawned();
         set_pid(&w, 4242);
         let run = Fake {
@@ -1205,7 +1236,22 @@ mod tests {
         assert_eq!(r, Stopped::Pane);
         assert_eq!(
             run.calls(),
-            [Call::Terminate(4242), Call::ClosePane("sid-demo-c1".into())]
+            [Call::ClosePane("sid-demo-c1".into()), Call::Terminate(4242)]
+        );
+
+        // A pane that will not close does not skip the signal; the error is reported.
+        let (w, _) = spawned();
+        set_pid(&w, 4242);
+        let run = Fake {
+            agents: vec![agent("sid-demo-c1", Some(4242), "interactive")],
+            fail_close_pane: true,
+            ..Fake::default()
+        };
+        let e = archive_and_stop(&mut w.fx.store("demo"), "c1", &run).unwrap_err();
+        assert!(e.to_string().contains("herdr failed"), "{e}");
+        assert_eq!(
+            run.calls(),
+            [Call::ClosePane("sid-demo-c1".into()), Call::Terminate(4242)]
         );
 
         // A stale pid: a different pid, or none, runs the session: only archived.

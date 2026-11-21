@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::gate::{Identity, Role};
 use crate::launch::{self, Host, LaunchOpts, Outcome, Plan, Session};
 use crate::store::{Mode, Store, Touch};
-use crate::{Env, Error, config, crew, paths, project};
+use crate::{Env, Error, config, crew, herdr, paths, project};
 
 const PROMPT: &str = include_str!("../../plugin/prompts/orchestrator.md");
 
@@ -48,10 +48,20 @@ pub fn plan(env: Env, slug: &str, host: &Host) -> Result<Outcome, Error> {
     let mut notes = launch::preflight_notes(env, host)?;
     let (session_id, pid) = recorded_orchestrator(env, slug)?;
     if let Some(pid) = pid.filter(|p| (host.live)(*p)) {
-        return Ok(Outcome::Say(format!(
-            "crook: the orchestrator for {slug} is already running (pid {pid}, session {}); \
-             not starting a second one",
+        let running = format!(
+            "crook: the orchestrator for {slug} is already running (pid {pid}, session {})",
             session_id.as_deref().unwrap_or("unknown")
+        );
+        if herdr::present(env)
+            && let Some(pane) = herdr::pane_of_pid(env, pid)
+        {
+            return Ok(Outcome::Say(match herdr::focus(env, &pane) {
+                Ok(()) => format!("{running}; focused its pane {pane}"),
+                Err(e) => format!("{running}; could not focus its pane {pane}: {e}"),
+            }));
+        }
+        return Ok(Outcome::Say(format!(
+            "{running}; not starting a second one"
         )));
     }
     let agents = match (host.agents)() {
@@ -300,6 +310,45 @@ mod tests {
             "{:?}",
             p.notes
         );
+    }
+
+    #[test]
+    fn open_live_focuses_its_herdr_pane() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = Fx::new();
+        fx.init("demo");
+        set_orchestrator(&fx, "live-sid", 4242);
+        let herdr = fx.tmp.path().join("bin/herdr");
+        let log = fx.tmp.path().join("herdr.log");
+        std::fs::write(
+            &herdr,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> {}\n\
+                 case \"$*\" in\n\
+                 'pane list') printf '%s' '{{\"result\":{{\"panes\":[{{\"pane_id\":\"w1:p4\"}}]}}}}';;\n\
+                 'pane process-info'*) printf '%s' '{{\"result\":{{\"process_info\":{{\"foreground_processes\":[{{\"pid\":4242}}]}}}}}}';;\n\
+                 *) printf '%s' '{{\"result\":{{\"type\":\"ok\"}}}}';;\n\
+                 esac\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&herdr, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let base = fx.env();
+        let env = move |k: &str| match k {
+            "HERDR_ENV" => Some("1".to_string()),
+            _ => base(k),
+        };
+        let agents: &dyn Fn() -> Result<Vec<Agent>, Error> = &no_agents;
+        let version: &dyn Fn() -> Result<String, Error> = &ok_version;
+        let new_id = || "new-uuid".to_string();
+        let live: &dyn Fn(u32) -> bool = &|p| p == 4242;
+        match plan(&env, "demo", &fx.host(live, agents, version, &new_id)).unwrap() {
+            Outcome::Say(s) => assert!(s.contains("focused its pane w1:p4"), "{s}"),
+            Outcome::Exec(_) => panic!("started a second orchestrator"),
+        }
+        let calls = std::fs::read_to_string(log).unwrap();
+        assert!(calls.lines().any(|l| l == "agent focus w1:p4"), "{calls}");
     }
 
     #[test]

@@ -33,6 +33,9 @@ enum Cmd {
     Open { slug: String },
     /// Restart a child's session: `<child>` or `<slug>/<child>`
     Resume { child: String },
+    /// Start a spawned child in this herdr pane: `<slug>/<child>`
+    #[command(hide = true)]
+    Launch { child: String },
     /// Lift a child's park by hand: `<child>` or `<slug>/<child>`
     Unpark { child: String },
     /// Stop a child, archive it and remove its worktrees: `<child>` or `<slug>/<child>`
@@ -128,6 +131,7 @@ fn run(args: &[OsString], env: Env) -> u8 {
             0
         }
         Cmd::Open { slug } => launch_verb(env, |env, host| cli::open::plan(env, &slug, host)),
+        Cmd::Launch { child } => launch_verb(env, |env, host| cli::launch::plan(env, &child, host)),
         Cmd::Resume { child } => launch_verb(env, |env, host| cli::resume::plan(env, &child, host)),
         Cmd::Stop { child } => user_verb(env, |env| {
             cli::stop::run(env, &child, &launch::real::RealLauncher::new(env))
@@ -144,7 +148,7 @@ fn run(args: &[OsString], env: Env) -> u8 {
         Cmd::Init { slug } => user_verb(env, |env| cli::init::run(env, &slug)),
         Cmd::List => user_verb(env, cli::list::run),
         Cmd::Status => user_verb(env, cli::status::run),
-        Cmd::Next => user_verb(env, cli::next::run),
+        Cmd::Next => launch_verb(env, cli::next::plan),
         Cmd::Unpark { child } => user_verb(env, |env| cli::unpark::run(env, &child)),
         Cmd::Project { slug, action } => user_verb(env, |env| {
             let cwd = std::env::current_dir()?;

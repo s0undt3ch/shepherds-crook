@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { filter, createOrchestratorWatcher, DONE_WAKE_UP, STALE_NUDGE, renderStatus } from './orchestrator.ts'
+import { filter, createOrchestratorWatcher, onOrchestratorTurn, startOrchestratorWatcher, DONE_WAKE_UP, STALE_NUDGE, renderStatus } from './orchestrator.ts'
 import type { Ports, VerbResult } from './ports.ts'
 import { CARD_CHANGED, NET_MS, POLL_MS } from './watcher.ts'
 
@@ -233,6 +233,32 @@ describe('status line', () => {
 
   it('is undefined before the first read', () => {
     expect(world().watcher.line()).toBeUndefined()
+  })
+})
+
+describe('typed prompts reset the machine-turn count', () => {
+  // The shared watcher registers its interval once per module, so the first test's capture serves both.
+  let tick = () => {}
+  it.each(['composer', 'bridge'])('a %s prompt through the filter lets wake-ups go on', async kind => {
+    const { w, p } = world()
+    startOrchestratorWatcher({ ...p, every: (_, fn) => (tick = fn) }, IDS)
+    const step = async (i: number) => {
+      w.snap = { ...w.snap, done_unnotified: done(['c1', i]) }
+      w.mtime = i + 1
+      tick()
+      await flush()
+      onOrchestratorTurn(START)
+      onOrchestratorTurn(END)
+      await flush()
+    }
+    for (let i = 1; i <= 5; i++) await step(i)
+    expect(w.submits).toHaveLength(5)
+    await step(6)
+    expect(w.submits).toHaveLength(5)
+    await filter(p, async () => 's1', { text: 'x', origin: { kind } }, async e => e)
+    tick()
+    await flush()
+    expect(w.submits).toHaveLength(6)
   })
 })
 

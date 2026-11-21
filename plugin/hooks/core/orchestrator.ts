@@ -79,7 +79,7 @@ export function createOrchestratorWatcher(p: Ports, ids: WatcherIds, noteOwn: (t
     ...watcher,
     /** The status line from the last snapshot read; never runs a verb. */
     line: (): string | undefined => (last === undefined ? undefined : renderStatus(last)),
-    /** A `composer` prompt: the user is back, so wake-ups may go on. */
+    /** A typed prompt (`composer` or `bridge`): the user is back, so wake-ups may go on. */
     onComposer(): void {
       machineTurns = 0
     },
@@ -121,8 +121,9 @@ export async function filter<E extends Prompt, R>(
   e: E,
   next: (e: E) => Promise<R>,
 ): Promise<R> {
-  if (e.origin.kind === 'composer') onComposerPrompt()
-  if (e.command !== undefined || !USER_KINDS.has(e.origin.kind)) return next(e)
+  const typed = USER_KINDS.has(e.origin.kind)
+  if (typed) onComposerPrompt()
+  if (e.command !== undefined || !typed) return next(e)
   let add: string[] = []
   try {
     const r = await p.run('orch-context', { session_id: await sessionId(), user_turn: true })

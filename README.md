@@ -1,4 +1,9 @@
-# crook
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/crook-lockup-dark.svg">
+    <img alt="crook" src="assets/logo/crook-lockup-light.svg" width="234">
+  </picture>
+</h1>
 
 crook runs one orchestrator Claude Code session per project. The orchestrator plans work and starts child sessions in
 other repositories, each in its own git worktree. A child's questions come to you, and crook keeps private notes out of
@@ -117,6 +122,8 @@ crook borrows four ideas. It copies no code from any of them.
   Claude Code plugin.
 - A record kept current, where a write fails if the record changed since it was read, comes from
   [loam](https://github.com/GregorMcC/loam).
+
+The logo was made with AI image generation. See [assets/logo](assets/logo/README.md).
 
 ## Licence
 

@@ -103,6 +103,10 @@ pub struct Findings {
     pub stale_pids: Vec<String>,
 }
 
+/// How long `open` spends looking up herdr panes in all: each lookup has its
+/// own, longer budget, and eight slow ones would hold `open` for minutes.
+const HERDR_CHECK_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// What reconcile reads from the machine, live; nothing of it is stored.
 pub struct Look<'a> {
     /// `claude agents`, or `None` when it could not say: then no session is
@@ -142,6 +146,8 @@ pub fn findings(c: &Connection, slug: &str, look: &Look) -> Result<Findings, Err
         .collect::<Result<Vec<_>, _>>()?;
     let mut out = Findings::default();
     let mut reported = std::collections::BTreeSet::new();
+    let herdr_started = std::time::Instant::now();
+    let mut herdr_skipped = false;
     for (child, worktree, session_id, pid) in &kids {
         if !Path::new(worktree).exists() {
             reported.insert(worktree.clone());
@@ -178,6 +184,16 @@ pub fn findings(c: &Connection, slug: &str, look: &Look) -> Result<Findings, Err
         }
         if let Some(pane_of) = look.pane_of_pid {
             for a in running.iter().filter(|a| a.kind == "interactive") {
+                if herdr_started.elapsed() >= HERDR_CHECK_BUDGET {
+                    if !herdr_skipped {
+                        herdr_skipped = true;
+                        out.lines.push(
+                            "herdr was slow to answer: the remaining children's panes were not checked"
+                                .into(),
+                        );
+                    }
+                    break;
+                }
                 if let Some(p) = a.pid
                     && pane_of(p).is_none()
                 {

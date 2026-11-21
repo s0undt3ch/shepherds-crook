@@ -105,7 +105,7 @@ fn record(
         (Role::Child, Some(child)) if source == "fork" => {
             // `/branch` keeps the claude process, so the fork is the child.
             if crew::claude_pid(c, child)? == Some(ppid) {
-                crew::adopt(c, child, session_id)?;
+                crew::adopt_fork(c, child, session_id)?;
             } else {
                 crew::add_fork(c, child, session_id)?;
             }

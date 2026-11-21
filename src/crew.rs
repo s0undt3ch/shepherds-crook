@@ -343,7 +343,7 @@ fn hold(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// A held id is the child's, so it can never become a fork or be adopted as one.
+/// A held id is the child's, so the hook can never make it a fork or adopt it as one.
 fn refuse_held(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
     if held(c, child, session_id)? {
         return Err(Error::Refused(format!(
@@ -382,9 +382,8 @@ pub fn record_orchestrator(c: &Connection, session_id: &str, pid: u32) -> Result
 }
 
 /// Makes `session_id` the child, and drops it from `forks` so it is
-/// park-denied like any child.
+/// park-denied like any child. Any id, held or not: the user's `/crook-adopt`.
 pub fn adopt(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
-    refuse_held(c, child, session_id)?;
     let n = c.execute(
         "UPDATE children SET session_id = ?2 WHERE child = ?1",
         (child, session_id),
@@ -397,6 +396,13 @@ pub fn adopt(c: &Connection, child: &str, session_id: &str) -> Result<(), Error>
         (child, session_id),
     )?;
     hold(c, child, session_id)
+}
+
+/// `adopt` for the hook, which takes a fork as the child: a held id is
+/// refused, since a forged SessionStart could otherwise lift a park.
+pub fn adopt_fork(c: &Connection, child: &str, session_id: &str) -> Result<(), Error> {
+    refuse_held(c, child, session_id)?;
+    adopt(c, child, session_id)
 }
 
 fn count(c: &Connection, sql: &str, child: &str) -> Result<i64, Error> {
@@ -940,8 +946,11 @@ mod tests {
         for id in ["s-c1", "s-new"] {
             assert!(s.read(|c| held(c, "c1", id)).unwrap(), "{id}");
             assert!(refused(w(&mut s, |c| add_fork(c, "c1", id))).contains(id));
-            assert!(refused(w(&mut s, |c| adopt(c, "c1", id))).contains(id));
+            assert!(refused(w(&mut s, |c| adopt_fork(c, "c1", id))).contains(id));
         }
+        // The user's `/crook-adopt` may take a held id back.
+        w(&mut s, |c| adopt(c, "c1", "s-c1")).unwrap();
+        assert!(s.read(|c| is_current(c, "c1", "s-c1")).unwrap().0);
         assert!(!s.read(|c| held(c, "c1", "other")).unwrap());
         assert!(!s.read(|c| held(c, "c2", "s-c1")).unwrap());
         w(&mut s, |c| adopt(c, "c1", "B")).unwrap();

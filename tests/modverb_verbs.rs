@@ -553,6 +553,17 @@ fn archived_kept_in_counts() {
 }
 
 #[test]
+fn adopt_takes_back_a_held_id() {
+    let fx = Fx::new();
+    let (code, v) = fx.call("c1", "adopt", "fork-9", true, json!({}));
+    assert_eq!(code, 0, "{v}");
+    let (code, v) = fx.call("c1", "adopt", "s1", true, json!({}));
+    assert_eq!(code, 0, "the user may adopt an id the child held: {v}");
+    let (_, v) = fx.call("c1", "snapshot", "s1", false, json!({}));
+    assert_eq!(v["is_current"], true, "{v}");
+}
+
+#[test]
 fn adopt_requires_a_user_turn() {
     let fx = Fx::new();
     let (code, v) = fx.call("c1", "adopt", "fork-1", false, json!({}));

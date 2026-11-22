@@ -6,9 +6,11 @@ here="$(dirname "$0")"
 source "$here/lib.sh"
 load_run "${1:?usage: teardown.sh <run.env>}"
 envf="$1"
+command -v lsof >/dev/null || die "lsof is needed to find what still runs in the run"
+# Out of the run, so this shell is not one of the processes left in it.
+cd /
 failed=0
 c() { bash "$here/crook.sh" "$envf" "$@"; }
-cwd_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'; }
 
 db="$S/crook/$SLUG/crook.db"
 if [ -f "$db" ]; then
@@ -36,12 +38,21 @@ done
 
 if [ -f "$db" ]; then c wipe "$SLUG" </dev/null || failed=1; fi
 
-left=0
 # Any process still working inside the run, claude or not (a bg session runs as "claude bg-spare").
-while read -r p cwd; do
-  if in_run_path "$cwd"; then echo "LEFT: pid $p still runs in $cwd" >&2; left=1; fi
-done < <(lsof -d cwd -Fpn 2>/dev/null | awk '/^p/{p=substr($0,2)} /^n/{print p, substr($0,2)}')
-if [ "$left" = 0 ] && [ "$failed" = 0 ]; then
+leftovers() {
+  lsof -d cwd -Fpn 2>/dev/null | awk '/^p/{p=substr($0,2)} /^n/{print p, substr($0,2)}' |
+    while read -r p cwd; do
+      if [ "$p" != "$$" ] && in_run_path "$cwd"; then echo "LEFT: pid $p still runs in $cwd"; fi
+    done
+}
+# Stopped sessions take a few seconds to exit.
+for _ in 1 2 3 4 5; do
+  left="$(leftovers)"
+  [ -z "$left" ] && break
+  sleep 2
+done
+[ -z "$left" ] || echo "$left" >&2
+if [ -z "$left" ] && [ "$failed" = 0 ]; then
   rm -rf "$RUN" && echo "removed $RUN"
 else
   echo "kept $RUN: a step failed or a process is left" >&2

@@ -14,7 +14,7 @@ prompt.
 
 - Accept a trust or add-dir prompt only through `trust.sh`, which refuses any path outside this run's `$RUN`. On
   `REFUSED`: leave the run as it is and ask the user; tear down after they answer.
-- Permission prompts in the run's sessions: approve or reject as the step needs. Reject when in doubt.
+- Permission prompts in the run's sessions: approve or reject with `keys.sh` as the step needs. Reject when in doubt.
 - Touch only the run: its directory, its herdr workspaces, its processes (check a pid's cwd is under `$RUN` before
   killing it). Never the user's real crook state, workspaces, sessions or installed `crook`. `say.sh` and `trust.sh`
   refuse a pane whose cwd is outside the run, and every script refuses an env file that is not a run's.
@@ -31,13 +31,16 @@ prompt.
 4. Keep every pane id you find in the env file so later calls have it: `echo "DRV=<id>" >> "$ENVF"`, and the same for
    `O`, `OW`, `C1` and `C2` below.
 
-Below, `say.sh`, `trust.sh` and `db` mean `bash $E2E/say.sh $ENVF`, `bash $E2E/trust.sh $ENVF` and
-`bash $E2E/db.sh $ENVF`.
+Below, `say.sh`, `keys.sh`, `trust.sh`, `run_in.sh`, `kill_in_run.sh` and `db` mean `bash $E2E/<script> $ENVF`
+(`db` is `db.sh`). Use them, never raw `herdr pane send-keys`, `herdr pane run` or `kill`: each refuses a pane or pid
+outside the run.
 
 | Need | Run |
 |---|---|
 | crook on the run's state, from your shell | `bash $E2E/crook.sh $ENVF <args>` (`NO_HERDR=1` hides herdr) |
-| crook in the driver pane (needs a terminal) | `herdr pane run $DRV "bash $E2E/crook.sh $ENVF <args>"` |
+| crook in the driver pane (needs a terminal) | `run_in.sh $DRV <args>` |
+| keys into a pane (Esc, an answer) | `keys.sh <pane> <key>...` |
+| end a process | `kill_in_run.sh <pid>` |
 | query the database | `db "<sql>"` |
 | type a prompt into a pane | `say.sh <pane> "<text>"` |
 | accept trust prompts | `trust.sh <pane>`; it waits until the session is up |
@@ -53,15 +56,15 @@ the children's.
 
 | # | Do | Pass when |
 |---|---|---|
-| 1 | `herdr pane run $DRV "bash $E2E/crook.sh $ENVF open $SLUG"`. Poll `herdr pane list` (up to 20 s) for the pane whose cwd is `$D/crook/$SLUG`: that is `O`, and its `workspace_id` is `OW`. `trust.sh $O` | `db "select session_id, pid from orchestrator"` has a row; `herdr pane read $O --source visible \| grep -c '⚠ crook: 0 waiting on you · 0 working'` is 1 |
+| 1 | `run_in.sh $DRV open $SLUG`. Poll `herdr pane list` (up to 20 s) for the pane whose cwd is `$D/crook/$SLUG`: that is `O`, and its `workspace_id` is `OW`. `trust.sh $O` | `db "select session_id, pid from orchestrator"` has a row; `herdr pane read $O --source visible \| grep -c '⚠ crook: 0 waiting on you · 0 working'` is 1 |
 | 2 | `say.sh $O "Spawn two children, 'one' and 'two', in $R"`. `C1`, `C2` are the panes with cwd `$R/.worktrees/$SLUG/one` and `…/two`; `trust.sh` each | `db "select child, branch from worktrees"` has both on `crook/$SLUG/<child>`; `git -C $R worktree list` agrees; `herdr pane read $O --source recent --lines 200 \| grep -c project_add_repo` is 0 |
 | 3 | `say.sh $O "Task 'one' with: create hello.txt containing hi and commit it. Task 'two' with: create bye.txt containing bye and commit it."` | `db "select child, taken from inbox"` all 1; `db "select child, state, outcome from status"` both `done`, `ok`; `git -C $R log --oneline crook/$SLUG/one` and `…/two` each have a commit above `init`; `herdr pane read $O --source recent --lines 200 \| grep -c 'Prompt from the crook plugin'` is at least 1 (the done wake-up) |
 | 4 | `say.sh $C1 "Use need to ask the user what colour hello.txt should be. Don't guess, don't do anything else until they answer."` | `db "select state, question from status where child = 'one'"` is `parked` with the question; `herdr pane read $O --source visible \| grep -c '⚠ crook: 1 waiting on you'` is 1 |
-| 5 | `herdr pane run $DRV "bash $E2E/crook.sh $ENVF next"` | `$DRV` prints `$SLUG/one: focused pane $C1`; `herdr workspace get $OW \| jq -r .result.workspace.active_tab_id` equals `herdr pane get $C1 \| jq -r .result.pane.tab_id` |
-| 6 | `say.sh $C1 "/help"`, then `herdr pane send-keys $C1 esc`, then the first check; then `say.sh $C1 "red"` and wait | after `/help`: `db "select state from status where child = 'one'"` is still `parked`; after `red`: state is no longer `parked` and `question` is empty |
+| 5 | `run_in.sh $DRV next` | `$DRV` prints `$SLUG/one: focused pane $C1`; `herdr workspace get $OW \| jq -r .result.workspace.active_tab_id` equals `herdr pane get $C1 \| jq -r .result.pane.tab_id` |
+| 6 | `say.sh $C1 "/help"`, then `keys.sh $C1 esc`, then the first check; then `say.sh $C1 "red"` and wait | after `/help`: `db "select state from status where child = 'one'"` is still `parked`; after `red`: state is no longer `parked` and `question` is empty |
 | 7 | Note `db "select done_seq from status where child = 'two'"`. `say.sh $O "Task 'two' with: run sleep 120 in Bash first, then append *.tmp to a new .gitignore and commit it."`. Once `db "select taken from inbox where child = 'two' order by seq desc limit 1"` is 1: `say.sh $C2 "/clear"` | right after the clear, `db "select current_task from status where child = 'two'"` is still set; within 3 minutes `git -C $R show --name-only --format= crook/$SLUG/two` lists `.gitignore` and `status.done_seq` for two is above the noted value |
-| 8 | `say.sh $C1 "First read $N/plan.md with the Read tool. Then run this exact Bash command and show me the output: cat $N/plan.md"` | `db "select tool, hit from asks"` has exactly one row, `Bash`, hit `$N/plan.md` (the `Read` raised none); `C1` shows `Waiting for your answer`: reject it with `herdr pane send-keys $C1 esc` |
-| 9 | Kill two: `kill <pid>`, the pid from the "session's pid" helper, cwd checked under `$RUN`. Then `herdr pane run $DRV "bash $E2E/crook.sh $ENVF resume $SLUG/two"`; `trust.sh $DRV` | the new pid (same helper) has `--resume <id>` in `ps -o command= -p <pid>`, where `db "select session_id from children where child = 'two'"` gives the id; `herdr pane read $DRV --source visible \| grep -c '⚠ crook: child'` is 1 |
+| 8 | `say.sh $C1 "First read $N/plan.md with the Read tool. Then run this exact Bash command and show me the output: cat $N/plan.md"` | `db "select tool, hit from asks"` has exactly one row, `Bash`, hit `$N/plan.md` (the `Read` raised none); `C1` shows `Waiting for your answer`: reject it with `keys.sh $C1 esc` |
+| 9 | Kill two: `kill_in_run.sh <pid>`, the pid from the "session's pid" helper. Then `run_in.sh $DRV resume $SLUG/two`; `trust.sh $DRV` | the new pid (same helper) has `--resume <id>` in `ps -o command= -p <pid>`, where `db "select session_id from children where child = 'two'"` gives the id; `herdr pane read $DRV --source visible \| grep -c '⚠ crook: child'` is 1 |
 | 10 | `echo x > $R/.worktrees/$SLUG/one/dirty.txt`; `bash $E2E/crook.sh $ENVF stop $SLUG/one; echo $?`; `rm` that file; stop again. Your shell must have `HERDR_ENV=1` (it does inside a herdr pane), or crook will not close panes | first prints exit 1 naming the worktree and `db "select archived from children where child = 'one'"` is still 0; then archived 1, `C1` gone from `herdr pane list`, worktree gone from disk |
 | 11 | `bash $E2E/crook.sh $ENVF list`, then `bash $E2E/crook.sh $ENVF stop $SLUG/two` | `list` prints one line for `$SLUG`; the stop prints `the pane it ran in is not one crook opened, so it stays open` and `herdr pane get $DRV` still succeeds |
 | 12 | `bash $E2E/teardown.sh $ENVF` | it prints `removed $RUN`, no `LEFT:` line, exit 0 |
@@ -69,7 +72,7 @@ the children's.
 ## Without herdr
 
 Herdr still drives the panes; only crook must not see it. Put `NO_HERDR=1` before every `crook.sh`, in your shell and
-in `herdr pane run` (`herdr pane run $DRV "NO_HERDR=1 bash $E2E/crook.sh $ENVF open $SLUG"`). The orchestrator then
+before `run_in.sh` (`NO_HERDR=1 bash $E2E/run_in.sh $ENVF $DRV open $SLUG`). The orchestrator then
 runs in the driver, children start with `claude --bg`, and you reach a child in a new pane made with
 `herdr workspace create --cwd $R`, running `env -u CLAUDECODE claude attach <short id>` there. The short id is the
 session id up to its first `-`; the full id is refused.
@@ -99,7 +102,8 @@ If a model does not do what a step's prompt asks (no `need` call, no Bash comman
 still does not, record the step as "not exercised: the model did not comply", not as a crook failure.
 
 A run leaves trust entries for its `$RUN` paths in your Claude Code config, and each session loads your real
-`~/.claude` settings, plugins and hooks (only the XDG dirs are throwaway). Say so in the report.
+`~/.claude` settings, plugins and hooks: crook's state, data and config dirs are throwaway, Claude Code's are not. Say
+so in the report.
 
 One line per step: number, pass or fail, and the evidence (the query result, commit or pane line). Then each
 failure with what you saw against what the step expects, and whether it is a crook bug, a design gap or the run.

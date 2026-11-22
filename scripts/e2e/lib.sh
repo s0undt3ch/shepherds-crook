@@ -15,7 +15,7 @@ in_run_path() {
 load_run() {
   [ -f "${1:-}" ] || die "no run env file: ${1:-}"
   # shellcheck disable=SC2034 # read indirectly below and by the callers
-  RUN='' S='' D='' R='' N='' SLUG='' CROOK=''
+  RUN='' S='' D='' C='' R='' N='' SLUG='' CROOK=''
   # shellcheck disable=SC1090
   source "$1"
   [ -n "$RUN" ] && [ -d "$RUN" ] || die "RUN is empty or missing: '$RUN'"
@@ -24,10 +24,11 @@ load_run() {
   case "$RUN" in "$base"/crook-e2e-run.*) ;; *) die "RUN is not a run directory: $RUN" ;; esac
   case "${RUN#"$base"/}" in */*) die "RUN is not a direct child of $base: $RUN" ;; esac
   local v
-  for v in S D R N; do
+  for v in S D C R N; do
     in_run_path "${!v}" || die "$v is not inside RUN: '${!v}'"
   done
-  [ -n "$SLUG" ] && [ -x "$CROOK" ] || die "SLUG or CROOK is missing"
+  case "$SLUG" in '' | *[!a-z0-9-]*) die "SLUG is not a slug: '$SLUG'" ;; esac
+  [ -x "$CROOK" ] || die "CROOK is not executable: '$CROOK'"
 }
 
 # True when pane $1's cwd is inside the run, so typing into it cannot reach the user's own sessions.
@@ -36,3 +37,6 @@ pane_in_run() {
   cwd="$(herdr pane get "$1" 2>/dev/null | jq -r '.result.pane.cwd // ""')"
   in_run_path "$cwd"
 }
+
+# The cwd of process $1, or nothing. Needs lsof, which every caller checks for first.
+cwd_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'; }

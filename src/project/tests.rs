@@ -253,3 +253,20 @@ fn kind_round_trips() {
     }
     assert!("memory".parse::<ItemKind>().is_err());
 }
+
+#[test]
+fn add_repo_stores_the_resolved_path() {
+    let d = tempfile::tempdir().unwrap();
+    let real = std::fs::canonicalize(d.path()).unwrap();
+    std::fs::create_dir(real.join("repo")).unwrap();
+    std::os::unix::fs::symlink(&real, real.join("link")).unwrap();
+    let (_tmp, mut s) = fresh();
+    let spelt = format!("{}//repo", real.join("link").display());
+    let plain = real.join("repo").display().to_string();
+    s.write(Touch::PROJECT, |tx| {
+        add(tx, ItemKind::Repo, &spelt)?;
+        add(tx, ItemKind::Repo, &plain).map(|_| ())
+    })
+    .unwrap();
+    assert_eq!(s.read(|c| Ok(get(c)?.repos)).unwrap(), [plain]);
+}

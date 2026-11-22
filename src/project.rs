@@ -215,7 +215,14 @@ fn normalise(kind: ItemKind, value: &str) -> Result<String, Error> {
     if value.trim().is_empty() {
         return Err(Error::Refused("empty value".into()));
     }
-    if kind.is_dir() {
+    if kind == ItemKind::Repo {
+        // Children record the resolved repo, so the card must spell it the same way.
+        let clean = clean_path(value)?;
+        Ok(std::fs::canonicalize(&clean)
+            .ok()
+            .and_then(|p| p.to_str().map(str::to_string))
+            .unwrap_or(clean))
+    } else if kind.is_dir() {
         clean_path(value)
     } else {
         Ok(value.to_string())

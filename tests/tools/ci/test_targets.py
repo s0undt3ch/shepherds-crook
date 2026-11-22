@@ -36,24 +36,26 @@ def _no_event(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_pull_requests_skip_slow_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
     event: str,
     expected: list[dict[str, str]],
 ) -> None:
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     monkeypatch.setenv("GITHUB_EVENT_NAME", event)
-    targets(make_context(tmp_path))
-    assert json.loads(capsys.readouterr().out) == expected
+    ctx = make_context(tmp_path)
+    targets(ctx)
+    assert json.loads(ctx.stdout) == expected
 
 
 def test_targets_prints_and_writes_step_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "github_output"
     output.write_text("earlier=1\n")
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    targets(make_context(tmp_path))
-    printed = capsys.readouterr().out
+    # Narrow, so a rich line wrap would split the JSON.
+    ctx = make_context(tmp_path, width=20)
+    targets(ctx)
+    printed = ctx.stdout
     assert printed.count("\n") == 1
     assert json.loads(printed) == TARGETS
     earlier, line = output.read_text().splitlines()
@@ -63,9 +65,8 @@ def test_targets_prints_and_writes_step_output(
     assert json.loads(value) == TARGETS
 
 
-def test_targets_without_github_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_targets_without_github_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    targets(make_context(tmp_path))
-    assert json.loads(capsys.readouterr().out) == TARGETS
+    ctx = make_context(tmp_path)
+    targets(ctx)
+    assert json.loads(ctx.stdout) == TARGETS

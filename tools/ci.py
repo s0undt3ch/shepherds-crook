@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
@@ -66,7 +65,7 @@ def targets(ctx: Context) -> None:
     if output:
         with Path(output).open("a", encoding="utf-8") as fh:
             fh.write(f"targets={payload}\n")
-    sys.stdout.write(payload + "\n")
+    ctx.print(payload, markup=False, highlight=False, emoji=False, soft_wrap=True)
 
 
 class PackslipFailure(NamedTuple):

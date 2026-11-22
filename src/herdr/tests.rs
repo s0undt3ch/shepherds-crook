@@ -565,3 +565,36 @@ fn notify_argv() {
     let f = Fake::new(&[("notification", "", 1)]);
     assert!(notify(&f.env(&[]), "t", "b").is_err());
 }
+
+#[test]
+fn close_counts_a_pane_or_workspace_already_gone_as_closed() {
+    let pane_gone = Fake::new(&[]);
+    std::fs::write(
+        pane_gone.tmp.path().join("herdr"),
+        "#!/bin/sh\necho '{\"error\":{\"code\":\"pane_not_found\"}}' >&2\nexit 1\n",
+    )
+    .unwrap();
+    assert!(close_tab_of(&pane_gone.env(&[]), "w1:p3").unwrap());
+
+    let ws_gone = Fake::new(&[]);
+    std::fs::write(
+        ws_gone.tmp.path().join("herdr"),
+        format!(
+            "#!/bin/sh\necho \"$@\" >> \"$0.raw\"\ncase \"$*\" in\n\
+             'pane get'*) printf '%s' '{}';;\n\
+             'tab get'*) printf '%s' '{{\"result\":{{\"tab\":{{\"pane_count\":1}}}}}}';;\n\
+             *) echo '{{\"error\":{{\"code\":\"workspace_not_found\"}}}}' >&2; exit 1;;\nesac\n",
+            PANE_GET.1
+        ),
+    )
+    .unwrap();
+    assert!(close_tab_of(&ws_gone.env(&[]), "w1:p3").unwrap());
+    assert!(
+        !ws_gone.calls().iter().any(|c| c.contains(" close ")),
+        "{:?}",
+        ws_gone.calls()
+    );
+
+    let boom = Fake::new(&[PANE_GET, ("tab get w1:t4", "boom", 1)]);
+    assert!(close_tab_of(&boom.env(&[]), "w1:p3").is_err());
+}

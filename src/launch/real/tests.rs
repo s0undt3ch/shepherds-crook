@@ -244,6 +244,24 @@ fn close_pane_closes_the_tab_of_the_pane_found_by_the_session_pid() {
 }
 
 #[test]
+fn close_pane_leaves_a_pane_outside_a_crook_workspace() {
+    let p = Panes::new();
+    let herdr = p.tmp.path().join("herdr");
+    let script = std::fs::read_to_string(&herdr).unwrap();
+    std::fs::write(&herdr, script.replace("crook-demo", "dotfiles")).unwrap();
+    let env = p.env(true);
+    assert_eq!(
+        RealLauncher::new(&env).close_pane("sid").unwrap(),
+        PaneClose::NotCrooks
+    );
+    assert!(
+        !p.calls().iter().any(|c| c.contains(" close ")),
+        "{:?}",
+        p.calls()
+    );
+}
+
+#[test]
 fn close_pane_without_a_pane_or_herdr_is_not_an_error() {
     let p = Panes::new();
     let env = p.env(true);

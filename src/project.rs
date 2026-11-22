@@ -264,12 +264,13 @@ pub fn add(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
     let value = normalise(kind, value)?;
     if kind == ItemKind::Repo {
         // A repo added before repos were stored resolved keeps its old spelling: no second row.
-        let old: bool = c.query_row(
+        let legacy = clean_path(value_in)?;
+        let found = c.query_row(
             "SELECT EXISTS(SELECT 1 FROM project_item WHERE kind = 'repo' AND value = ?1)",
-            [clean_path(value_in)?],
-            |r| r.get(0),
-        )?;
-        if old {
+            [legacy],
+            |r| r.get::<_, bool>(0),
+        );
+        if found? {
             return bump(c);
         }
     }
@@ -310,10 +311,12 @@ pub fn remove(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error>
     )?;
     if n == 0 && kind == ItemKind::Repo {
         // A repo added before repos were stored resolved keeps its old spelling.
-        n = c.execute(
+        let legacy = clean_path(value_in)?;
+        let removed = c.execute(
             "DELETE FROM project_item WHERE kind = 'repo' AND value = ?1",
-            [clean_path(value_in)?],
-        )?;
+            [legacy],
+        );
+        n = removed?;
     }
     if n == 0 {
         return Err(Error::Refused(format!("no {kind} item {value:?}")));

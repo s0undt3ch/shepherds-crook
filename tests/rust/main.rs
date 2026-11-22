@@ -1,5 +1,5 @@
 //! One integration test binary, so the shared helpers build and link once.
-//! The modules follow `src/`.
+//! Modules mirror `src/` where a module has tests here.
 
 mod cli;
 mod common;

@@ -356,9 +356,57 @@ jobs:
       - name: Upload test results and tell Codecov every upload is in
         uses: ./.github/actions/codecov-publish-test-results
 
+  prepare-ci:
+    name: Prepare CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+      # Mirror env.CACHE_SEED / env.MISE_VERSION: a workflow-call `with:` block
+      # can't read `env`, so the build job reads these outputs instead.
+      cache-seed: ${{ steps.expose.outputs.cache-seed }}
+      mise-version: ${{ steps.expose.outputs.mise-version }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        # `$GITHUB_ENV` expects strict `KEY=VALUE` lines and rejects blank/comment
+        # lines as "Invalid format", so keep only the assignments.
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Setup ToolR
+        id: setup-toolr
+        uses: ./.github/actions/setup-toolr
+        with:
+          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|prepare-ci
+
+      - name: Expose the cache seed and mise version
+        id: expose
+        run: |
+          : "${CACHE_SEED:?}" "${MISE_VERSION:?}"
+          {
+            echo "cache-seed=${CACHE_SEED}"
+            echo "mise-version=${MISE_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: List the build targets
+        id: targets
+        run: toolr ci targets
+
   build-binary-archive:
     name: Build (binary)
-    # The release-shaped build, minus the Intel macOS and aarch64 Linux triples.
+    # The release-shaped build. On PRs `toolr ci targets` leaves out Intel macOS.
+    needs:
+      - prepare-ci
     uses: ./.github/workflows/_build-binary-archive.yml
     permissions:
       contents: read
@@ -366,15 +414,9 @@ jobs:
       attestations: write
     with:
       release-version: 0.0.0-ci
-      cache-seed: "1"
-      # The `env` context is not allowed in workflow-call `with:` blocks, so this repeats
-      # `MISE_VERSION` from .github/env; Renovate's regex manager bumps both.
-      mise-version: v2026.11.8
-      targets: >-
-        [
-          {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
-          {"triple": "aarch64-apple-darwin", "runner": "macos-15"}
-        ]
+      cache-seed: ${{ needs.prepare-ci.outputs.cache-seed }}
+      mise-version: ${{ needs.prepare-ci.outputs.mise-version }}
+      targets: ${{ needs.prepare-ci.outputs.targets }}
 
   packslip-check:
     name: Packslip Check
@@ -454,6 +496,17 @@ jobs:
           PACKSLIP: ${{ steps.packslip.outputs.path }}
         run: toolr ci packslip-check "$RUNNER_TEMP/archives" --packslip "$PACKSLIP"
 
+  smoke-binary:
+    name: Smoke
+    needs:
+      - build-binary-archive
+      - prepare-ci
+    uses: ./.github/workflows/_smoke-binary-archive.yml
+    permissions:
+      contents: read
+    with:
+      targets: ${{ needs.prepare-ci.outputs.targets }}
+
   set-pipeline-exit-status:
     permissions: {}
     # This job exists so the branch ruleset can require a single check that
@@ -470,6 +523,8 @@ jobs:
       - codecov-notify
       - packslip-check
       - pre-commit
+      - prepare-ci
+      - smoke-binary
       - test-linux
       - test-macos
       - test-mod

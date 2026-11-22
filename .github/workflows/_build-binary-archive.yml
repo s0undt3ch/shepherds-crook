@@ -14,7 +14,7 @@ on:
       mise-version:
         required: true
         type: string
-        description: 'Version of mise to install. Pass the caller workflow''s MISE_VERSION env var.'
+        description: 'Version of mise to install: MISE_VERSION from .github/env, passed on by the caller''s prepare job.'
       release-patch-name:
         required: false
         type: string
@@ -23,7 +23,7 @@ on:
       targets:
         required: true
         type: string
-        description: 'JSON-encoded array of {triple, runner} objects describing which tar.gz archives to build. Each caller writes it inline.'
+        description: 'JSON-encoded array of {triple, runner} objects describing which tar.gz archives to build. Callers take it from `toolr ci targets`.'
 
 permissions:
   contents: read
@@ -142,6 +142,7 @@ jobs:
         with:
           subject-path: dist/crook-*.tar.gz
 
+      # ci.yml's smoke-binary and packslip-check, and release.yml, download by this name.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: crook-archive-${{ matrix.target.triple }}

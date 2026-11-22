@@ -273,6 +273,7 @@ pub fn add(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
 /// notes folder also drops its `private` entry; a `private` entry that is a
 /// notes folder cannot be removed on its own.
 pub fn remove(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
+    let value_in = value;
     let value = normalise(kind, value)?;
     if kind == ItemKind::Private {
         let is_notes: bool = c.query_row(
@@ -286,10 +287,17 @@ pub fn remove(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error>
             )));
         }
     }
-    let n = c.execute(
+    let mut n = c.execute(
         "DELETE FROM project_item WHERE kind = ?1 AND value = ?2",
         (kind.as_str(), &value),
     )?;
+    if n == 0 && kind == ItemKind::Repo {
+        // A repo added before repos were stored resolved keeps its old spelling.
+        n = c.execute(
+            "DELETE FROM project_item WHERE kind = 'repo' AND value = ?1",
+            [clean_path(value_in)?],
+        )?;
+    }
     if n == 0 {
         return Err(Error::Refused(format!("no {kind} item {value:?}")));
     }

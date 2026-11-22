@@ -270,3 +270,22 @@ fn add_repo_stores_the_resolved_path() {
     .unwrap();
     assert_eq!(s.read(|c| Ok(get(c)?.repos)).unwrap(), [plain]);
 }
+
+#[test]
+fn remove_finds_a_repo_stored_before_paths_were_resolved() {
+    let d = tempfile::tempdir().unwrap();
+    let real = std::fs::canonicalize(d.path()).unwrap();
+    std::fs::create_dir(real.join("repo")).unwrap();
+    std::os::unix::fs::symlink(&real, real.join("link")).unwrap();
+    let old = real.join("link/repo").display().to_string();
+    let (_tmp, mut s) = fresh();
+    s.write(Touch::PROJECT, |tx| {
+        tx.execute(
+            "INSERT INTO project_item(kind, value, pos) VALUES ('repo', ?1, 0)",
+            [&old],
+        )?;
+        remove(tx, ItemKind::Repo, &old).map(|_| ())
+    })
+    .unwrap();
+    assert!(s.read(|c| Ok(get(c)?.repos)).unwrap().is_empty());
+}

@@ -135,7 +135,10 @@ fn run(args: &[OsString], env: Env) -> u8 {
                 // The reader stopped early (`| head`), which is not an error.
                 Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => 0,
                 Err(e) => {
-                    eprintln!("crook: cannot write the completion script: {e}");
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "crook: cannot write the completion script: {e}"
+                    );
                     1
                 }
             }

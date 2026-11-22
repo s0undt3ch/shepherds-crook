@@ -311,26 +311,48 @@ pub fn close_tab(env: Env, tab: &str) -> Result<(), Error> {
     }
 }
 
-/// Closes what hosts `pane`: its tab when the pane is alone in it (a child's
-/// own tab), else just the pane, so a split into a shared tab leaves the rest
-/// of that tab alone. Already gone is fine.
-pub fn close_tab_of(env: Env, pane: &str) -> Result<(), Error> {
+/// Closes the tab crook opened for `child` around `pane`, or just the pane when
+/// the tab holds others. Only a tab in a `crook-*` workspace labelled as the
+/// child counts: any other pane, such as the one `crook resume` ran in, stays
+/// open. Returns whether it closed something; a pane already gone counts.
+pub fn close_tab_of(env: Env, pane: &str, child: &str) -> Result<bool, Error> {
     let info = match json(env, ["pane", "get", pane]) {
         Ok(v) => v,
-        Err(e) if e.to_string().contains("pane_not_found") => return Ok(()),
+        Err(e) if e.to_string().contains("pane_not_found") => return Ok(true),
         Err(e) => return Err(e),
     };
     let tab = str_at(&info, "/result/pane/tab_id")?.to_string();
-    let alone = match json(env, ["tab", "get", tab.as_str()]) {
-        Ok(v) => v.pointer("/result/tab/pane_count").and_then(Value::as_u64) == Some(1),
-        Err(e) if e.to_string().contains("tab_not_found") => return Ok(()),
+    let ws = str_at(&info, "/result/pane/workspace_id")?.to_string();
+    let tab_info = match json(env, ["tab", "get", tab.as_str()]) {
+        Ok(v) => v,
+        Err(e) if e.to_string().contains("tab_not_found") => return Ok(true),
         Err(e) => return Err(e),
     };
-    if alone {
-        close_tab(env, &tab)
-    } else {
-        close(env, pane)
+    if tab_info
+        .pointer("/result/tab/label")
+        .and_then(Value::as_str)
+        != Some(&child_label(child))
+    {
+        return Ok(false);
     }
+    let ws_info = json(env, ["workspace", "get", ws.as_str()])?;
+    let ours = ws_info
+        .pointer("/result/workspace/label")
+        .and_then(Value::as_str)
+        .is_some_and(|l| l.starts_with("crook-"));
+    if !ours {
+        return Ok(false);
+    }
+    let alone = tab_info
+        .pointer("/result/tab/pane_count")
+        .and_then(Value::as_u64)
+        == Some(1);
+    if alone {
+        close_tab(env, &tab)?;
+    } else {
+        close(env, pane)?;
+    }
+    Ok(true)
 }
 
 /// The pane whose foreground processes include `pid`, looked up live. Panes

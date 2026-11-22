@@ -343,8 +343,8 @@ fn wipe_drops_each_row_as_its_worktree_goes() {
         fn terminate(&self, p: u32) -> Result<(), Error> {
             self.0.terminate(p)
         }
-        fn close_pane(&self, s: &str) -> Result<(), Error> {
-            self.0.close_pane(s)
+        fn close_pane(&self, s: &str, c: &str) -> Result<bool, Error> {
+            self.0.close_pane(s, c)
         }
     }
     let w = world();

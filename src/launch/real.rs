@@ -273,13 +273,13 @@ impl Launcher for RealLauncher<'_> {
         }
     }
 
-    fn close_pane(&self, session_id: &str) -> Result<(), Error> {
+    fn close_pane(&self, session_id: &str, child: &str) -> Result<bool, Error> {
         if !herdr::present(self.env) {
-            return Ok(());
+            return Ok(false);
         }
         match herdr::pane_for(self.env, session_id) {
-            Some(pane) => herdr::close_tab_of(self.env, &pane),
-            None => Ok(()),
+            Some(pane) => herdr::close_tab_of(self.env, &pane, child),
+            None => Ok(false),
         }
     }
 }

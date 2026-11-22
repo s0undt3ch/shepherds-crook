@@ -190,8 +190,9 @@ impl Panes {
             &format!(
                 "echo \"$@\" >> {}\n\
                  case \"$*\" in\n\
-                 'pane get w1:p2') printf '%s' '{{\"result\":{{\"pane\":{{\"tab_id\":\"w1:t2\"}}}}}}';;\n\
-                 'tab get w1:t2') printf '%s' '{{\"result\":{{\"tab\":{{\"pane_count\":1}}}}}}';;\n\
+                 'pane get w1:p2') printf '%s' '{{\"result\":{{\"pane\":{{\"tab_id\":\"w1:t2\",\"workspace_id\":\"w1\"}}}}}}';;\n\
+                 'tab get w1:t2') printf '%s' '{{\"result\":{{\"tab\":{{\"pane_count\":1,\"label\":\"c1\"}}}}}}';;\n\
+                 'workspace get w1') printf '%s' '{{\"result\":{{\"workspace\":{{\"label\":\"crook-demo\"}}}}}}';;\n\
                  'pane list') printf '%s' '{{\"result\":{{\"panes\":[{{\"pane_id\":\"w1:p1\"}},{{\"pane_id\":\"w1:p2\",\"agent\":\"claude\"}}]}}}}';;\n\
                  'pane process-info --pane w1:p2') printf '%s' '{{\"result\":{{\"process_info\":{{\"foreground_processes\":[{{\"pid\":4242}}]}}}}}}';;\n\
                  'pane process-info'*) printf '%s' '{{\"result\":{{\"process_info\":{{\"foreground_processes\":[]}}}}}}';;\n\
@@ -229,7 +230,7 @@ impl Panes {
 fn close_pane_closes_the_tab_of_the_pane_found_by_the_session_pid() {
     let p = Panes::new();
     let env = p.env(true);
-    RealLauncher::new(&env).close_pane("sid").unwrap();
+    assert!(RealLauncher::new(&env).close_pane("sid", "c1").unwrap());
     assert_eq!(
         p.calls().last().map(String::as_str),
         Some("tab close w1:t2")
@@ -241,7 +242,7 @@ fn close_pane_without_a_pane_or_herdr_is_not_an_error() {
     let p = Panes::new();
     let env = p.env(true);
     let l = RealLauncher::new(&env);
-    l.close_pane("unknown-session").unwrap();
+    assert!(!l.close_pane("unknown-session", "c1").unwrap());
     assert!(
         !p.calls().iter().any(|c| c.contains(" close ")),
         "{:?}",
@@ -249,7 +250,7 @@ fn close_pane_without_a_pane_or_herdr_is_not_an_error() {
     );
     // Outside herdr, herdr is not asked at all.
     let env = p.env(false);
-    RealLauncher::new(&env).close_pane("sid").unwrap();
+    assert!(!RealLauncher::new(&env).close_pane("sid", "c1").unwrap());
     assert!(p.calls().is_empty(), "{:?}", p.calls());
 }
 

@@ -432,8 +432,8 @@ fn spawn_checks_the_mode_before_writing_rows() {
         fn terminate(&self, p: u32) -> Result<(), Error> {
             self.0.terminate(p)
         }
-        fn close_pane(&self, s: &str) -> Result<(), Error> {
-            self.0.close_pane(s)
+        fn close_pane(&self, s: &str, c: &str) -> Result<bool, Error> {
+            self.0.close_pane(s, c)
         }
     }
     let mut w = world();
@@ -623,6 +623,22 @@ fn stop_kinds() {
     };
     let r = archive_and_stop(&mut w.fx.store("demo"), "c1", &run).unwrap();
     assert_eq!(r, Stopped::Pane);
+    assert_eq!(
+        run.calls(),
+        [Call::ClosePane("sid-demo-c1".into()), Call::Terminate(4242)]
+    );
+
+    // A pane crook did not open (one `crook resume` ran in): signalled, left open.
+    let (w, _) = spawned();
+    set_pid(&w, 4242);
+    let run = Fake {
+        agents: vec![agent("sid-demo-c1", Some(4242), "interactive")],
+        foreign_pane: true,
+        ..Fake::default()
+    };
+    let r = archive_and_stop(&mut w.fx.store("demo"), "c1", &run).unwrap();
+    assert_eq!(r, Stopped::Signalled);
+    assert!(r.session_gone());
     assert_eq!(
         run.calls(),
         [Call::ClosePane("sid-demo-c1".into()), Call::Terminate(4242)]

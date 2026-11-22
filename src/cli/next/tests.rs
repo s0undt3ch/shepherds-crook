@@ -188,11 +188,3 @@ mod jump {
         }
     }
 }
-
-#[test]
-fn attach_takes_the_short_id() {
-    assert_eq!(
-        attach_id("40bf3692-9587-4e8e-9b24-85b53ecbedf1"),
-        "40bf3692"
-    );
-}

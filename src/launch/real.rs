@@ -43,7 +43,7 @@ impl<'a> RealLauncher<'a> {
 /// `CLAUDE_CODE_MESSAGING_*`, as a start has none of them.
 fn stop_command(claude: &Path, session_id: &str) -> Command {
     let mut c = Command::new(claude);
-    c.args(["stop", session_id]);
+    c.args(["stop", crate::agents::short_id(session_id)]);
     for (k, _) in std::env::vars_os().filter(|(k, _)| launch::scrubbed(k)) {
         c.env_remove(k);
     }

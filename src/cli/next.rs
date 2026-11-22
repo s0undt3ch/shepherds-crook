@@ -47,12 +47,6 @@ pub fn pick(rows: &[Row]) -> Option<Target> {
         })
 }
 
-/// `claude attach` takes a background session's short id, the first part of its
-/// session id, and refuses the full one.
-fn attach_id(session: &str) -> &str {
-    session.split('-').next().unwrap_or(session)
-}
-
 /// Focuses the target's herdr pane when crook runs in herdr and the session
 /// has one; otherwise `claude attach <session>`. Without `claude agents` only
 /// parked children can be picked, and none has a pane to find.
@@ -76,7 +70,7 @@ pub fn plan(env: Env, host: &Host) -> Result<Outcome, Error> {
     notes.push(format!("crook: attaching to {name}"));
     Ok(Outcome::Exec(Plan {
         program: launch::claude_program(env)?,
-        args: vec!["attach".into(), attach_id(&t.session).into()],
+        args: vec!["attach".into(), crate::agents::short_id(&t.session).into()],
         env: host.base_env.clone(),
         cwd: PathBuf::from("."),
         notes,

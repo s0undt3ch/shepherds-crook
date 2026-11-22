@@ -151,14 +151,17 @@ fn start_failure_carries_stderr() {
 
 #[test]
 fn stop_command_clears_claudecode_and_crook_variables() {
-    let c = stop_command(Path::new("/x/claude"), "sid");
+    let c = stop_command(
+        Path::new("/x/claude"),
+        "40bf3692-9587-4e8e-9b24-85b53ecbedf1",
+    );
     let removed: Vec<_> = c
         .get_envs()
         .filter(|(_, v)| v.is_none())
         .map(|(k, _)| k.to_string_lossy().into_owned())
         .collect();
     assert!(removed.contains(&"CLAUDECODE".to_string()), "{removed:?}");
-    assert_eq!(c.get_args().collect::<Vec<_>>(), ["stop", "sid"]);
+    assert_eq!(c.get_args().collect::<Vec<_>>(), ["stop", "40bf3692"]);
 }
 
 #[test]

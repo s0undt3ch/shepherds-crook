@@ -9,7 +9,7 @@ crook runs one orchestrator Claude Code session per project. The orchestrator pl
 other repositories, each in its own git worktree. A child's questions come to you, and crook keeps private notes out of
 public places. It is one Rust binary, plus a Claude Code mod that the binary carries and unpacks at launch.
 
-Design: [specs/2026-11-19-crook-design.md](specs/2026-11-19-crook-design.md).
+Design: [specs/archive/2026/2026-11-19-crook-design.md](specs/archive/2026/2026-11-19-crook-design.md).
 
 ## Install
 

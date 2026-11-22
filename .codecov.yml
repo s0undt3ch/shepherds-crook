@@ -87,6 +87,7 @@ ignore:
   # Tests count for what they exercise, not their own line hits.
   - "tests"
   # Unit tests and test-only helpers, in their own files under src/ (CONTRIBUTING.md).
+  # Keep in step with paths-ignore in .github/codeql/codeql-config.yml.
   - "src/**/tests.rs"
   - "src/launch/fixture.rs"
   - "src/launch/child/fake.rs"

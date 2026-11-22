@@ -370,6 +370,7 @@ jobs:
       # The `env` context is not allowed in workflow-call `with:` blocks, so this repeats
       # `MISE_VERSION` from .github/env; Renovate's regex manager bumps both.
       mise-version: v2026.11.8
+      # Keep in sync with smoke-binary's matrix.
       targets: >-
         [
           {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
@@ -467,6 +468,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Keep in sync with build-binary-archive's `targets`.
         target:
           - {triple: x86_64-unknown-linux-musl, runner: ubuntu-latest}
           - {triple: aarch64-apple-darwin, runner: macos-15}
@@ -488,15 +490,13 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/archive"
-          base="crook-0.0.0-ci-${TRIPLE}"
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum -c "${base}.tar.gz.sha256"
-          else
-            shasum -a 256 -c "${base}.tar.gz.sha256"
-          fi
-          tar -xzf "${base}.tar.gz"
-          bin="$PWD/${base}/crook"
+          # A glob, not the name, so a change to `release-version` above can't break this.
+          archive="$(ls crook-*-"${TRIPLE}".tar.gz)"
+          shasum -a 256 -c "${archive}.sha256"
+          tar -xzf "$archive"
+          bin="$PWD/${archive%.tar.gz}/crook"
           home="$(mktemp -d)"
+          # No inherited env, and crook's state and data homes in a throwaway dir.
           run() { env -i PATH=/usr/bin:/bin HOME="$home" XDG_STATE_HOME="$home/state" XDG_DATA_HOME="$home/data" "$bin" "$@"; }
           run --version | grep -E '^crook [0-9]+\.[0-9]+\.[0-9]+'
           run --help >/dev/null

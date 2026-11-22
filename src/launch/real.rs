@@ -10,7 +10,7 @@ use crate::agents::{self, Agent};
 use crate::{Env, Error, herdr, launch};
 
 use super::child::{
-    CLAUDE_START_TIMEOUT, GIT_TIMEOUT, Launcher, Mode, StartCmd, WORKTREE_ADD_TIMEOUT,
+    CLAUDE_START_TIMEOUT, GIT_TIMEOUT, Launcher, Mode, PaneClose, StartCmd, WORKTREE_ADD_TIMEOUT,
     parse_worktree_list,
 };
 
@@ -43,7 +43,7 @@ impl<'a> RealLauncher<'a> {
 /// `CLAUDE_CODE_MESSAGING_*`, as a start has none of them.
 fn stop_command(claude: &Path, session_id: &str) -> Command {
     let mut c = Command::new(claude);
-    c.args(["stop", session_id]);
+    c.args(["stop", crate::agents::short_id(session_id)]);
     for (k, _) in std::env::vars_os().filter(|(k, _)| launch::scrubbed(k)) {
         c.env_remove(k);
     }
@@ -273,13 +273,17 @@ impl Launcher for RealLauncher<'_> {
         }
     }
 
-    fn close_pane(&self, session_id: &str) -> Result<(), Error> {
+    fn close_pane(&self, session_id: &str) -> Result<PaneClose, Error> {
         if !herdr::present(self.env) {
-            return Ok(());
+            return Ok(PaneClose::NoPane);
         }
         match herdr::pane_for(self.env, session_id) {
-            Some(pane) => herdr::close_tab_of(self.env, &pane),
-            None => Ok(()),
+            Some(pane) => Ok(if herdr::close_tab_of(self.env, &pane)? {
+                PaneClose::Closed
+            } else {
+                PaneClose::NotCrooks
+            }),
+            None => Ok(PaneClose::NoPane),
         }
     }
 }

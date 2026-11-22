@@ -27,6 +27,8 @@ pub struct Fake {
     pub listed: Option<Vec<PathBuf>>,
     pub fail_stop_bg: bool,
     pub fail_close_pane: bool,
+    /// What `close_pane` reports; `Default` makes it `Closed`.
+    pub pane: PaneClose,
     /// What `branches` shows for each repo.
     pub branch_list: std::collections::BTreeMap<PathBuf, Vec<String>>,
     /// Runs inside `stop_bg` and `agents`, to change the disk mid-stop.
@@ -143,12 +145,12 @@ impl Launcher for Fake {
         self.log(Call::Terminate(pid));
         Ok(())
     }
-    fn close_pane(&self, session_id: &str) -> Result<(), Error> {
+    fn close_pane(&self, session_id: &str) -> Result<PaneClose, Error> {
         self.log(Call::ClosePane(session_id.into()));
         if self.fail_close_pane {
             return Err(Error::Refused("herdr failed".into()));
         }
-        Ok(())
+        Ok(self.pane)
     }
     fn exit_wait(&self) -> Duration {
         Duration::ZERO

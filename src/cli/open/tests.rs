@@ -97,9 +97,8 @@ fn open_builds_the_orchestrator_launch() {
     let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&want).unwrap()).unwrap();
     let state = format!(
         "//{}/**",
-        fx.tmp
-            .path()
-            .join("state/crook")
+        std::fs::canonicalize(fx.tmp.path().join("state/crook"))
+            .unwrap()
             .display()
             .to_string()
             .trim_start_matches('/')

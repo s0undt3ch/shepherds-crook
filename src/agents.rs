@@ -9,6 +9,12 @@ use serde::Deserialize;
 
 use crate::{Env, Error};
 
+/// A background session's short id, the first part of its session id:
+/// `claude attach` and `claude stop` take it and refuse the full id.
+pub fn short_id(session_id: &str) -> &str {
+    session_id.split('-').next().unwrap_or(session_id)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
     pub session_id: String,

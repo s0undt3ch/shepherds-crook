@@ -127,3 +127,9 @@ fn claude_version_reads_the_first_word() {
     let env = move |k: &str| (k == "PATH").then(|| p.clone());
     assert_eq!(claude_version(&env).unwrap(), "2.1.329");
 }
+
+#[test]
+fn short_id_is_the_first_part() {
+    assert_eq!(short_id("40bf3692-9587-4e8e-9b24-85b53ecbedf1"), "40bf3692");
+    assert_eq!(short_id("plain"), "plain");
+}

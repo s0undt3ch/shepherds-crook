@@ -276,7 +276,13 @@ fn child_label() {
 
 const PANE_GET: (&str, &str, i32) = (
     "pane get w1:p3",
-    r#"{"result":{"pane":{"pane_id":"w1:p3","tab_id":"w1:t4"}}}"#,
+    r#"{"result":{"pane":{"pane_id":"w1:p3","tab_id":"w1:t4","workspace_id":"w1"}}}"#,
+    0,
+);
+
+const CROOK_WS: (&str, &str, i32) = (
+    "workspace get w1",
+    r#"{"result":{"workspace":{"label":"crook-demo"}}}"#,
     0,
 );
 
@@ -284,12 +290,22 @@ const PANE_GET: (&str, &str, i32) = (
 fn close_closes_the_tab() {
     let f = Fake::new(&[
         PANE_GET,
-        ("tab get w1:t4", r#"{"result":{"tab":{"pane_count":1}}}"#, 0),
+        CROOK_WS,
+        (
+            "tab get w1:t4",
+            r#"{"result":{"tab":{"pane_count":1,"label":"c1"}}}"#,
+            0,
+        ),
     ]);
-    close_tab_of(&f.env(&[]), "w1:p3").unwrap();
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
     assert_eq!(
         f.calls(),
-        ["pane get w1:p3", "tab get w1:t4", "tab close w1:t4"]
+        [
+            "pane get w1:p3",
+            "tab get w1:t4",
+            "workspace get w1",
+            "tab close w1:t4"
+        ]
     );
 }
 
@@ -297,12 +313,60 @@ fn close_closes_the_tab() {
 fn close_leaves_a_shared_tab_alone() {
     let f = Fake::new(&[
         PANE_GET,
-        ("tab get w1:t4", r#"{"result":{"tab":{"pane_count":2}}}"#, 0),
+        CROOK_WS,
+        (
+            "tab get w1:t4",
+            r#"{"result":{"tab":{"pane_count":2,"label":"c1"}}}"#,
+            0,
+        ),
     ]);
-    close_tab_of(&f.env(&[]), "w1:p3").unwrap();
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
     assert_eq!(
         f.calls().last().map(String::as_str),
         Some("pane close w1:p3")
+    );
+}
+
+#[test]
+fn close_leaves_a_pane_crook_did_not_open() {
+    // `crook resume` ran in the user's own pane, in another workspace.
+    let f = Fake::new(&[
+        PANE_GET,
+        (
+            "workspace get w1",
+            r#"{"result":{"workspace":{"label":"dotfiles"}}}"#,
+            0,
+        ),
+        (
+            "tab get w1:t4",
+            r#"{"result":{"tab":{"pane_count":1,"label":"c1"}}}"#,
+            0,
+        ),
+    ]);
+    assert!(!close_tab_of(&f.env(&[]), "w1:p3").unwrap());
+    assert!(
+        !f.calls().iter().any(|c| c.contains(" close ")),
+        "{:?}",
+        f.calls()
+    );
+}
+
+#[test]
+fn close_closes_a_crook_pane_whatever_its_tab_label() {
+    // A failed rename or a split fallback leaves crook's pane under another label.
+    let f = Fake::new(&[
+        PANE_GET,
+        CROOK_WS,
+        (
+            "tab get w1:t4",
+            r#"{"result":{"tab":{"pane_count":1,"label":"claude"}}}"#,
+            0,
+        ),
+    ]);
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
+    assert_eq!(
+        f.calls().last().map(String::as_str),
+        Some("tab close w1:t4")
     );
 }
 
@@ -314,8 +378,9 @@ fn close_missing_tab_is_ok() {
             f.tmp.path().join("herdr"),
             format!(
                 "#!/bin/sh\ncase \"$*\" in\n\
-                 'pane get'*) printf '%s' '{{\"result\":{{\"pane\":{{\"tab_id\":\"w1:t4\"}}}}}}';;\n\
-                 'tab get'*) printf '%s' '{{\"result\":{{\"tab\":{{\"pane_count\":1}}}}}}';;\n\
+                 'pane get'*) printf '%s' '{{\"result\":{{\"pane\":{{\"tab_id\":\"w1:t4\",\"workspace_id\":\"w1\"}}}}}}';;\n\
+                 'tab get'*) printf '%s' '{{\"result\":{{\"tab\":{{\"pane_count\":1,\"label\":\"c1\"}}}}}}';;\n\
+                 'workspace get'*) printf '%s' '{{\"result\":{{\"workspace\":{{\"label\":\"crook-demo\"}}}}}}';;\n\
                  *) echo '{what}' >&2; exit 1;;\nesac\n"
             ),
         )
@@ -323,7 +388,7 @@ fn close_missing_tab_is_ok() {
         f
     };
     let f = gone(r#"{"error":{"code":"tab_not_found"}}"#);
-    close_tab_of(&f.env(&[]), "w1:p3").unwrap();
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
     close_tab(&f.env(&[]), "w1:t4").unwrap();
     let f = gone("boom");
     assert!(close_tab(&f.env(&[]), "w1:t4").is_err());
@@ -499,4 +564,37 @@ fn notify_argv() {
     );
     let f = Fake::new(&[("notification", "", 1)]);
     assert!(notify(&f.env(&[]), "t", "b").is_err());
+}
+
+#[test]
+fn close_counts_a_pane_or_workspace_already_gone_as_closed() {
+    let pane_gone = Fake::new(&[]);
+    std::fs::write(
+        pane_gone.tmp.path().join("herdr"),
+        "#!/bin/sh\necho '{\"error\":{\"code\":\"pane_not_found\"}}' >&2\nexit 1\n",
+    )
+    .unwrap();
+    assert!(close_tab_of(&pane_gone.env(&[]), "w1:p3").unwrap());
+
+    let ws_gone = Fake::new(&[]);
+    std::fs::write(
+        ws_gone.tmp.path().join("herdr"),
+        format!(
+            "#!/bin/sh\necho \"$@\" >> \"$0.raw\"\ncase \"$*\" in\n\
+             'pane get'*) printf '%s' '{}';;\n\
+             'tab get'*) printf '%s' '{{\"result\":{{\"tab\":{{\"pane_count\":1}}}}}}';;\n\
+             *) echo '{{\"error\":{{\"code\":\"workspace_not_found\"}}}}' >&2; exit 1;;\nesac\n",
+            PANE_GET.1
+        ),
+    )
+    .unwrap();
+    assert!(close_tab_of(&ws_gone.env(&[]), "w1:p3").unwrap());
+    assert!(
+        !ws_gone.calls().iter().any(|c| c.contains(" close ")),
+        "{:?}",
+        ws_gone.calls()
+    );
+
+    let boom = Fake::new(&[PANE_GET, ("tab get w1:t4", "boom", 1)]);
+    assert!(close_tab_of(&boom.env(&[]), "w1:p3").is_err());
 }

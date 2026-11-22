@@ -299,7 +299,7 @@ test('park filter: /loop in a child is dropped with a status line', async ($, on
   await $.session.start(START)
   const r = await $.prompt.submit({ text: '/loop 5m /x', command: { name: 'loop', args: '5m /x' }, origin: { kind: 'composer' }, wait: false })
   expect(r).toEqual({ drop: 'crook: /loop is not allowed in a child' })
-  expect(w.statuses.at(-1)).toBe('crook: /loop is not allowed in a child')
+  expect(w.statuses.at(-1)).toBe('/loop is not allowed in a child')
   expect(w.submits).toEqual([])
   expect(w.runs.some(x => x.argv[2] === 'lift')).toBe(false)
 })
@@ -308,7 +308,7 @@ test('park filter: a failed lift shows on the status line and the prompt still e
   const w = world(on, CHILD, verb => (verb === 'lift' ? { ok: false, error: 'refused' } : { ok: true, role: 'child' }))
   await $.session.start(START)
   await $.prompt.submit({ text: 'yes', origin: { kind: 'composer' }, wait: false })
-  expect(w.statuses.at(-1)).toBe('crook: park lift failed')
+  expect(w.statuses.at(-1)).toBe('park lift failed')
   expect(w.submits.map(x => x.text)).toEqual(['yes'])
 })
 
@@ -359,7 +359,7 @@ test('the orchestrator watcher wakes once for done children, acks it and shows t
   await clock.settle()
   expect(w.submits.map(x => x.text)).toEqual(['crook: children are done. Call status().'])
   expect(acked).toEqual([{ c1: 4 }])
-  expect(w.statuses.at(-1)).toBe('crook: 1 waiting on you · 2 working · card stale · c1: 3 untaken')
+  expect(w.statuses.at(-1)).toBe('1 waiting on you · 2 working · card stale · c1: 3 untaken')
 })
 
 test('orchestrator context: a composer prompt carries orch-context lines, a scheduled prompt none', async ($, on) => {

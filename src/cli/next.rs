@@ -70,7 +70,7 @@ pub fn plan(env: Env, host: &Host) -> Result<Outcome, Error> {
     notes.push(format!("crook: attaching to {name}"));
     Ok(Outcome::Exec(Plan {
         program: launch::claude_program(env)?,
-        args: vec!["attach".into(), t.session.into()],
+        args: vec!["attach".into(), crate::agents::short_id(&t.session).into()],
         env: host.base_env.clone(),
         cwd: PathBuf::from("."),
         notes,

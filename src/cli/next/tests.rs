@@ -130,7 +130,7 @@ mod jump {
         let Outcome::Exec(p) = next(&fx, true, vec![agent(9999)]) else {
             panic!("expected attach");
         };
-        assert_eq!(p.args, ["attach", "sid-c1"]);
+        assert_eq!(p.args, ["attach", "sid"]);
         assert_eq!(p.program, fx.claude());
         assert!(
             !herdr_calls(&fx)
@@ -153,7 +153,7 @@ mod jump {
         let Outcome::Exec(p) = next(&fx, true, vec![agent(4242)]) else {
             panic!("expected attach after a failed focus");
         };
-        assert_eq!(p.args, ["attach", "sid-c1"]);
+        assert_eq!(p.args, ["attach", "sid"]);
         assert!(
             p.notes
                 .iter()
@@ -167,7 +167,7 @@ mod jump {
         let Outcome::Exec(p) = next(&fx, false, vec![agent(4242)]) else {
             panic!("expected attach");
         };
-        assert_eq!(p.args, ["attach", "sid-c1"]);
+        assert_eq!(p.args, ["attach", "sid"]);
         assert!(herdr_calls(&fx).is_empty());
 
         // A parked child with no live agent attaches by its recorded session.
@@ -175,7 +175,7 @@ mod jump {
         let Outcome::Exec(p) = next(&fx, true, vec![]) else {
             panic!("expected attach");
         };
-        assert_eq!(p.args, ["attach", "sid-c1"]);
+        assert_eq!(p.args, ["attach", "sid"]);
     }
 
     #[test]

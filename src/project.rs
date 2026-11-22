@@ -215,7 +215,19 @@ fn normalise(kind: ItemKind, value: &str) -> Result<String, Error> {
     if value.trim().is_empty() {
         return Err(Error::Refused("empty value".into()));
     }
-    if kind.is_dir() {
+    if kind == ItemKind::Repo {
+        // Children record the resolved repo, so the card must spell it the same way.
+        // A repo gone from disk resolves by its parent, so it can still be removed.
+        let clean = clean_path(value)?;
+        let path = Path::new(&clean);
+        let resolved = std::fs::canonicalize(path).ok().or_else(|| {
+            let parent = std::fs::canonicalize(path.parent()?).ok()?;
+            Some(parent.join(path.file_name()?))
+        });
+        Ok(resolved
+            .and_then(|p| p.to_str().map(str::to_string))
+            .unwrap_or(clean))
+    } else if kind.is_dir() {
         clean_path(value)
     } else {
         Ok(value.to_string())
@@ -248,7 +260,20 @@ fn insert(c: &Connection, kind: ItemKind, value: &str) -> Result<(), Error> {
 /// Appends an item and returns the new version. Takes no version: it only
 /// adds. A notes folder is also private, so a note can never be public by omission.
 pub fn add(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
+    let value_in = value;
     let value = normalise(kind, value)?;
+    if kind == ItemKind::Repo {
+        // A repo added before repos were stored resolved keeps its old spelling: no second row.
+        let legacy = clean_path(value_in)?;
+        let found = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM project_item WHERE kind = 'repo' AND value = ?1)",
+            [legacy],
+            |r| r.get::<_, bool>(0),
+        );
+        if found? {
+            return bump(c);
+        }
+    }
     // The privacy check refuses a relative private entry, so none is stored.
     if kind == ItemKind::Private && !value.starts_with('/') && !names_home(&value) {
         return Err(Error::Refused(format!(
@@ -266,6 +291,7 @@ pub fn add(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
 /// notes folder also drops its `private` entry; a `private` entry that is a
 /// notes folder cannot be removed on its own.
 pub fn remove(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
+    let value_in = value;
     let value = normalise(kind, value)?;
     if kind == ItemKind::Private {
         let is_notes: bool = c.query_row(
@@ -279,10 +305,19 @@ pub fn remove(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error>
             )));
         }
     }
-    let n = c.execute(
+    let mut n = c.execute(
         "DELETE FROM project_item WHERE kind = ?1 AND value = ?2",
         (kind.as_str(), &value),
     )?;
+    if n == 0 && kind == ItemKind::Repo {
+        // A repo added before repos were stored resolved keeps its old spelling.
+        let legacy = clean_path(value_in)?;
+        let removed = c.execute(
+            "DELETE FROM project_item WHERE kind = 'repo' AND value = ?1",
+            [legacy],
+        );
+        n = removed?;
+    }
     if n == 0 {
         return Err(Error::Refused(format!("no {kind} item {value:?}")));
     }

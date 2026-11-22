@@ -83,13 +83,25 @@ pub trait Launcher {
     fn stop_bg(&self, session_id: &str) -> Result<(), Error>;
     /// SIGTERM.
     fn terminate(&self, pid: u32) -> Result<(), Error>;
-    /// Closes the herdr pane running the session, found while the session still
-    /// runs. No pane (no herdr, or none for the session) is not an error.
-    fn close_pane(&self, session_id: &str) -> Result<(), Error>;
+    /// Closes the herdr tab crook opened for the session, found while it still
+    /// runs. A pane crook did not open (one `crook resume` ran in) is left alone,
+    /// as is the lack of herdr or of any pane: none is an error.
+    fn close_pane(&self, session_id: &str) -> Result<PaneClose, Error>;
     /// How long `stop` waits for a stopped session to leave `claude agents`.
     fn exit_wait(&self) -> Duration {
         Duration::from_secs(3)
     }
+}
+
+/// What `close_pane` did with the session's pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaneClose {
+    #[default]
+    Closed,
+    /// Not one crook opened, so left open.
+    NotCrooks,
+    /// No herdr, or no pane runs the session.
+    NoPane,
 }
 
 /// A spawn: what the orchestrator asked for, and the machine it runs on.
@@ -429,6 +441,10 @@ pub fn describe_sessions(found: &[&Agent]) -> String {
 pub enum Stopped {
     Background,
     Pane,
+    /// Signalled; `pane_left_open` when it ran in a pane crook did not open.
+    Signalled {
+        pane_left_open: bool,
+    },
     /// `claude agents` listed no session for the child.
     NoSession,
     /// The session may still run: archived only, for this reason.
@@ -440,6 +456,15 @@ impl Stopped {
         match self {
             Stopped::Background => "stopped the background session".into(),
             Stopped::Pane => "stopped the session and closed its pane".into(),
+            Stopped::Signalled {
+                pane_left_open: true,
+            } => {
+                "stopped the session; the pane it ran in is not one crook opened, so it stays open"
+                    .into()
+            }
+            Stopped::Signalled {
+                pane_left_open: false,
+            } => "stopped the session".into(),
             Stopped::NoSession => "no running session".into(),
             Stopped::ArchivedOnly(why) => format!("archived only: {why}"),
         }
@@ -490,8 +515,15 @@ pub fn archive_and_stop(
                 // A close error does not skip the signal.
                 let closed = run.close_pane(&row.session_id);
                 run.terminate(recorded)?;
-                closed?;
-                Ok(Stopped::Pane)
+                Ok(match closed? {
+                    PaneClose::Closed => Stopped::Pane,
+                    PaneClose::NotCrooks => Stopped::Signalled {
+                        pane_left_open: true,
+                    },
+                    PaneClose::NoPane => Stopped::Signalled {
+                        pane_left_open: false,
+                    },
+                })
             }
             _ => Ok(Stopped::ArchivedOnly(
                 "the recorded pid is not running the session".into(),

@@ -65,9 +65,12 @@ pub struct Root {
     pub pane: String,
 }
 
+/// Every crook workspace label starts with this; `close_tab_of` relies on it.
+const WORKSPACE_PREFIX: &str = "crook-";
+
 /// The workspace id of the label `crook-<slug>`, if there is one.
 fn find_workspace(env: Env, slug: &str) -> Result<Option<String>, Error> {
-    let label = format!("crook-{slug}");
+    let label = format!("{WORKSPACE_PREFIX}{slug}");
     let list = json(env, ["workspace", "list"])?;
     Ok(list
         .pointer("/result/workspaces")
@@ -84,7 +87,7 @@ pub fn workspace(env: Env, slug: &str, cwd: &Path) -> Result<Workspace, Error> {
     if let Some(id) = find_workspace(env, slug)? {
         return Ok(Workspace { id, root: None });
     }
-    let label = format!("crook-{slug}");
+    let label = format!("{WORKSPACE_PREFIX}{slug}");
     let made = json(
         env,
         [
@@ -311,26 +314,52 @@ pub fn close_tab(env: Env, tab: &str) -> Result<(), Error> {
     }
 }
 
-/// Closes what hosts `pane`: its tab when the pane is alone in it (a child's
-/// own tab), else just the pane, so a split into a shared tab leaves the rest
-/// of that tab alone. Already gone is fine.
-pub fn close_tab_of(env: Env, pane: &str) -> Result<(), Error> {
-    let info = match json(env, ["pane", "get", pane]) {
-        Ok(v) => v,
-        Err(e) if e.to_string().contains("pane_not_found") => return Ok(()),
-        Err(e) => return Err(e),
+/// `herdr <what> get <id>`, or `None` when herdr says it is already gone.
+fn get_or_gone(env: Env, what: &str, id: &str) -> Result<Option<Value>, Error> {
+    match json(env, [what, "get", id]) {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.to_string().contains(&format!("{what}_not_found")) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Closes the tab around `pane`, or just the pane when the tab holds others.
+///
+/// Only inside a crook workspace, where crook opens its panes; its tab label is
+/// no proof, as a failed rename or a split fallback leaves another. Any other
+/// pane, such as the one `crook resume` ran in, stays open.
+///
+/// Returns whether nothing of the pane is left: true when closed, and when it
+/// was already gone.
+pub fn close_tab_of(env: Env, pane: &str) -> Result<bool, Error> {
+    let Some(info) = get_or_gone(env, "pane", pane)? else {
+        return Ok(true);
     };
     let tab = str_at(&info, "/result/pane/tab_id")?.to_string();
-    let alone = match json(env, ["tab", "get", tab.as_str()]) {
-        Ok(v) => v.pointer("/result/tab/pane_count").and_then(Value::as_u64) == Some(1),
-        Err(e) if e.to_string().contains("tab_not_found") => return Ok(()),
-        Err(e) => return Err(e),
+    let ws = str_at(&info, "/result/pane/workspace_id")?.to_string();
+    let (Some(tab_info), Some(ws_info)) = (
+        get_or_gone(env, "tab", &tab)?,
+        get_or_gone(env, "workspace", &ws)?,
+    ) else {
+        return Ok(true);
     };
-    if alone {
-        close_tab(env, &tab)
-    } else {
-        close(env, pane)
+    let ours = ws_info
+        .pointer("/result/workspace/label")
+        .and_then(Value::as_str)
+        .is_some_and(|l| l.starts_with(WORKSPACE_PREFIX));
+    if !ours {
+        return Ok(false);
     }
+    let alone = tab_info
+        .pointer("/result/tab/pane_count")
+        .and_then(Value::as_u64)
+        == Some(1);
+    if alone {
+        close_tab(env, &tab)?;
+    } else {
+        close(env, pane)?;
+    }
+    Ok(true)
 }
 
 /// The pane whose foreground processes include `pid`, looked up live. Panes

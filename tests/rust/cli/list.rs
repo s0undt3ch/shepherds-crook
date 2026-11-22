@@ -290,18 +290,15 @@ fn next_prints_the_oldest_waiting_child() {
     .unwrap();
     let o = run(tmp.path(), &["next"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    // Outside herdr, `next` runs `claude attach <session id>`.
-    assert_eq!(out(&o).trim(), "attach bbbb-background");
+    // Outside herdr, `next` runs `claude attach <short id>`.
+    assert_eq!(out(&o).trim(), "attach bbbb");
     assert!(String::from_utf8_lossy(&o.stderr).contains("alpha/c2"));
     s.write(Touch::STATUS, |tx| {
         tx.execute("UPDATE status SET changed_at = 50 WHERE child = 'c3'", [])?;
         Ok(())
     })
     .unwrap();
-    assert_eq!(
-        out(&run(tmp.path(), &["next"])).trim(),
-        "attach unknown-session"
-    );
+    assert_eq!(out(&run(tmp.path(), &["next"])).trim(), "attach unknown");
 }
 
 #[test]

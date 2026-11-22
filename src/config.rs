@@ -145,6 +145,3 @@ pub fn load(env: Env) -> Result<Config, Error> {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod home_tests;

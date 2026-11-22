@@ -2,3 +2,13 @@
 # target/nextest/ci/junit.xml, which `codecov-stage-test-results` stages for Codecov.
 [profile.ci.junit]
 path = "junit.xml"
+
+# The hook budget tests time the release binary against a 500 ms budget. Run them one at a
+# time, and never alongside `forced_panic_release`, whose `cargo build --release` would eat the
+# CPU they are timing.
+[test-groups.release-timing]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = "test(/^hook::budget::/) | test(=hook::cli::forced_panic_release) | test(=privacy::paths::tests::timing_entry_names_in_a_large_command)"
+test-group = "release-timing"

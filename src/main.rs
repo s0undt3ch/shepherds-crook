@@ -87,6 +87,26 @@ impl Write for NoStdout {
     }
 }
 
+/// Prints the completion script for `shell`. A reader that stops early is not an error.
+fn completion_print(shell: Shell) -> u8 {
+    // Into a buffer first: `generate` panics when a write fails.
+    let mut script = Vec::new();
+    clap_complete::generate(shell, &mut Cli::command(), "crook", &mut script);
+    let mut out = std::io::stdout().lock();
+    match out.write_all(&script).and_then(|()| out.flush()) {
+        Ok(()) => 0,
+        // The reader stopped early (`| head`), which is not an error.
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => 0,
+        Err(e) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "crook: cannot write the completion script: {e}"
+            );
+            1
+        }
+    }
+}
+
 /// The hook's stdout as a plain file. `std::io::stdout()` reports success on
 /// `EBADF`, which would turn an unwritable answer into no answer at all.
 fn hook_stdout() -> Box<dyn Write> {
@@ -125,11 +145,7 @@ fn run(args: &[OsString], env: Env) -> u8 {
         // Touches no state, so it skips the user-verb gate.
         Cmd::Completion {
             action: CompletionCmd::Print { shell },
-        } => {
-            let mut cmd = Cli::command();
-            clap_complete::generate(shell, &mut cmd, "crook", &mut std::io::stdout());
-            0
-        }
+        } => completion_print(shell),
         Cmd::Open { slug } => launch_verb(env, |env, host| cli::open::plan(env, &slug, host)),
         Cmd::Launch { child } => launch_verb(env, |env, host| cli::launch::plan(env, &child, host)),
         Cmd::Resume { child } => launch_verb(env, |env, host| cli::resume::plan(env, &child, host)),

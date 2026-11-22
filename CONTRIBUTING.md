@@ -30,9 +30,9 @@ prek run --all-files
 `cargo llvm-cov nextest` runs the Rust tests with coverage, as CI does. The release-only tests need
 `cargo nextest run --release --run-ignored only`.
 
-The integration tests build as one binary, `tests/rust/main.rs`, with modules laid out like `src/`.
-Use nextest: it runs each test in its own process. Plain `cargo test` runs them as threads of one
-process, so the release-only timing tests compete with each other and can miss their budget.
+The integration tests build as one binary, `tests/rust/main.rs`. Its modules follow `src/` where a
+module has integration tests. nextest runs each test in its own process, so tests can't share state.
+`cargo nextest run <filter>` runs only the tests whose names match, e.g. `cargo nextest run hook::cli`.
 
 ## What CI does not run
 

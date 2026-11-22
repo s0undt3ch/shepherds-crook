@@ -404,7 +404,7 @@ jobs:
 
   build-binary-archive:
     name: Build (binary)
-    # The release-shaped build, for every target `toolr ci targets` lists.
+    # The release-shaped build. On PRs `toolr ci targets` leaves out Intel macOS.
     needs:
       - prepare-ci
     uses: ./.github/workflows/_build-binary-archive.yml

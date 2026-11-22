@@ -30,13 +30,16 @@ class Target(NamedTuple):
 
     triple: str
     runner: str
+    # False keeps a slow-queue runner off pull requests. Pushes to main and
+    # releases always build and smoke every target.
+    on_prs: bool = True
 
 
 TARGETS = (
     Target("x86_64-unknown-linux-musl", "ubuntu-latest"),
     Target("aarch64-unknown-linux-musl", "ubuntu-24.04-arm"),
     Target("aarch64-apple-darwin", "macos-15"),
-    Target("x86_64-apple-darwin", "macos-15-intel"),
+    Target("x86_64-apple-darwin", "macos-15-intel", on_prs=False),
 )
 
 
@@ -46,10 +49,17 @@ def targets(ctx: Context) -> None:
     Print the build targets as JSON, and set them as the `targets` step output.
 
     The one list the CI and release builds, and their smoke jobs, all read.
-    The JSON goes to stdout as one plain line, so it can be piped.
+    On a pull request (`GITHUB_EVENT_NAME=pull_request`) it leaves out the
+    targets marked `on_prs=False`. The JSON goes to stdout as one plain line,
+    so it can be piped.
     """
+    pull_request = os.environ.get("GITHUB_EVENT_NAME") == "pull_request"
     payload = json.dumps(
-        [{"triple": t.triple, "runner": t.runner} for t in TARGETS],
+        [
+            {"triple": t.triple, "runner": t.runner}
+            for t in TARGETS
+            if t.on_prs or not pull_request
+        ],
         separators=(",", ":"),
     )
     output = os.environ.get("GITHUB_OUTPUT")

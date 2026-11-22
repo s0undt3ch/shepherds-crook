@@ -17,6 +17,33 @@ TARGETS = [
     {"triple": "aarch64-apple-darwin", "runner": "macos-15"},
     {"triple": "x86_64-apple-darwin", "runner": "macos-15-intel"},
 ]
+PR_TARGETS = TARGETS[:3]
+
+
+@pytest.fixture(autouse=True)
+def _no_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        ("pull_request", PR_TARGETS),
+        ("push", TARGETS),
+        ("workflow_dispatch", TARGETS),
+    ],
+)
+def test_pull_requests_skip_slow_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    event: str,
+    expected: list[dict[str, str]],
+) -> None:
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    targets(make_context(tmp_path))
+    assert json.loads(capsys.readouterr().out) == expected
 
 
 def test_targets_prints_and_writes_step_output(

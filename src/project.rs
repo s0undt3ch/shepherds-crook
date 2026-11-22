@@ -260,7 +260,19 @@ fn insert(c: &Connection, kind: ItemKind, value: &str) -> Result<(), Error> {
 /// Appends an item and returns the new version. Takes no version: it only
 /// adds. A notes folder is also private, so a note can never be public by omission.
 pub fn add(c: &Connection, kind: ItemKind, value: &str) -> Result<i64, Error> {
+    let value_in = value;
     let value = normalise(kind, value)?;
+    if kind == ItemKind::Repo {
+        // A repo added before repos were stored resolved keeps its old spelling: no second row.
+        let old: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM project_item WHERE kind = 'repo' AND value = ?1)",
+            [clean_path(value_in)?],
+            |r| r.get(0),
+        )?;
+        if old {
+            return bump(c);
+        }
+    }
     // The privacy check refuses a relative private entry, so none is stored.
     if kind == ItemKind::Private && !value.starts_with('/') && !names_home(&value) {
         return Err(Error::Refused(format!(

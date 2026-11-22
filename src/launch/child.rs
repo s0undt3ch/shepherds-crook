@@ -83,10 +83,10 @@ pub trait Launcher {
     fn stop_bg(&self, session_id: &str) -> Result<(), Error>;
     /// SIGTERM.
     fn terminate(&self, pid: u32) -> Result<(), Error>;
-    /// Closes the herdr tab crook opened for `child`, found by the session while
-    /// it still runs. A pane crook did not open (one `crook resume` ran in) is
-    /// left alone, as is the lack of herdr or of any pane: none is an error.
-    fn close_pane(&self, session_id: &str, child: &str) -> Result<PaneClose, Error>;
+    /// Closes the herdr tab crook opened for the session, found while it still
+    /// runs. A pane crook did not open (one `crook resume` ran in) is left alone,
+    /// as is the lack of herdr or of any pane: none is an error.
+    fn close_pane(&self, session_id: &str) -> Result<PaneClose, Error>;
     /// How long `stop` waits for a stopped session to leave `claude agents`.
     fn exit_wait(&self) -> Duration {
         Duration::from_secs(3)
@@ -513,7 +513,7 @@ pub fn archive_and_stop(
                 // signalled, so it closes first. Closing it hangs up the
                 // session; the SIGTERM covers a session that outlives that.
                 // A close error does not skip the signal.
-                let closed = run.close_pane(&row.session_id, child);
+                let closed = run.close_pane(&row.session_id);
                 run.terminate(recorded)?;
                 Ok(match closed? {
                     PaneClose::Closed => Stopped::Pane,

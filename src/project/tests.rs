@@ -284,9 +284,11 @@ fn remove_finds_a_repo_stored_before_paths_were_resolved() {
             "INSERT INTO project_item(kind, value, pos) VALUES ('repo', ?1, 0)",
             [&old],
         )?;
+        add(tx, ItemKind::Repo, &old)?;
         remove(tx, ItemKind::Repo, &old).map(|_| ())
     })
     .unwrap();
+    // Re-adding it made no second row, so one remove clears it.
     assert!(s.read(|c| Ok(get(c)?.repos)).unwrap().is_empty());
 }
 

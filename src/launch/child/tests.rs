@@ -432,8 +432,8 @@ fn spawn_checks_the_mode_before_writing_rows() {
         fn terminate(&self, p: u32) -> Result<(), Error> {
             self.0.terminate(p)
         }
-        fn close_pane(&self, s: &str, c: &str) -> Result<PaneClose, Error> {
-            self.0.close_pane(s, c)
+        fn close_pane(&self, s: &str) -> Result<PaneClose, Error> {
+            self.0.close_pane(s)
         }
     }
     let mut w = world();

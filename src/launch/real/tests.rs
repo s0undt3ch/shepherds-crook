@@ -234,7 +234,7 @@ fn close_pane_closes_the_tab_of_the_pane_found_by_the_session_pid() {
     let p = Panes::new();
     let env = p.env(true);
     assert_eq!(
-        RealLauncher::new(&env).close_pane("sid", "c1").unwrap(),
+        RealLauncher::new(&env).close_pane("sid").unwrap(),
         PaneClose::Closed
     );
     assert_eq!(
@@ -248,10 +248,7 @@ fn close_pane_without_a_pane_or_herdr_is_not_an_error() {
     let p = Panes::new();
     let env = p.env(true);
     let l = RealLauncher::new(&env);
-    assert_eq!(
-        l.close_pane("unknown-session", "c1").unwrap(),
-        PaneClose::NoPane
-    );
+    assert_eq!(l.close_pane("unknown-session").unwrap(), PaneClose::NoPane);
     assert!(
         !p.calls().iter().any(|c| c.contains(" close ")),
         "{:?}",
@@ -260,7 +257,7 @@ fn close_pane_without_a_pane_or_herdr_is_not_an_error() {
     // Outside herdr, herdr is not asked at all.
     let env = p.env(false);
     assert_eq!(
-        RealLauncher::new(&env).close_pane("sid", "c1").unwrap(),
+        RealLauncher::new(&env).close_pane("sid").unwrap(),
         PaneClose::NoPane
     );
     assert!(p.calls().is_empty(), "{:?}", p.calls());

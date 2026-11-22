@@ -297,7 +297,7 @@ fn close_closes_the_tab() {
             0,
         ),
     ]);
-    assert!(close_tab_of(&f.env(&[]), "w1:p3", "c1").unwrap());
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
     assert_eq!(
         f.calls(),
         [
@@ -320,7 +320,7 @@ fn close_leaves_a_shared_tab_alone() {
             0,
         ),
     ]);
-    assert!(close_tab_of(&f.env(&[]), "w1:p3", "c1").unwrap());
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
     assert_eq!(
         f.calls().last().map(String::as_str),
         Some("pane close w1:p3")
@@ -329,17 +329,8 @@ fn close_leaves_a_shared_tab_alone() {
 
 #[test]
 fn close_leaves_a_pane_crook_did_not_open() {
-    // `crook resume` ran in the user's own pane: another label, or another workspace.
-    let other_label = Fake::new(&[
-        PANE_GET,
-        CROOK_WS,
-        (
-            "tab get w1:t4",
-            r#"{"result":{"tab":{"pane_count":1,"label":"1"}}}"#,
-            0,
-        ),
-    ]);
-    let other_ws = Fake::new(&[
+    // `crook resume` ran in the user's own pane, in another workspace.
+    let f = Fake::new(&[
         PANE_GET,
         (
             "workspace get w1",
@@ -352,14 +343,31 @@ fn close_leaves_a_pane_crook_did_not_open() {
             0,
         ),
     ]);
-    for f in [other_label, other_ws] {
-        assert!(!close_tab_of(&f.env(&[]), "w1:p3", "c1").unwrap());
-        assert!(
-            !f.calls().iter().any(|c| c.contains(" close ")),
-            "{:?}",
-            f.calls()
-        );
-    }
+    assert!(!close_tab_of(&f.env(&[]), "w1:p3").unwrap());
+    assert!(
+        !f.calls().iter().any(|c| c.contains(" close ")),
+        "{:?}",
+        f.calls()
+    );
+}
+
+#[test]
+fn close_closes_a_crook_pane_whatever_its_tab_label() {
+    // A failed rename or a split fallback leaves crook's pane under another label.
+    let f = Fake::new(&[
+        PANE_GET,
+        CROOK_WS,
+        (
+            "tab get w1:t4",
+            r#"{"result":{"tab":{"pane_count":1,"label":"claude"}}}"#,
+            0,
+        ),
+    ]);
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
+    assert_eq!(
+        f.calls().last().map(String::as_str),
+        Some("tab close w1:t4")
+    );
 }
 
 #[test]
@@ -380,7 +388,7 @@ fn close_missing_tab_is_ok() {
         f
     };
     let f = gone(r#"{"error":{"code":"tab_not_found"}}"#);
-    assert!(close_tab_of(&f.env(&[]), "w1:p3", "c1").unwrap());
+    assert!(close_tab_of(&f.env(&[]), "w1:p3").unwrap());
     close_tab(&f.env(&[]), "w1:t4").unwrap();
     let f = gone("boom");
     assert!(close_tab(&f.env(&[]), "w1:t4").is_err());

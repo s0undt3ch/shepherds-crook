@@ -145,7 +145,7 @@ impl Launcher for Fake {
         self.log(Call::Terminate(pid));
         Ok(())
     }
-    fn close_pane(&self, session_id: &str, _child: &str) -> Result<PaneClose, Error> {
+    fn close_pane(&self, session_id: &str) -> Result<PaneClose, Error> {
         self.log(Call::ClosePane(session_id.into()));
         if self.fail_close_pane {
             return Err(Error::Refused("herdr failed".into()));

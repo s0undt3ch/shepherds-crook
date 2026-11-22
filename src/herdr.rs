@@ -311,11 +311,12 @@ pub fn close_tab(env: Env, tab: &str) -> Result<(), Error> {
     }
 }
 
-/// Closes the tab crook opened for `child` around `pane`, or just the pane when
-/// the tab holds others. Only a tab in a `crook-*` workspace labelled as the
-/// child counts: any other pane, such as the one `crook resume` ran in, stays
-/// open. Returns whether it closed something; a pane already gone counts.
-pub fn close_tab_of(env: Env, pane: &str, child: &str) -> Result<bool, Error> {
+/// Closes the tab around `pane`, or just the pane when the tab holds others, but
+/// only inside a `crook-*` workspace, where crook opens its panes (a label can be
+/// missed when a rename fails or a tab falls back to a split). Any other pane,
+/// such as the one `crook resume` ran in, stays open. Returns whether it closed
+/// something; a pane already gone counts.
+pub fn close_tab_of(env: Env, pane: &str) -> Result<bool, Error> {
     let info = match json(env, ["pane", "get", pane]) {
         Ok(v) => v,
         Err(e) if e.to_string().contains("pane_not_found") => return Ok(true),
@@ -328,14 +329,11 @@ pub fn close_tab_of(env: Env, pane: &str, child: &str) -> Result<bool, Error> {
         Err(e) if e.to_string().contains("tab_not_found") => return Ok(true),
         Err(e) => return Err(e),
     };
-    if tab_info
-        .pointer("/result/tab/label")
-        .and_then(Value::as_str)
-        != Some(&child_label(child))
-    {
-        return Ok(false);
-    }
-    let ws_info = json(env, ["workspace", "get", ws.as_str()])?;
+    let ws_info = match json(env, ["workspace", "get", ws.as_str()]) {
+        Ok(v) => v,
+        Err(e) if e.to_string().contains("workspace_not_found") => return Ok(true),
+        Err(e) => return Err(e),
+    };
     let ours = ws_info
         .pointer("/result/workspace/label")
         .and_then(Value::as_str)

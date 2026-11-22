@@ -34,8 +34,9 @@ The integration tests build as one binary, `tests/rust/main.rs`. Its modules fol
 module has integration tests. nextest runs each test in its own process, so tests can't share state.
 `cargo nextest run <filter>` runs only the tests whose names match, e.g. `cargo nextest run hook::cli`.
 
-Unit tests sit in a `#[cfg(test)] mod tests` beside the code. Once they outgrow the code, move the
-body to `<module>/tests.rs` and keep `#[cfg(test)] mod tests;`, as `src/cli/open.rs` does.
+Unit tests always live in their own file: `src/foo.rs` declares `#[cfg(test)] mod tests;`, and the
+tests go in `src/foo/tests.rs` (`src/foo/mod.rs` uses `src/foo/tests.rs` too). The same goes for
+test-only helper modules, such as `src/launch/fixture.rs`.
 
 ## What CI does not run
 

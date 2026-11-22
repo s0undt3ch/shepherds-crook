@@ -66,6 +66,7 @@ the repository. When it is missing the hook passes, so other contributors are no
 
 ## End-to-end checklist
 
-`scripts/e2e.sh` walks a manual checklist: open, spawn, task, `need`, `crook next`, answer, `done`, the wake-up, `/clear`,
-`crook resume`, `crook stop` and `crook list`. It starts real Claude Code sessions, so run it yourself, logged in. CI does
-not run it. Run it once without herdr, then once inside a herdr pane.
+The e2e run starts real Claude Code sessions in herdr, drives them, and checks each step against the crook database. Ask
+Claude Code to run it: the project skill `.claude/skills/crook-e2e` has the steps, and `scripts/e2e/` holds the
+helpers it uses (`setup.sh` makes a throwaway run under `$TMPDIR/crook-e2e-run.*`, `teardown.sh` removes it). It needs a
+logged-in `claude` and herdr. CI does not run it.

@@ -49,11 +49,11 @@ def _stub(path: Path, body: str) -> None:
 
 
 def test_e2e_never_inherits_the_users_xdg_dirs(tmp_path: Path) -> None:
-    """The checklist creates and wipes a project: it must run on fresh dirs only."""
+    """The e2e run creates and wipes a project: it must run on fresh dirs only."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _stub(bin_dir / "crook", "exit 0")
-    _stub(bin_dir / "claude", "exit 0")
+    log = tmp_path / "crook.log"
+    _stub(bin_dir / "crook", f'echo "$XDG_STATE_HOME $XDG_DATA_HOME" >> {log}')
     real_state = tmp_path / "real-state"
     real_data = tmp_path / "real-data"
     scratch = tmp_path / "tmp"
@@ -65,22 +65,19 @@ def test_e2e_never_inherits_the_users_xdg_dirs(tmp_path: Path) -> None:
         "XDG_STATE_HOME": str(real_state),
         "XDG_DATA_HOME": str(real_data),
         "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@example.com",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@example.com",
     }
-    # stdin is closed, so the script stops at its first step prompt.
     out = subprocess.run(
-        ["bash", str(REPO_ROOT / "scripts" / "e2e.sh")],
+        ["bash", str(REPO_ROOT / "scripts" / "e2e" / "setup.sh")],
         env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
     ).stdout
-    lines = dict(line.strip().split(":", 1) for line in out.splitlines() if line.startswith("  ") and ":" in line)
-    state, data = lines["state"].strip(), lines["data"].strip()
-    assert state != str(real_state) and data != str(real_data), out
-    assert Path(state).parent == scratch and Path(data).parent == scratch, out
+    run = Path(out.strip()).parent
+    assert run.parent == scratch.resolve(), out
+    seen = log.read_text(encoding="utf-8").split()
+    assert seen, "setup.sh never ran crook"
+    for path in seen:
+        assert Path(path).parent == run, seen
     assert not real_state.exists() and not real_data.exists()

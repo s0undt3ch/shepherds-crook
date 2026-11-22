@@ -2,8 +2,9 @@ name: crook CodeQL config
 
 # Test assertion messages print session ids, which rust/cleartext-logging reads
 # as secrets. Test code lives in predictable files (CONTRIBUTING.md), so skip it.
+# Keep this list in step with the `ignore` list in .codecov.yml.
 paths-ignore:
-  - tests
+  - tests # the top-level integration tests directory
   - src/**/tests.rs
   - src/launch/fixture.rs
   - src/launch/child/fake.rs

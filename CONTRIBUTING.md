@@ -37,7 +37,8 @@ module has integration tests. nextest runs each test in its own process, so test
 Unit tests always live in their own file: `src/foo.rs` declares `#[cfg(test)] mod tests;`, and the
 tests go in `src/foo/tests.rs` (`src/foo/mod.rs` uses `src/foo/tests.rs` too). One `tests.rs` per
 module. Test-only helpers shared across modules get their own file too: `src/launch/fixture.rs` and
-`src/launch/child/fake.rs`. A prek hook refuses an inline `#[cfg(test)] mod x { … }`.
+`src/launch/child/fake.rs`. A prek hook refuses an inline `#[cfg(test)] mod x { … }`. A new helper
+file goes in both `.codecov.yml`'s `ignore` and `.github/codeql/codeql-config.yml`'s `paths-ignore`.
 
 ## What CI does not run
 

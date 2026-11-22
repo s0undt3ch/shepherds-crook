@@ -1,6 +1,7 @@
 name: CodeQL
 
 # Advanced setup, not default setup, only so the config file can skip test code.
+# GitHub rejects these uploads while default setup is enabled: keep it off.
 on:
   push:
     branches: [main]

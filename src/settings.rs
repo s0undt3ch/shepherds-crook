@@ -43,17 +43,21 @@ fn hook(bin: &str, event: &str) -> Value {
     })
 }
 
+/// Claude Code matches rules against resolved paths: `/var` on macOS is a symlink to
+/// `/private/var`, and `$TMPDIR` ends in `/`, so the raw path can match nothing.
+fn rule_path(p: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.components().collect())
+}
+
 pub fn build(o: &Opts) -> Result<Vec<u8>, Error> {
     let bin = o.crook_bin.to_string_lossy();
     let state = format!(
         "//{}/**",
-        o.state_dir.to_string_lossy().trim_start_matches('/')
+        rule_path(&o.state_dir)
+            .to_string_lossy()
+            .trim_start_matches('/')
     );
-    let mut deny = vec![
-        format!("Read({state})"),
-        format!("Edit({state})"),
-        format!("Write({state})"),
-    ];
+    let mut deny = vec![format!("Read({state})"), format!("Edit({state})")];
     let mut allow: Vec<&str> = Vec::new();
     if o.role == Role::Child {
         allow.extend([

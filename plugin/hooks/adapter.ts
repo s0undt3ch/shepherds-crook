@@ -43,7 +43,8 @@ export function ports($: EngineInterface): Ports {
       await $.prompt.submit({ text })
     },
     status(text: string | undefined) {
-      $.ui.status(text)
+      // Claude Code already shows the plugin name before the status text.
+      $.ui.status(text?.replace(/^crook:\s*/, ''))
     },
     every(ms: number, fn: () => void) {
       $.clock.every(ms, fn)

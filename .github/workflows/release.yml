@@ -87,6 +87,7 @@ jobs:
       - name: Expose the cache seed and mise version
         id: expose
         run: |
+          : "${CACHE_SEED:?}" "${MISE_VERSION:?}"
           {
             echo "cache-seed=${CACHE_SEED}"
             echo "mise-version=${MISE_VERSION}"

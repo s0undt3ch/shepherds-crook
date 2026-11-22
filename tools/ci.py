@@ -43,26 +43,21 @@ TARGETS = (
 )
 
 
-def targets_json(release: bool) -> str:
-    """The `{triple, runner}` array the build and smoke matrices take."""
-    return json.dumps(
-        [{"triple": t.triple, "runner": t.runner} for t in TARGETS if release or t.ci],
-        separators=(",", ":"),
-    )
-
-
 @group.command
 def targets(ctx: Context, release: bool = False) -> None:
     """
-    Print the release targets as JSON, and set them as the `targets` step output.
+    Print the build targets as JSON, and set them as the `targets` step output.
 
     The one list the CI build, the CI smoke job and the release build all read.
     The JSON goes to stdout as one plain line, so it can be piped.
 
     Args:
-        release: Every release target. Without it, only the ones CI builds.
+        release: Every release target. Without it, only the ones marked `ci`.
     """
-    payload = targets_json(release)
+    payload = json.dumps(
+        [{"triple": t.triple, "runner": t.runner} for t in TARGETS if release or t.ci],
+        separators=(",", ":"),
+    )
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with Path(output).open("a", encoding="utf-8") as fh:

@@ -536,7 +536,11 @@ jobs:
           bin="$PWD/${archive%.tar.gz}/crook"
           home="$(mktemp -d)"
           # No inherited env, and crook's state and data homes in a throwaway dir.
-          run() { env -i PATH=/usr/bin:/bin HOME="$home" XDG_STATE_HOME="$home/state" XDG_DATA_HOME="$home/data" "$bin" "$@"; }
+          run() {
+            env -i PATH=/usr/bin:/bin HOME="$home" \
+              XDG_STATE_HOME="$home/state" XDG_DATA_HOME="$home/data" \
+              "$bin" "$@"
+          }
           run --version | grep -E '^crook [0-9]+\.[0-9]+\.[0-9]+'
           run --help >/dev/null
           for shell in bash zsh fish; do

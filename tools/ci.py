@@ -30,32 +30,26 @@ class Target(NamedTuple):
 
     triple: str
     runner: str
-    # Built and smoke-run on every CI run. The rest only build at release, to keep
-    # PR CI to one Linux and one macOS runner.
-    ci: bool
 
 
 TARGETS = (
-    Target("x86_64-unknown-linux-musl", "ubuntu-latest", ci=True),
-    Target("aarch64-unknown-linux-musl", "ubuntu-24.04-arm", ci=False),
-    Target("aarch64-apple-darwin", "macos-15", ci=True),
-    Target("x86_64-apple-darwin", "macos-15-intel", ci=False),
+    Target("x86_64-unknown-linux-musl", "ubuntu-latest"),
+    Target("aarch64-unknown-linux-musl", "ubuntu-24.04-arm"),
+    Target("aarch64-apple-darwin", "macos-15"),
+    Target("x86_64-apple-darwin", "macos-15-intel"),
 )
 
 
 @group.command
-def targets(ctx: Context, release: bool = False) -> None:
+def targets(ctx: Context) -> None:
     """
     Print the build targets as JSON, and set them as the `targets` step output.
 
-    The one list the CI build, the CI smoke job and the release build all read.
+    The one list the CI and release builds, and their smoke jobs, all read.
     The JSON goes to stdout as one plain line, so it can be piped.
-
-    Args:
-        release: Every release target. Without it, only the ones marked `ci`.
     """
     payload = json.dumps(
-        [{"triple": t.triple, "runner": t.runner} for t in TARGETS if release or t.ci],
+        [{"triple": t.triple, "runner": t.runner} for t in TARGETS],
         separators=(",", ":"),
     )
     output = os.environ.get("GITHUB_OUTPUT")

@@ -108,9 +108,9 @@ jobs:
         with:
           cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|prepare-release
 
-      - name: List the release targets
+      - name: List the build targets
         id: targets
-        run: toolr ci targets --release
+        run: toolr ci targets
 
       - name: Configure Git
         uses: ./.github/actions/configure-git
@@ -221,12 +221,25 @@ jobs:
       mise-version: ${{ needs.prepare-release.outputs.mise-version }}
       targets: ${{ needs.prepare-release.outputs.targets }}
 
+  smoke-binary:
+    name: Smoke
+    needs:
+      - build-binary-archive
+      - prepare-release
+    uses: ./.github/workflows/_smoke-binary-archive.yml
+    permissions:
+      contents: read
+    with:
+      targets: ${{ needs.prepare-release.outputs.targets }}
+      expected-version: ${{ needs.prepare-release.outputs.release-version }}
+
   publish-release:
     name: Publish Release
     environment: release
     needs:
       - prepare-release
       - build-binary-archive
+      - smoke-binary
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -486,6 +499,7 @@ jobs:
       - prepare-release
       - publish-packslip
       - publish-release
+      - smoke-binary
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4

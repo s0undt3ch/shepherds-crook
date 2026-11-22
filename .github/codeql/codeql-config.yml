@@ -1,11 +1,13 @@
 name: crook CodeQL config
 
 # Test code lives in predictable files (CONTRIBUTING.md): integration tests
-# under tests/, unit tests in src/**/tests.rs, and two test-only helpers.
-# Assertion messages there print session ids, which CodeQL's
-# rust/cleartext-logging reads as secrets, so skip test code entirely.
+# under tests/, Rust unit tests in src/**/tests.rs plus two test-only helpers,
+# and the mod's *.spec.ts / *.test.ts. Assertion messages there print session
+# ids, which CodeQL's rust/cleartext-logging reads as secrets, so skip them.
 paths-ignore:
   - tests
   - src/**/tests.rs
   - src/launch/fixture.rs
   - src/launch/child/fake.rs
+  - plugin/**/*.spec.ts
+  - plugin/**/*.test.ts

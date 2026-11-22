@@ -126,9 +126,19 @@ fn run(args: &[OsString], env: Env) -> u8 {
         Cmd::Completion {
             action: CompletionCmd::Print { shell },
         } => {
-            let mut cmd = Cli::command();
-            clap_complete::generate(shell, &mut cmd, "crook", &mut std::io::stdout());
-            0
+            // Into a buffer first: `generate` panics when a write fails.
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "crook", &mut script);
+            let mut out = std::io::stdout().lock();
+            match out.write_all(&script).and_then(|()| out.flush()) {
+                Ok(()) => 0,
+                // The reader stopped early (`| head`), which is not an error.
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => 0,
+                Err(e) => {
+                    eprintln!("crook: cannot write the completion script: {e}");
+                    1
+                }
+            }
         }
         Cmd::Open { slug } => launch_verb(env, |env, host| cli::open::plan(env, &slug, host)),
         Cmd::Launch { child } => launch_verb(env, |env, host| cli::launch::plan(env, &child, host)),

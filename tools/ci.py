@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
@@ -29,7 +30,8 @@ class Target(NamedTuple):
 
     triple: str
     runner: str
-    # Built on every CI run, not only at release.
+    # Built and smoke-run on every CI run. The rest only build at release, to keep
+    # PR CI to one Linux and one macOS runner.
     ci: bool
 
 
@@ -55,6 +57,7 @@ def targets(ctx: Context, release: bool = False) -> None:
     Print the release targets as JSON, and set them as the `targets` step output.
 
     The one list the CI build, the CI smoke job and the release build all read.
+    The JSON goes to stdout as one plain line, so it can be piped.
 
     Args:
         release: Every release target. Without it, only the ones CI builds.
@@ -64,7 +67,7 @@ def targets(ctx: Context, release: bool = False) -> None:
     if output:
         with Path(output).open("a", encoding="utf-8") as fh:
             fh.write(f"targets={payload}\n")
-    ctx.print(payload)
+    sys.stdout.write(payload + "\n")
 
 
 class PackslipFailure(NamedTuple):

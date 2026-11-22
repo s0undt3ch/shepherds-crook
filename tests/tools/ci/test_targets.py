@@ -9,38 +9,45 @@ import pytest
 
 from toolr.testing import make_context
 
-from tools.ci import TARGETS
 from tools.ci import targets
-from tools.ci import targets_json
+
+CI = [
+    {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
+    {"triple": "aarch64-apple-darwin", "runner": "macos-15"},
+]
+RELEASE = [
+    {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
+    {"triple": "aarch64-unknown-linux-musl", "runner": "ubuntu-24.04-arm"},
+    {"triple": "aarch64-apple-darwin", "runner": "macos-15"},
+    {"triple": "x86_64-apple-darwin", "runner": "macos-15-intel"},
+]
 
 
-def test_ci_targets_are_a_subset_of_release() -> None:
-    ci = json.loads(targets_json(release=False))
-    release = json.loads(targets_json(release=True))
-    assert ci == [
-        {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
-        {"triple": "aarch64-apple-darwin", "runner": "macos-15"},
-    ]
-    assert len(release) == len(TARGETS) == 4
-    assert all(t in release for t in ci)
-
-
-def test_triples_are_unique() -> None:
-    triples = [t.triple for t in TARGETS]
-    assert len(triples) == len(set(triples))
-
-
-@pytest.mark.parametrize("release", [False, True])
-def test_targets_writes_step_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, release: bool
+@pytest.mark.parametrize(("release", "expected"), [(False, CI), (True, RELEASE)])
+def test_targets_prints_and_writes_step_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    release: bool,
+    expected: list[dict[str, str]],
 ) -> None:
     output = tmp_path / "github_output"
     output.write_text("earlier=1\n")
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     targets(make_context(tmp_path), release=release)
-    assert output.read_text() == f"earlier=1\ntargets={targets_json(release)}\n"
+    printed = capsys.readouterr().out
+    assert printed.count("\n") == 1
+    assert json.loads(printed) == expected
+    earlier, line = output.read_text().splitlines()
+    assert earlier == "earlier=1"
+    key, _, value = line.partition("=")
+    assert key == "targets"
+    assert json.loads(value) == expected
 
 
-def test_targets_without_github_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_targets_without_github_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     targets(make_context(tmp_path), release=False)
+    assert json.loads(capsys.readouterr().out) == CI

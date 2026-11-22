@@ -57,6 +57,7 @@ pub fn build(o: &Opts) -> Result<Vec<u8>, Error> {
             .to_string_lossy()
             .trim_start_matches('/')
     );
+    // No Write rule: Claude Code warns it "never matches", as Edit rules cover writes.
     let mut deny = vec![format!("Read({state})"), format!("Edit({state})")];
     let mut allow: Vec<&str> = Vec::new();
     if o.role == Role::Child {

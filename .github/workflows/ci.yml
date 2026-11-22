@@ -356,14 +356,18 @@ jobs:
       - name: Upload test results and tell Codecov every upload is in
         uses: ./.github/actions/codecov-publish-test-results
 
-  targets:
-    name: Targets
+  prepare-ci:
+    name: Prepare CI
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
     outputs:
       targets: ${{ steps.targets.outputs.targets }}
+      # Mirror env.CACHE_SEED / env.MISE_VERSION: a workflow-call `with:` block
+      # can't read `env`, so the build job reads these outputs instead.
+      cache-seed: ${{ steps.expose.outputs.cache-seed }}
+      mise-version: ${{ steps.expose.outputs.mise-version }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -383,7 +387,15 @@ jobs:
         id: setup-toolr
         uses: ./.github/actions/setup-toolr
         with:
-          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|targets
+          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|prepare-ci
+
+      - name: Expose the cache seed and mise version
+        id: expose
+        run: |
+          {
+            echo "cache-seed=${CACHE_SEED}"
+            echo "mise-version=${MISE_VERSION}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: List the CI targets
         id: targets
@@ -393,7 +405,7 @@ jobs:
     name: Build (binary)
     # The release-shaped build, for the targets `toolr ci targets` marks for CI.
     needs:
-      - targets
+      - prepare-ci
     uses: ./.github/workflows/_build-binary-archive.yml
     permissions:
       contents: read
@@ -401,11 +413,9 @@ jobs:
       attestations: write
     with:
       release-version: 0.0.0-ci
-      cache-seed: "1"
-      # The `env` context is not allowed in workflow-call `with:` blocks, so this repeats
-      # `MISE_VERSION` from .github/env; Renovate's regex manager bumps both.
-      mise-version: v2026.11.8
-      targets: ${{ needs.targets.outputs.targets }}
+      cache-seed: ${{ needs.prepare-ci.outputs.cache-seed }}
+      mise-version: ${{ needs.prepare-ci.outputs.mise-version }}
+      targets: ${{ needs.prepare-ci.outputs.targets }}
 
   packslip-check:
     name: Packslip Check
@@ -491,7 +501,7 @@ jobs:
     # instrumented debug binary, so nothing else executes the release build.
     needs:
       - build-binary-archive
-      - targets
+      - prepare-ci
     runs-on: ${{ matrix.target.runner }}
     timeout-minutes: 10
     permissions:
@@ -499,7 +509,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+        target: ${{ fromJSON(needs.prepare-ci.outputs.targets) }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -550,8 +560,8 @@ jobs:
       - codecov-notify
       - packslip-check
       - pre-commit
+      - prepare-ci
       - smoke-binary
-      - targets
       - test-linux
       - test-macos
       - test-mod

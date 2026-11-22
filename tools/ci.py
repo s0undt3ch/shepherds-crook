@@ -5,6 +5,7 @@ CI related utilities.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
@@ -21,6 +22,49 @@ group = command_group("ci", "CI utilities", docstring=__doc__)
 PACKSLIP_PROJECT = "github.com/s0undt3ch/shepherds-crook"
 PACKSLIP_SOURCE_REPO = "https://github.com/s0undt3ch/shepherds-crook"
 PACKSLIP_COMPLETION_SHELLS = ["bash", "zsh", "fish"]
+
+
+class Target(NamedTuple):
+    """One release archive: the Rust target triple and the runner that builds it natively."""
+
+    triple: str
+    runner: str
+    # Built on every CI run, not only at release.
+    ci: bool
+
+
+TARGETS = (
+    Target("x86_64-unknown-linux-musl", "ubuntu-latest", ci=True),
+    Target("aarch64-unknown-linux-musl", "ubuntu-24.04-arm", ci=False),
+    Target("aarch64-apple-darwin", "macos-15", ci=True),
+    Target("x86_64-apple-darwin", "macos-15-intel", ci=False),
+)
+
+
+def targets_json(release: bool) -> str:
+    """The `{triple, runner}` array the build and smoke matrices take."""
+    return json.dumps(
+        [{"triple": t.triple, "runner": t.runner} for t in TARGETS if release or t.ci],
+        separators=(",", ":"),
+    )
+
+
+@group.command
+def targets(ctx: Context, release: bool = False) -> None:
+    """
+    Print the release targets as JSON, and set them as the `targets` step output.
+
+    The one list the CI build, the CI smoke job and the release build all read.
+
+    Args:
+        release: Every release target. Without it, only the ones CI builds.
+    """
+    payload = targets_json(release)
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with Path(output).open("a", encoding="utf-8") as fh:
+            fh.write(f"targets={payload}\n")
+    ctx.print(payload)
 
 
 class PackslipFailure(NamedTuple):

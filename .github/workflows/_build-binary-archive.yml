@@ -23,7 +23,7 @@ on:
       targets:
         required: true
         type: string
-        description: 'JSON-encoded array of {triple, runner} objects describing which tar.gz archives to build. Each caller writes it inline.'
+        description: 'JSON-encoded array of {triple, runner} objects describing which tar.gz archives to build. Callers take it from `toolr ci targets`.'
 
 permissions:
   contents: read

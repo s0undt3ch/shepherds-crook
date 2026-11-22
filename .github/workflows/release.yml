@@ -47,6 +47,7 @@ jobs:
       # can't read `env`, so the build job reads these outputs instead.
       cache-seed: ${{ steps.expose.outputs.cache-seed }}
       mise-version: ${{ steps.expose.outputs.mise-version }}
+      targets: ${{ steps.targets.outputs.targets }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -105,6 +106,10 @@ jobs:
         uses: ./.github/actions/setup-toolr
         with:
           cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|prepare-release
+
+      - name: List the release targets
+        id: targets
+        run: toolr ci targets --release
 
       - name: Configure Git
         uses: ./.github/actions/configure-git
@@ -213,13 +218,7 @@ jobs:
       release-patch-name: ${{ needs.prepare-release.outputs.release-patch-name }}
       cache-seed: ${{ needs.prepare-release.outputs.cache-seed }}
       mise-version: ${{ needs.prepare-release.outputs.mise-version }}
-      targets: >-
-        [
-          {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
-          {"triple": "aarch64-unknown-linux-musl", "runner": "ubuntu-24.04-arm"},
-          {"triple": "aarch64-apple-darwin", "runner": "macos-15"},
-          {"triple": "x86_64-apple-darwin", "runner": "macos-15-intel"}
-        ]
+      targets: ${{ needs.prepare-release.outputs.targets }}
 
   publish-release:
     name: Publish Release

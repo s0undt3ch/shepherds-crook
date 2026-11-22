@@ -356,9 +356,44 @@ jobs:
       - name: Upload test results and tell Codecov every upload is in
         uses: ./.github/actions/codecov-publish-test-results
 
+  targets:
+    name: Targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        # `$GITHUB_ENV` expects strict `KEY=VALUE` lines and rejects blank/comment
+        # lines as "Invalid format", so keep only the assignments.
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Setup ToolR
+        id: setup-toolr
+        uses: ./.github/actions/setup-toolr
+        with:
+          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|targets
+
+      - name: List the CI targets
+        id: targets
+        run: toolr ci targets
+
   build-binary-archive:
     name: Build (binary)
-    # The release-shaped build, minus the Intel macOS and aarch64 Linux triples.
+    # The release-shaped build, for the targets `toolr ci targets` marks for CI.
+    needs:
+      - targets
     uses: ./.github/workflows/_build-binary-archive.yml
     permissions:
       contents: read
@@ -370,12 +405,7 @@ jobs:
       # The `env` context is not allowed in workflow-call `with:` blocks, so this repeats
       # `MISE_VERSION` from .github/env; Renovate's regex manager bumps both.
       mise-version: v2026.11.8
-      # Keep in sync with smoke-binary's matrix.
-      targets: >-
-        [
-          {"triple": "x86_64-unknown-linux-musl", "runner": "ubuntu-latest"},
-          {"triple": "aarch64-apple-darwin", "runner": "macos-15"}
-        ]
+      targets: ${{ needs.targets.outputs.targets }}
 
   packslip-check:
     name: Packslip Check
@@ -461,6 +491,7 @@ jobs:
     # instrumented debug binary, so nothing else executes the release build.
     needs:
       - build-binary-archive
+      - targets
     runs-on: ${{ matrix.target.runner }}
     timeout-minutes: 10
     permissions:
@@ -468,10 +499,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep in sync with build-binary-archive's `targets`.
-        target:
-          - {triple: x86_64-unknown-linux-musl, runner: ubuntu-latest}
-          - {triple: aarch64-apple-darwin, runner: macos-15}
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -503,7 +531,8 @@ jobs:
           for shell in bash zsh fish; do
             run completion print "$shell" | grep crook >/dev/null
           done
-          run hook PreToolUse </dev/null
+          # Empty input is bad input, which the hook answers with "ask", not a crash.
+          run hook PreToolUse </dev/null | grep -F '"permissionDecision":"ask"'
 
   set-pipeline-exit-status:
     permissions: {}
@@ -522,6 +551,7 @@ jobs:
       - packslip-check
       - pre-commit
       - smoke-binary
+      - targets
       - test-linux
       - test-macos
       - test-mod

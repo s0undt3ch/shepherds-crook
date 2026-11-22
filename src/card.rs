@@ -70,12 +70,25 @@ fn push_list(out: &mut Vec<String>, header: &str, items: &[String], shown: usize
     }
 }
 
+/// `Label: a, b, c, … N more` on one line, so it costs the line budget one line.
+fn push_inline(out: &mut Vec<String>, label: &str, items: &[String], shown: usize) {
+    if items.is_empty() {
+        return;
+    }
+    let mut parts: Vec<String> = items.iter().take(shown).map(|i| one_line(i)).collect();
+    if items.len() > shown {
+        parts.push(format!("… {} more", items.len() - shown));
+    }
+    out.push(format!("{label}: {}", parts.join(", ")));
+}
+
 /// `me` is `None` for the orchestrator's card.
 pub fn render(r: &Record, kids: &[ChildLine], me: Option<&SelfPart>) -> String {
     let mut out = vec!["Project card".to_string()];
     push_text(&mut out, "What", &r.what, WHAT_WHY_LINES);
     push_text(&mut out, "Why", &r.why, WHAT_WHY_LINES);
     push_text(&mut out, "Where it stands", &r.status_text, TEXT_LINES);
+    push_inline(&mut out, "Repos", &r.repos, LIST_SHOWN);
     push_list(&mut out, "Links:", &r.links, LIST_SHOWN);
     push_list(&mut out, "Tickets:", &r.tickets, LIST_SHOWN);
     let lines: Vec<String> = kids

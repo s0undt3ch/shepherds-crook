@@ -217,9 +217,14 @@ fn normalise(kind: ItemKind, value: &str) -> Result<String, Error> {
     }
     if kind == ItemKind::Repo {
         // Children record the resolved repo, so the card must spell it the same way.
+        // A repo gone from disk resolves by its parent, so it can still be removed.
         let clean = clean_path(value)?;
-        Ok(std::fs::canonicalize(&clean)
-            .ok()
+        let path = Path::new(&clean);
+        let resolved = std::fs::canonicalize(path).ok().or_else(|| {
+            let parent = std::fs::canonicalize(path.parent()?).ok()?;
+            Some(parent.join(path.file_name()?))
+        });
+        Ok(resolved
             .and_then(|p| p.to_str().map(str::to_string))
             .unwrap_or(clean))
     } else if kind.is_dir() {

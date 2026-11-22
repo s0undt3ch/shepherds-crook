@@ -10,7 +10,7 @@ use crate::agents::{self, Agent};
 use crate::{Env, Error, herdr, launch};
 
 use super::child::{
-    CLAUDE_START_TIMEOUT, GIT_TIMEOUT, Launcher, Mode, StartCmd, WORKTREE_ADD_TIMEOUT,
+    CLAUDE_START_TIMEOUT, GIT_TIMEOUT, Launcher, Mode, PaneClose, StartCmd, WORKTREE_ADD_TIMEOUT,
     parse_worktree_list,
 };
 
@@ -273,13 +273,17 @@ impl Launcher for RealLauncher<'_> {
         }
     }
 
-    fn close_pane(&self, session_id: &str, child: &str) -> Result<bool, Error> {
+    fn close_pane(&self, session_id: &str, child: &str) -> Result<PaneClose, Error> {
         if !herdr::present(self.env) {
-            return Ok(false);
+            return Ok(PaneClose::NoPane);
         }
         match herdr::pane_for(self.env, session_id) {
-            Some(pane) => herdr::close_tab_of(self.env, &pane, child),
-            None => Ok(false),
+            Some(pane) => Ok(if herdr::close_tab_of(self.env, &pane, child)? {
+                PaneClose::Closed
+            } else {
+                PaneClose::NotCrooks
+            }),
+            None => Ok(PaneClose::NoPane),
         }
     }
 }

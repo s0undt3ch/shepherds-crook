@@ -289,3 +289,23 @@ fn remove_finds_a_repo_stored_before_paths_were_resolved() {
     .unwrap();
     assert!(s.read(|c| Ok(get(c)?.repos)).unwrap().is_empty());
 }
+
+#[test]
+fn remove_finds_a_repo_gone_from_disk_by_its_spelling() {
+    let d = tempfile::tempdir().unwrap();
+    let real = std::fs::canonicalize(d.path()).unwrap();
+    std::fs::create_dir(real.join("repo")).unwrap();
+    std::os::unix::fs::symlink(&real, real.join("link")).unwrap();
+    let spelt = real.join("link/repo").display().to_string();
+    let (_tmp, mut s) = fresh();
+    s.write(Touch::PROJECT, |tx| {
+        add(tx, ItemKind::Repo, &spelt).map(|_| ())
+    })
+    .unwrap();
+    std::fs::remove_dir(real.join("repo")).unwrap();
+    s.write(Touch::PROJECT, |tx| {
+        remove(tx, ItemKind::Repo, &spelt).map(|_| ())
+    })
+    .unwrap();
+    assert!(s.read(|c| Ok(get(c)?.repos)).unwrap().is_empty());
+}

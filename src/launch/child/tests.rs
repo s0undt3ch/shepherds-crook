@@ -432,7 +432,7 @@ fn spawn_checks_the_mode_before_writing_rows() {
         fn terminate(&self, p: u32) -> Result<(), Error> {
             self.0.terminate(p)
         }
-        fn close_pane(&self, s: &str, c: &str) -> Result<bool, Error> {
+        fn close_pane(&self, s: &str, c: &str) -> Result<PaneClose, Error> {
             self.0.close_pane(s, c)
         }
     }
@@ -633,12 +633,29 @@ fn stop_kinds() {
     set_pid(&w, 4242);
     let run = Fake {
         agents: vec![agent("sid-demo-c1", Some(4242), "interactive")],
-        foreign_pane: true,
+        pane: PaneClose::NotCrooks,
         ..Fake::default()
     };
     let r = archive_and_stop(&mut w.fx.store("demo"), "c1", &run).unwrap();
-    assert_eq!(r, Stopped::Signalled);
+    assert_eq!(
+        r,
+        Stopped::Signalled {
+            pane_left_open: true
+        }
+    );
     assert!(r.session_gone());
+    assert!(r.describe().contains("stays open"));
+
+    // No herdr, or no pane for the session: signalled, and no pane is claimed.
+    let (w, _) = spawned();
+    set_pid(&w, 4242);
+    let run = Fake {
+        agents: vec![agent("sid-demo-c1", Some(4242), "interactive")],
+        pane: PaneClose::NoPane,
+        ..Fake::default()
+    };
+    let r = archive_and_stop(&mut w.fx.store("demo"), "c1", &run).unwrap();
+    assert_eq!(r.describe(), "stopped the session");
     assert_eq!(
         run.calls(),
         [Call::ClosePane("sid-demo-c1".into()), Call::Terminate(4242)]

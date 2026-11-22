@@ -65,6 +65,7 @@ def test_e2e_never_inherits_the_users_xdg_dirs(tmp_path: Path) -> None:
         "XDG_STATE_HOME": str(real_state),
         "XDG_DATA_HOME": str(real_data),
         "GIT_CONFIG_GLOBAL": os.devnull,
+        "CROOK": str(bin_dir / "crook"),
     }
     out = subprocess.run(
         ["bash", str(REPO_ROOT / "scripts" / "e2e" / "setup.sh")],

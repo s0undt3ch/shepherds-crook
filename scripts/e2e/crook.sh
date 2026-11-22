@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # crook.sh <run.env> <args...>: crook on the run's state, without the caller's identity. NO_HERDR=1 hides herdr.
 set -euo pipefail
-# shellcheck disable=SC1090
-source "$1"
+# shellcheck source=scripts/e2e/lib.sh
+source "$(dirname "$0")/lib.sh"
+load_run "$1"
 shift
 unset_herdr=()
 if [ -n "${NO_HERDR:-}" ]; then unset_herdr=(-u HERDR_ENV); fi

@@ -2,15 +2,16 @@
 # setup.sh [slug]: makes a throwaway run under $TMPDIR/crook-e2e-run.* and prints its env file.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/e2e/lib.sh
+source "$here/lib.sh"
 slug="${1:-}"
 # This checkout's build by default, so a run never replaces the user's installed crook.
 crook="${CROOK:-$here/../../target/release/crook}"
 [ -x "$crook" ] || { echo "no crook at $crook; run cargo build --release, or set CROOK" >&2; exit 1; }
 crook="$(cd "$(dirname "$crook")" && pwd)/$(basename "$crook")"
 
-# Resolved, because Claude Code reports /private/var on macOS and the guards compare prefixes.
-tmp="$(realpath "${TMPDIR:-/tmp}")"
-run="$(mktemp -d "$tmp/crook-e2e-run.XXXXXX")"
+# Under the resolved $TMPDIR, because Claude Code reports /private/var on macOS and the guards compare prefixes.
+run="$(mktemp -d "$(e2e_tmp)/${RUN_PREFIX}XXXXXX")"
 trap 'rm -rf "$run"' ERR
 # Unique per run: herdr workspace labels are global, and a dead run's crook-<slug> would be reused.
 [ -n "$slug" ] || slug="e2e$(printf '%s' "${run##*.}" | tr '[:upper:]' '[:lower:]')"

@@ -1,8 +1,14 @@
 # shellcheck shell=bash
 # Sourced by the scripts/e2e/ helpers. load_run <run.env> sources a run's env file and refuses one that
-# could point anywhere but a run setup.sh made: every destructive step trusts RUN, S, D and R.
+# could point anywhere but a run setup.sh made: every step trusts RUN, S, D, C, R, N and SLUG.
+
+# A run is a direct child of the resolved $TMPDIR named like this; setup.sh makes it, load_run checks it.
+RUN_PREFIX=crook-e2e-run.
 
 e2e_tmp() { realpath "${TMPDIR:-/tmp}"; }
+
+# The run's project database.
+run_db() { echo "$S/crook/$SLUG/crook.db"; }
 
 die() { echo "e2e: $*" >&2; exit 1; }
 
@@ -21,7 +27,7 @@ load_run() {
   [ -n "$RUN" ] && [ -d "$RUN" ] || die "RUN is empty or missing: '$RUN'"
   [ "$(realpath "$RUN")" = "$RUN" ] || die "RUN is not a resolved path: $RUN"
   local base; base="$(e2e_tmp)"
-  case "$RUN" in "$base"/crook-e2e-run.*) ;; *) die "RUN is not a run directory: $RUN" ;; esac
+  case "$RUN" in "$base/$RUN_PREFIX"*) ;; *) die "RUN is not a run directory: $RUN" ;; esac
   case "${RUN#"$base"/}" in */*) die "RUN is not a direct child of $base: $RUN" ;; esac
   local v
   for v in S D C R N; do

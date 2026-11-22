@@ -5,4 +5,4 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_run "$1"
 case "$2" in .* | *$'\n'.*) die "db.sh takes SQL, not sqlite3 dot-commands" ;; esac
-exec sqlite3 -readonly -header "$S/crook/$SLUG/crook.db" "$2"
+exec sqlite3 -readonly -header "$(run_db)" "$2"

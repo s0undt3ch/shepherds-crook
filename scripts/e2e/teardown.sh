@@ -10,12 +10,12 @@ command -v lsof >/dev/null || die "lsof is needed to find what still runs in the
 # Out of the run, so this shell is not one of the processes left in it.
 cd /
 failed=0
-c() { bash "$here/crook.sh" "$envf" "$@"; }
+run_crook() { bash "$here/crook.sh" "$envf" "$@"; }
 
-db="$S/crook/$SLUG/crook.db"
+db="$(run_db)"
 if [ -f "$db" ]; then
   for child in $(sqlite3 -readonly "$db" "select child from children where archived = 0"); do
-    c stop "$SLUG/$child" || failed=1
+    run_crook stop "$SLUG/$child" || failed=1
   done
   pid="$(sqlite3 -readonly "$db" "select pid from orchestrator" 2>/dev/null)"
   if [ -n "$pid" ] && in_run_path "$(cwd_of "$pid")"; then kill "$pid" || failed=1; fi
@@ -31,12 +31,13 @@ sleep 3
 # Only workspaces whose every pane is inside the run, so none of the user's is touched.
 for ws in $(herdr pane list 2>/dev/null | jq -r --arg run "$RUN" '
   .result.panes | group_by(.workspace_id)[]
-  | select(all(.[]; (.cwd // "") as $c | $c == $run or ($c | startswith($run + "/"))))
+  | select(all(.[]; (.cwd // "") as $c | ($c | test("/\\.\\.(/|$)") | not)
+      and ($c == $run or ($c | startswith($run + "/")))))
   | .[0].workspace_id'); do
   if herdr workspace close "$ws" >/dev/null; then echo "closed herdr workspace $ws"; else failed=1; fi
 done
 
-if [ -f "$db" ]; then c wipe "$SLUG" </dev/null || failed=1; fi
+if [ -f "$db" ]; then run_crook wipe "$SLUG" </dev/null || failed=1; fi
 
 # Any process still working inside the run, claude or not (a bg session runs as "claude bg-spare").
 leftovers() {

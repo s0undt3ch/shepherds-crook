@@ -5,6 +5,8 @@ description: Use when asked to run crook's end-to-end test, e2e checklist or smo
 
 # crook e2e
 
+macOS only for now: the scripts rely on `lsof`, `realpath` and `ps eww` as macOS ships them.
+
 You drive the run yourself through herdr; the user does not paste anything. Every session, prompt and answer goes
 through `herdr pane` commands and the scripts in `scripts/e2e/`. A step passes on what the database, git and process
 table show, never on what a model says: an orchestrator has reported children "running" while they sat at a trust
@@ -25,7 +27,8 @@ prompt.
 1. `cargo build --release`. The run uses this build, `target/release/crook`, with its mod embedded; your installed
    `crook` is left alone.
 2. `bash scripts/e2e/setup.sh` prints the run's env file. Shell variables do not survive between Bash calls, so start
-   every later call with `source <that file>`. It sets `RUN ENVF E2E SLUG CROOK R S D N`.
+   every later call with `source <that file>`. It sets `RUN ENVF E2E SLUG CROOK` and the run's repo `R`, crook state
+   `S`, data `D`, config `C` and notes folder `N`.
 3. A driver pane: `herdr workspace create --cwd "$R" --label e2e-driver --no-focus`; its
    `.result.root_pane.pane_id` is the driver. A fresh pane has no `CLAUDECODE`, so crook runs there.
 4. Keep every pane id you find in the env file so later calls have it: `echo "DRV=<id>" >> "$ENVF"`, and the same for
@@ -48,6 +51,9 @@ outside the run.
 | find a pane | `herdr pane list \| jq -r '.result.panes[] \| "\(.pane_id) \(.workspace_id) \(.cwd)"'`, by cwd |
 | a session's pid | `claude agents --json \| jq '.[] \| select(.cwd == "<worktree>") \| .pid'` |
 | wait | 20–60 s after a prompt, then check; models take that long |
+
+A full check is one run with herdr and one without. Until the blocker under "Without herdr" is fixed, the run
+without herdr stops after step 2.
 
 ## Steps (with herdr)
 
@@ -80,10 +86,23 @@ session id up to its first `-`; the full id is refused.
 Before spawning: in a new pane made with `--cwd $N`, run `env -u CLAUDECODE claude`, `trust.sh <pane>`, end that
 session, and the same for `$R`. `--bg` refuses a folder nobody has trusted.
 
-Known blocker, as of 2026-11-22: a second `--bg` child can start inside a pre-warmed `claude bg-spare` that keeps the
-first child's environment. Right after step 2, for each child take its pid from the "session's pid" helper and run
+Known blocker, as of 2026-11-22, until crook stops carrying a child's identity only in its environment: a second
+`--bg` child can start inside a pre-warmed `claude bg-spare` that keeps the first child's environment. Right after
+step 2, for each child take its pid from the "session's pid" helper and run
 `ps eww -p <pid> | tr ' ' '\n' | grep '^CROOK_CHILD='`. Each must name its own child. If one names the other, record it
-and stop.
+and stop. Drop this paragraph once a run passes this check.
+
+## What the checks read
+
+The scripts and the Pass column match text that crook or Claude Code prints. If a check starts failing for no reason,
+look for a wording change first:
+
+- Claude Code dialogs: `Accessing workspace:`, `hasn't worked here before`, `❯ Yes, I trust this folder`,
+  `❯ Yes, add it`, `Waiting for your answer`.
+- crook's mod: the status line `⚠ crook: …` (`plugin/hooks/core/orchestrator.ts`) and `Prompt from the crook plugin`
+  (the label Claude Code puts on a mod's `$.prompt.submit`).
+- crook's CLI: `focused pane`, `the pane it ran in is not one crook opened` (`src/cli/next.rs`,
+  `src/launch/child.rs`).
 
 ## Mistakes that cost runs
 

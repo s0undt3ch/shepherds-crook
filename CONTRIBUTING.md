@@ -69,4 +69,4 @@ the repository. When it is missing the hook passes, so other contributors are no
 The e2e run starts real Claude Code sessions in herdr, drives them, and checks each step against the crook database. Ask
 Claude Code to run it: the project skill `.claude/skills/crook-e2e` has the steps, and `scripts/e2e/` holds the
 helpers it uses (`setup.sh` makes a throwaway run under `$TMPDIR/crook-e2e-run.*`, `teardown.sh` removes it). It needs a
-logged-in `claude` and herdr. CI does not run it.
+logged-in `claude`, herdr and macOS. A full check is one run with herdr and one without. CI does not run it.

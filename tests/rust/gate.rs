@@ -1,9 +1,7 @@
-mod common;
-
 use std::io::Write;
 use std::process::{Output, Stdio};
 
-use common::crook;
+use crate::common::crook;
 
 fn run_with_stdin(mut cmd: std::process::Command, input: &str) -> Output {
     let mut child = cmd

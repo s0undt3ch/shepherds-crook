@@ -1,10 +1,8 @@
-mod common;
-
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
 
-use common::crook;
+use crate::common::crook;
 
 /// A fake `claude`: answers the preflight calls and records how it was started.
 fn fake_claude(dir: &Path) {

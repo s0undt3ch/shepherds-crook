@@ -1,9 +1,7 @@
-mod common;
-
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-use common::crook;
+use crate::common::crook;
 use crook::Env;
 use crook::crew::{self, Child};
 use crook::project;

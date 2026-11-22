@@ -1,9 +1,7 @@
-mod common;
-
 use std::path::Path;
 use std::process::Output;
 
-use common::crook;
+use crate::common::crook;
 use crook::crew::{self, Child};
 use crook::store::{Mode, Store, Touch};
 

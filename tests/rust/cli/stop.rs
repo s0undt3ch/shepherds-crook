@@ -1,11 +1,9 @@
 //! `crook stop` as the binary runs it: the gate, and a child with no session.
 
-mod common;
-
 use std::path::Path;
 use std::process::Output;
 
-use common::crook;
+use crate::common::crook;
 use crook::crew::{self, Child};
 use crook::store::{Mode, Store, Touch};
 

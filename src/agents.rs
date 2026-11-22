@@ -154,7 +154,7 @@ pub fn claude_version(env: Env) -> Result<String, Error> {
 mod tests {
     use super::*;
 
-    const FIXTURE: &str = include_str!("../tests/fixtures/agents.json");
+    const FIXTURE: &str = include_str!("../tests/rust/fixtures/agents.json");
 
     #[test]
     fn agents_both_keys() {
@@ -213,7 +213,10 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let bin = tmp.path().join("claude");
-        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/agents.json");
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/rust/fixtures/agents.json"
+        );
         std::fs::write(
             &bin,
             format!(

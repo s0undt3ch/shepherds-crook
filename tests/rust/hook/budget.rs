@@ -3,14 +3,12 @@
 //! a release build:
 //! `cargo nextest run --release --run-ignored only`.
 
-mod common;
-
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use common::crook;
+use crate::common::crook;
 use crook::Env;
 use crook::project::{self, ItemKind};
 use crook::store::{Mode, Store, Touch};

@@ -31,11 +31,18 @@ While Claude is not running in an interactive host shell:
 So the child hook checks the coordinator's status app before sending
 ([0009](0009-child-stop-hook-reports-completion.md)), and the coordinator rescans results when it starts.
 
+The loop: `sh -c "claude --session-id <id> '<first task>'; while :; do claude --resume <id>; done"`.
+
 ### Consequences
 
-- Good, because children and notes survive a coordinator restart without `--outlive-parent`.
-- Bad, because the respawn loop is untested.
+- Good, because children keep working while the coordinator restarts, and notes survive without
+  `--outlive-parent`.
+- Good, because text typed in during the restart gap reached the next Claude (observed once).
+- Bad, because `/exit` and Ctrl+C restart the coordinator instead of ending it; ending an effort means
+  ending the terminal, which ends its children too.
+- Bad, because the loop only covers Claude exiting. Losing the terminal itself (closed pane, core crash,
+  reboot) ends the children; [0017](0017-resume-children-from-a-roster.md) covers that.
 
 ### Confirmation
 
-Spikes 4 and 5 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md). Respawn loop: not yet.
+Spikes 4, 5 and 12 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).

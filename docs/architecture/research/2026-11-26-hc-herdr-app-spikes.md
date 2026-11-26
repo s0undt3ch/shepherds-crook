@@ -116,3 +116,45 @@ whole repository or everything below it."
 Not checked: whether `additionalDirectories` without a prompt actually grants access.
 
 Used by [0013](../decisions/0013-directory-access-through-trusted-roots.md).
+
+## 11. Coordinator dies, children die, everything is resumed
+
+Setup: a coordinator with a fixed session id, told a codename. Two children with fixed session ids:
+
+- `busy`: mid-way through a shell loop writing `step 1` to `step 6`, five seconds apart;
+- `asker`: had written `apple.txt`, then blocked on an AskUserQuestion.
+
+Then `hc kill coord`:
+
+- All three ended together (default parent lifetime).
+- `busy`'s shell loop ran on for about 10 to 15 seconds after the kill and wrote two more steps (3 and 4),
+  then stopped. In-flight commands are cut off part-way, not cleanly.
+
+Then each was started again with `claude --resume <id>` in its original folder, the children with
+`--parent coord` and this prompt: "You were killed by a restart and have just been resumed. Check what you
+already did on disk, then finish your original task without redoing completed work."
+
+- The coordinator remembered the codename. When the resumed `asker` blocked, the coordinator said it was
+  "the same task as t13, resumed after a restart".
+- `busy`'s transcript showed its command as "Interrupted". It read `steps.txt`, said "Steps 1–4 are
+  already in steps.txt, so I'll append only steps 5 and 6", and did exactly that.
+- `asker` saw `apple.txt` was done and asked its question again.
+
+Caveat: the children redid nothing because the prompt told them to check the disk first, and the task's
+state was easy to read from the disk. A task with hidden progress would need an explicit progress record.
+
+## 12. Coordinator in a respawn loop
+
+Host program: `sh -c "claude --session-id L '<first task>'; while :; do claude --resume L; done"`.
+
+- After `/exit`, the Claude process under the loop changed (pid 62863 to 64523), running `--resume L`.
+  The terminal address stayed the same (t17).
+- The restarted coordinator still knew its codename.
+- A child (`busy2`, an 8-step shell loop) kept running through two coordinator restarts and finished all 8
+  steps.
+- Sent during the restart gap: a child's exit note and an `hc send` message. Both reached the new Claude,
+  merged onto one prompt line:
+  `<hc>t19 ex3 exited (exit 5). Read: hc read t19</hc>Gap message: reply GAPOK if you can read this.`
+  It answered `GAPOK`. Observed once; not a guarantee.
+- `/exit` and Ctrl+C no longer end the coordinator: the loop restarts it. Ending it means ending the
+  terminal (closing the pane or `hc kill`), which also ends its children.

@@ -2,22 +2,10 @@
 min_version = "2026.11.1"
 
 [tools]
-# Same toolchain profile as toolr: CI runners default to `minimal`, which
-# ships no clippy, so name the components. Keep `rust-version` in
-# Cargo.toml equal to this pin.
-rust = { version = "1.99.1", profile = "minimal", components = "clippy,rustfmt" }
-"cargo:cargo-nextest" = "0.9.152"
-# `toolr release bump` runs `cargo set-version`, which updates Cargo.toml and Cargo.lock together.
-"cargo:cargo-edit" = "0.13.14"
-"aqua:taiki-e/cargo-llvm-cov" = "0.9.1"
 prek = "0.5.11"
-# The mod's npm package brings `tsc` and `vitest`.
-node = "26.13.1"
 uv = "0.13.9"
-git-cliff = "2.14.2"
 typos = "1.52.2"
 rumdl = "v0.3.5"
-"aqua:quarylabs/sqruff" = "0.44.0"
 gitleaks = "8.30.1"
 shellcheck = "0.11.0"
 jactionlint = "v2.6.0"

@@ -15,8 +15,8 @@ trim_trailing_whitespace = true
 indent_style = space
 max_line_length = 100
 
-# Rust + TOML + Python + YAML — 4-space indent.
-[*.{rs,toml,py,pyi}]
+# TOML + Python — 4-space indent.
+[*.{toml,py,pyi}]
 indent_size = 4
 
 [*.{yml,yaml}]
@@ -31,12 +31,3 @@ trim_trailing_whitespace = false
 # Shell + JSON — 2-space indent is the conventional default.
 [*.{sh,bash,zsh,fish,json}]
 indent_size = 2
-
-# Makefiles require literal tabs.
-[Makefile]
-indent_style = tab
-
-# Generated reference files: don't fight whatever the generator
-# emits.
-[skills/*/references/*.md]
-max_line_length = unset

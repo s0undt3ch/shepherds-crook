@@ -1,5 +1,0 @@
-run/xdg/
-run/work/
-run/*.log
-mkdb/target/
-run/settings.json

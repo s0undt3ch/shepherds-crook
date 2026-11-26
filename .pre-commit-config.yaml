@@ -1,8 +1,8 @@
 ---
 minimum_pre_commit_version: 3.0.0
 # Install both the pre-commit and commit-msg git hooks on `prek install`.
-# `default_stages` keeps `pass_filenames: false` hooks (clippy) from running
-# a second time at the commit-msg stage.
+# `default_stages` keeps `pass_filenames: false` hooks from running a second
+# time at the commit-msg stage.
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
 repos:
@@ -26,7 +26,6 @@ repos:
       - id: shellcheck
       - id: gitleaks
       - id: typos
-      - id: sqruff-fix
 
       # git-cliff builds the changelog from commit subjects, so spell-check
       # the message too. Check-only: the message is never rewritten.
@@ -36,32 +35,10 @@ repos:
         args: [typos]
         stages: [commit-msg]
 
-      - id: system-tool
-        alias: rustfmt
-        name: rustfmt
-        args: [rustfmt]
-        types: [rust]
-
       - id: rumdl
 
   - repo: local
     hooks:
-      # Keeps Cargo.lock in step with Cargo.toml. No compilation: the
-      # clippy hook picks that up on `.rs` changes.
-      - id: cargo-lock
-        name: Sync Cargo.lock with Cargo.toml
-        entry: cargo fetch
-        language: system
-        pass_filenames: false
-        files: ^(Cargo\.toml|Cargo\.lock)$
-
-      - id: clippy
-        name: clippy
-        entry: cargo clippy --all-targets -- -D warnings
-        language: system
-        types: [rust]
-        pass_filenames: false
-
       # Hooks backed by toolr commands in tools/. They need the `toolr` binary
       # (pinned in mise.toml; Setup ToolR provides it in CI).
       - id: check-gate-needs
@@ -77,26 +54,9 @@ repos:
             tools/precommit/(workflows|_common)\.py$
           )$
 
-      # CONTRIBUTING.md: unit tests and test-only helpers live in their own files.
-      - id: no-inline-test-modules
-        name: Keep test modules in their own files
-        language: pygrep
-        entry: '#\[cfg\(test\)\]\s*(pub(\([a-z]+\))?\s+)?mod\s+\w+\s*\{'
-        args: [--multiline]
-        files: ^src/.*\.rs$
-
       - id: private-words
         name: Keep private words out of the tracked tree
         entry: toolr pre-commit private-words
         language: system
         pass_filenames: false
         always_run: true
-
-      # The mod's type-check needs Claude Code's own declaration file, which is
-      # not vendored (licence), so CI skips this hook (`SKIP: tsc`).
-      - id: tsc
-        name: tsc (the mod)
-        entry: npm run typecheck
-        language: system
-        pass_filenames: false
-        files: ^plugin/.*\.ts$

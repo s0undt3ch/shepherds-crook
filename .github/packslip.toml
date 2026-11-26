@@ -1,7 +1,0 @@
-# The `toolr ci packslip-check` PR gate fails when this and the archives disagree.
-bin = ["crook"]
-
-[[resource]]
-kind = "completion"
-shells = ["bash", "zsh", "fish"]
-exec = ["crook", "completion", "print", "{shell}"]

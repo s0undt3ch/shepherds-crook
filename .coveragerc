@@ -1,4 +1,0 @@
-[run]
-# Measure the toolr commands, not the tests that exercise them.
-source = tools
-branch = True

@@ -1,10 +1,5 @@
-target/
-node_modules/
-coverage/
-plugin/.claude-plugin/types/
 __pycache__/
 .pytest_cache/
-.coverage
-.coverage.*
+.DS_Store
 # prek's hook cache in CI (setup-pre-commit sets PREK_HOME here).
 .cache/

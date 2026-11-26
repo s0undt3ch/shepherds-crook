@@ -1,3 +1,0 @@
-# The helpers source lib.sh beside them; let shellcheck follow it when given one file.
-external-sources=true
-source-path=SCRIPTDIR

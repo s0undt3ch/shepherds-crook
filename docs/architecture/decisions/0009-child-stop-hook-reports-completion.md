@@ -35,7 +35,8 @@ Chosen option: a Stop hook in each child. On each turn end it:
 ### Confirmation
 
 Spike 1 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md): a turn end sends no note.
-The hook itself has not been built.
+Spike 14: a throwaway version of this hook reported a changed result, stayed silent on an unchanged turn,
+and held a result while the coordinator was blocked.
 
 ## Pros and cons of the options
 

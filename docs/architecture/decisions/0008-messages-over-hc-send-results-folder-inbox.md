@@ -22,8 +22,9 @@ Chosen option: `hc send` plus files.
 - `hc send <t> <text>` types the text in and presses Enter. It waits for a person's unfinished draft, and
   the receiver sees it tagged, for example `<hc from="t7 review">…</hc>`.
 - Long content goes in a file; the message carries its path.
-- A child writes its result to `results/<child>.md` before sending. If the send fails, the file is still
-  there, and the coordinator reads unread results at start and on every turn.
+- A child writes its result to `results/<child>.md` before sending. A "delivered" checksum per result
+  records what the coordinator has seen. If the send fails, the mark stays old, and a UserPromptSubmit hook
+  in the coordinator reports every result whose checksum differs from its mark, at start and on every turn.
 
 ### Consequences
 
@@ -35,7 +36,7 @@ Chosen option: `hc send` plus files.
 
 ### Confirmation
 
-Spike 2 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
+Spikes 2 and 14 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
 
 ## Pros and cons of the options
 

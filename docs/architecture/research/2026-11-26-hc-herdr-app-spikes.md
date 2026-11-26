@@ -175,3 +175,23 @@ input to `roster/$HC_TERMINAL_ID.json`.
   new session id.
 - Resume: `hc run --bg --name w1r sh -c "<template command> --resume <id> '<prompt>'"` answered from memory.
   The hook wrote `t3.json` with the same `session_id` and `source: resume`.
+
+## 14. Child Stop hook and coordinator rescan, end to end
+
+Throwaway hooks, not the real implementation.
+
+- **Child Stop hook** (in the template's settings): finds its parent and name with `hc get $HC_TERMINAL_ID`,
+  checksums `results/<name>.md`, and returns at once if the checksum matches its "delivered" mark. Otherwise,
+  if the parent's status app is `claude-code`, it runs `hc send <parent> "Result updated: <path>"` and, only
+  if that succeeds, saves the checksum as the mark.
+- **Coordinator UserPromptSubmit hook**: for each result whose checksum differs from its mark, prints
+  `Undelivered child result: <path>` and saves the mark.
+
+Results:
+
+| Case | Outcome |
+| --- | --- |
+| Child writes `answer: 42` | Coordinator got `<hc from="t5 wk">Result updated: …/results/wk.md</hc>`, read it, replied `answer: 42` |
+| Child turn that changes nothing | Nothing sent |
+| Child appends `answer: 43` while the coordinator is blocked on a question | Send refused; mark not updated |
+| New coordinator prompt after that | The rescan hook's output reached the coordinator, which replied `last line: answer: 43`; mark updated |

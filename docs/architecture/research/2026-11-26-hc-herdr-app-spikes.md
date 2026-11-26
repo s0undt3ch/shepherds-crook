@@ -158,3 +158,20 @@ Host program: `sh -c "claude --session-id L '<first task>'; while :; do claude -
   It answered `GAPOK`. Observed once; not a guarantee.
 - `/exit` and Ctrl+C no longer end the coordinator: the loop restarts it. Ending it means ending the
   terminal (closing the pane or `hc kill`), which also ends its children.
+
+## 13. hc templates, session ids and resuming
+
+A template `worker.md` in the scratch core's `herdr-core/templates/`, with
+`command: claude --model haiku --settings <hooks.json>`. The settings add a SessionStart hook that saves its
+input to `roster/$HC_TERMINAL_ID.json`.
+
+- `hc run --bg --name w1 worker "Reply with the single word TEMPLATED."` worked: `first_message.sent` was
+  true, the first message was the template body followed by the task, and the child replied `TEMPLATED`.
+- hc runs the template command as `sh -c '<command>'` (the terminal's argv).
+- The hook wrote `t1.json` with `session_id`, `cwd`, `hook_event_name: SessionStart`, `source: startup`. The
+  transcript `<session_id>.jsonl` existed.
+- Extra arguments after the template name are dropped without an error:
+  `hc run --bg --name w2 worker --session-id 1111… "Reply X."` kept the template's argv unchanged and got a
+  new session id.
+- Resume: `hc run --bg --name w1r sh -c "<template command> --resume <id> '<prompt>'"` answered from memory.
+  The hook wrote `t3.json` with the same `session_id` and `source: resume`.

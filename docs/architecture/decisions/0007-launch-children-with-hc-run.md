@@ -27,8 +27,9 @@ Chosen option: hc templates plus brief files.
 - It starts the child with
   `hc run --bg --name <child> --label crook.effort=<id> <template> "Read <brief>. Report to <coordinator>."`.
   The task becomes the child's first message.
-- It passes `claude --session-id <uuid>` so the child's transcript is known before it starts. How a
-  session id gets through a template's fixed command is untested.
+- Templates cannot take per-child arguments: extra arguments after the template name are dropped. Each
+  template's command carries crook's settings with a SessionStart hook, which records the child's
+  session id against its hc terminal id ([0017](0017-resume-children-from-a-roster.md)).
 - It never passes `--no-notify`: parent notes are how the coordinator hears that a child blocked or exited.
 - It does not pass `--outlive-parent`; see [0011](0011-shell-hosted-coordinator.md).
 
@@ -41,8 +42,8 @@ Chosen option: hc templates plus brief files.
 
 ### Confirmation
 
-Fixed session ids were confirmed in spike 6 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
-Templates have not been tried yet (`hc templates` listed none).
+Templates, the SessionStart hook and dropped extra arguments: spike 13 of the
+[spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
 
 ## Pros and cons of the options
 

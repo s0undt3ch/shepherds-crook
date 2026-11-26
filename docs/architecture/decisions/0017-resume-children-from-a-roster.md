@@ -30,12 +30,16 @@ Chosen option: a roster, plus the respawn loop. They cover different failures:
 
 How it works:
 
-- The coordinator keeps `children.json` in the effort's default location
+- The roster lives in the effort's default location
   ([0012](0012-split-child-traffic-from-curated-notes.md)). One entry per child: name, session id, folder,
   template, brief path, state (`active`, `done`).
+- Session ids come from a SessionStart hook in crook's settings, which every template command loads. It
+  records the session id against `$HC_TERMINAL_ID`, on start and on resume. Passing `--session-id` through
+  a template is not possible: hc drops extra arguments.
 - The coordinator itself also has a fixed session id, so it can be resumed the same way.
-- On start, for every `active` child that has no live terminal, the coordinator runs
-  `claude --resume <id>` in the child's folder, as its own child, with a resume prompt: check what is
+- On start, for every `active` child that has no live terminal, the coordinator runs the template's command
+  with `--resume <id>` appended (hc runs template commands through `sh -c`), in the child's folder, as its own
+  child, with a resume prompt: check what is
   already done on disk, then finish without redoing completed work.
 - Each brief asks the child to keep a progress checklist in its results file. That is the state a resumed
   child reads, and the same checklist addresses the weak spot recorded in
@@ -51,8 +55,8 @@ How it works:
 
 ### Confirmation
 
-Spikes 8, 11 and 12 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md). Not tested: a
-real reboot, and resuming through an hc template.
+Spikes 8, 11, 12 and 13 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md). Not tested:
+a real reboot.
 
 ## Pros and cons of the options
 

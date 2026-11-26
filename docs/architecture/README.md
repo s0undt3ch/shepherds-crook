@@ -25,7 +25,7 @@ that decisions cite lives in [`research/`](research/).
 | [0006](decisions/0006-no-child-restrictions-initially.md) | No access restrictions for children, initially | Accepted |
 | [0007](decisions/0007-launch-children-with-hc-run.md) | Launch children with `hc run`, templates and brief files | Proposed |
 | [0008](decisions/0008-messages-over-hc-send-results-folder-inbox.md) | Messages over `hc send`; the results folder is the inbox | Proposed |
-| [0009](decisions/0009-child-stop-hook-reports-completion.md) | A child Stop hook reports completion | Proposed |
+| [0009](decisions/0009-child-stop-hook-reports-completion.md) | A child Stop hook reports completion | Accepted |
 | [0010](decisions/0010-human-input-through-hc-blocked.md) | Human input goes through hc's `blocked` status | Proposed |
 | [0011](decisions/0011-shell-hosted-coordinator.md) | Host the coordinator in a shell | Proposed |
 | [0012](decisions/0012-split-child-traffic-from-curated-notes.md) | Keep child traffic out of the notes root | Proposed |

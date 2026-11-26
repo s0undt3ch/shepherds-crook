@@ -1,5 +1,5 @@
 ---
-status: Proposed
+status: Accepted
 date: 2026-11-26
 decision-makers: maintainer
 ---
@@ -42,3 +42,10 @@ The hook itself has not been built.
 ### `hc wait --children any`
 
 - Bad, because the coordinator's shell call blocks it: no talking to the maintainer while it waits.
+
+## More information
+
+Accepted for now, with a known weak spot: a child doing several things in one brief. The hook reports when
+the result file changes, so a child that rewrites it after each step pings the coordinator each time, and
+one that writes it once only at the end reports nothing in between. Nothing checks the work against a
+checklist. Revisit once real efforts show which way it breaks.

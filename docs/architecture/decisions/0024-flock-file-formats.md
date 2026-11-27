@@ -49,7 +49,7 @@ crook writes its JSON files to a temporary file and renames it into place, so a 
 {
   "version": 1,
   "flock": "<slug>",
-  "coordinator": { "session_id": "<uuid>", "folder": "<path>", "state": "active" },
+  "coordinator": { "session_id": "<uuid>", "folder": "<path>", "state": "active", "started": true },
   "children": [
     {
       "name": "<child>",
@@ -66,7 +66,9 @@ crook writes its JSON files to a temporary file and renames it into place, so a 
 }
 ```
 
-`state` is `active` or `done`. `version` lets a later crook migrate the file.
+`state` is `active` or `done`. `started` turns true after the coordinator's first launch, so `crook open`
+knows to resume it from then on. A child's `model` is the model it actually runs on, never empty.
+`version` lets a later crook migrate the file.
 
 A brief has these headings, in this order: `Goal`, `Why`, `Scope` (in and out), `References`, `Done when`.
 The coordinator skill carries the template.

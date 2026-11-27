@@ -42,21 +42,20 @@ In scope:
 
 ## Shared mechanics
 
-Every command depends on the rules in this section. Where an ADR is silent, the rule below is marked
-"proposed" and repeated under [Open questions](#open-questions). Tasks build on the proposed answer, so a
-different answer changes only the task that owns the rule.
+Every command depends on the rules in this section. Where an ADR is silent, the maintainer's answer is in
+[`open-questions.md`](open-questions.md) and cited here as Qn.
 
 ### Names and ids
 
 - A slug and a child name match `[a-z0-9-]+`, start with a letter or digit, and are at most 40 characters
-  (proposed, open question 19). They end up in paths, branch names, hc names and labels.
-- The flock id is the slug (proposed, open question 1). The folder is `<yyyy-mm-dd>-<slug>` (0004). Slugs are
-  unique across dates: `new` refuses a slug that any folder already uses, and `open` finds the one folder that
+  (Q12). They end up in paths, branch names, hc names and labels.
+- The flock id is the slug (Q2). The folder is `<yyyy-mm-dd>-<slug>` (0004). Slugs are unique across dates and
+  across closed flocks: `new` refuses a slug that any folder already uses, and `open` finds the one folder that
   ends in `-<slug>` and whose `roster.json` says `"flock": "<slug>"`.
-- hc names (proposed, open question 2): the coordinator is `<slug>`, a child is `<slug>.<child>`. The roster,
+- hc names (Q3): the coordinator is `<slug>`, a child is `<slug>.<child>`. The roster,
   `briefs/<child>.md` and `results/<child>.md` keep the short child name.
 - Labels on every crook terminal: `crook.flock=<slug>`, `crook.version=<version>` (0019, 0020). Children also
-  get `crook.child=<child>` (proposed, open question 3). The coordinator also gets
+  get `crook.child=<child>` (Q4). The coordinator also gets
   `herdr.space=crook-<slug>` and `herdr.tab=crook-<slug>-coord` (0015, 0021). Children get no `herdr.*`
   labels (0021).
 - Branch `crook/<slug>/<child>`, worktree `<repo>/.worktrees/<slug>-<child>` (0023).
@@ -68,10 +67,10 @@ different answer changes only the task that owns the rule.
 | Data home | `${XDG_DATA_HOME:-~/.local/share}` | 0004 |
 | Flocks root | `<data home>/crook/flocks/` | 0004 |
 | Flock folder | `<flocks root>/<yyyy-mm-dd>-<slug>/` | 0004 |
-| Notes folder | `<notes_root>/<yyyy-mm-dd>-<slug>/` when `notes_root` is set, else the flock folder | 0004, 0012 (proposed, open question 4) |
+| Notes folder | `<notes_root>/<yyyy-mm-dd>-<slug>/` when `notes_root` is set, else the flock folder | 0004, 0012, Q18 |
 | Config | `${XDG_CONFIG_HOME:-~/.config}/crook/config.toml` | 0026 |
-| `current` link | `<data home>/crook/current` | 0019 (open question 5) |
-| Session version records | `${XDG_STATE_HOME:-~/.local/state}/crook/sessions/<session id>` | proposed, open question 6 |
+| `current` link | `<data home>/crook/current`, pointing at the install folder | 0019, Q16 |
+| Session version records | `${XDG_STATE_HOME:-~/.local/state}/crook/sessions/<session id>` | Q17 |
 | herdr-app home | `${HERDR_APP_HOME:-~/.config/herdr-app}` | spike 17 |
 | Mod install | `<herdr-app home>/mods/crook/` with `.crook-version` | 0019 |
 | mise shim | `~/.local/share/mise/shims/crook` | 0019 |
@@ -87,7 +86,7 @@ Inside a flock folder (0012, 0024): `roster.json`, `briefs/`, `results/`, `resul
 A command run by the coordinator, or a hook, finds its flock from its own terminal:
 `hc get "$HC_TERMINAL_ID"`, label `crook.flock` (spike 14 did this). A child hook finds its child name from
 `crook.child`. The coordinator is the terminal with `crook.flock` and no `crook.child`. A maintainer outside
-any crook terminal passes `--flock <slug>` (proposed, open question 3). With neither, the command stops and
+any crook terminal passes `--flock <slug>` (Q4). With neither, the command stops and
 says which to use. A hook with no `HC_TERMINAL_ID`, or whose terminal has no `crook.flock` label, does
 nothing.
 
@@ -107,7 +106,7 @@ nothing.
 tested once. The prompt rides last and must follow a flag that takes exactly one value (0007, spike 16).
 This plan assumes `--add-dir` takes several values, like `--allowedTools`; that is not checked (spike 16 tested
 only `--allowedTools`). So `--add-dir` goes before `--agent`, never right before the prompt, which is safe
-whether or not the assumption holds (proposed order, open question 7):
+whether or not the assumption holds (Q18):
 
 ```text
 hc run --bg --name <hc name> --cwd <folder>
@@ -117,30 +116,37 @@ hc run --bg --name <hc name> --cwd <folder>
   -- [env CROOK_BIN=<path>]
   claude --plugin-dir <data home>/crook/current/plugin
   --add-dir <flock folder> [--add-dir <notes folder>]
-  --agent <role> [--model <model>]
+  [--settings <json>]
+  --agent crook:<role> [--model <model>]
   (--session-id <uuid> | --resume <uuid>) "<prompt>"
 ```
 
 - `--plugin-dir` is the literal link path, never the resolved version folder (0019, spike 18). A debug build
-  uses the repository's `plugin/` instead (open question 5).
+  uses the repository's `plugin/` instead (0019, Q16).
 - `--no-notify` and `--outlive-parent` are never passed (0007).
 - The coordinator is started with `--no-parent`, as in spike 24, so a maintainer's `crook open` from inside
   another terminal does not make that terminal its parent.
 - `env CROOK_BIN=<path>` is added when `CROOK_BIN` is set in crook's environment (0019, spike 23). For
-  `open` too (open question 8).
-- The coordinator gets `--agent coordinator` and no `--model`: it runs on the maintainer's default model
-  (0025).
+  `open` too (Q19).
+- The coordinator gets `--agent crook:coordinator` (Q15), and `--model <coordinator_model>` only when that
+  config key is set and not empty (0025, 0026, Q32). Otherwise it runs on the maintainer's default model.
+- A child gets `--agent crook:child` (Q15) and always a `--model`: the one given to `spawn`, else
+  `default_child_model` from the config, `sonnet` when that is unset (0025, Q9).
+- Only `crook open` adds `--settings`, with JSON that allows the shim command in Bash, so the coordinator is
+  not asked about each `crook` call (Q21). The rule text must match the shim form the skill uses (Q20). Its
+  syntax is not checked against Claude Code; the e2e run confirms it.
 
 ### Never break the session
 
-`crook hook <event>` always exits 0, writes errors to stderr only, and catches panics (0020). The release
-profile keeps `panic = "unwind"`, or `catch_unwind` does nothing (v1's `Cargo.toml` did the same). Every
-subprocess has a timeout, and the hook has an overall time budget below the timeout `hooks.json` sets (area 2).
+`crook hook <event>` always exits 0, writes errors to stderr only, and catches panics (0020). The release profile keeps
+`panic = "unwind"`, or `catch_unwind` does nothing (v1's `Cargo.toml` did the same). Every subprocess has a timeout, and
+the hook has an overall time budget below the timeout `hooks.json` sets: 120 seconds for `session-start`, 30 for the
+other events (Q25, area 2).
 A Stop hook never prints a `block` decision.
 
 A hook returns before any hc call when `HC_TERMINAL_ID` is unset. A hook never runs `hc server start`: a
 session with `HC_TERMINAL_ID` runs inside a live core. Hooks skip the version and schema checks of preflight,
-which would cost two extra hc calls on every turn (proposed, open question 20).
+which would cost two extra hc calls on every turn (Q25).
 
 ## Crate and module layout
 
@@ -176,7 +182,10 @@ debug fallback finds `plugin/` and `mod/` there (0019).
 | `src/cmd/*.rs` | One file per subcommand: `new`, `open`, `close`, `spawn`, `stop`, `resume`, `status`, `setup`, `doctor`, `completion` |
 | `src/hook/mod.rs` | The contract: stdin, panic catch, budget, exit 0 |
 | `src/hook/{session_start,stop,prompt}.rs` | One file per event |
-| `src/hook/version.rs` | Session version records and the self-reload |
+| `src/hook/version.rs` | Session version records, the self-reload and the reload nudge (Q26) |
+| `schema/roster.schema.json` | JSON Schema for `roster.json` (Q5) |
+| `schema/status.schema.json` | JSON Schema for `crook status --json` (Q5) |
+| `tests/schema.rs` | Validates what crook writes against `schema/` |
 | `tests/` | Binary-level tests with a fake `hc` on a cleared `PATH` |
 | `tests/fixtures/hc/` | Real `hc` JSON captured from a scratch core (task 4.1) |
 
@@ -198,7 +207,8 @@ Key interfaces (signatures only):
 ### Dependencies
 
 Runtime: `clap` (derive), `clap_complete`, `serde`, `serde_json`, `toml`, `uuid` (v4), `sha2`, `thiserror`.
-Dev: `tempfile`. No YAML crate: crook reads one frontmatter line (0024). No date crate: the folder date comes
+Dev: `tempfile` and a JSON Schema validator such as `jsonschema` (Q5; not checked, pin the version when added).
+No YAML crate: crook reads one frontmatter line (0024). No date crate: the folder date comes
 from `date +%F` with a UTC fallback computed by hand. No semver crate: versions compare as three numbers, and
 anything else compares as unknown and leaves the link alone. No locking crate: std `File::lock`.
 
@@ -217,8 +227,10 @@ prove the task; write them first.
 - Files: `Cargo.toml`, `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/error.rs`, `tests/cli.rs`.
 - ADR: 0019, 0020, 0022.
 - Tests: clap's `debug_assert` test on the command; `--version` output; each subcommand's arguments parse
-  (`spawn <role> <child> <brief> [--repo <path>] [--model <model>]`, `resume [<child>] [--model <model>]`,
-  `doctor [--fix]`, `completion print <shell>`, `hook <event>`, `status --json`).
+  (`new <slug> [--task <text>]` (Q1), `spawn <role> <child> <brief> [--repo <path>] [--model <model>]`,
+  `resume [<child>] [--model <model>]`, `doctor [--fix] [--json]` (Q23), `completion print <shell>`,
+  `hook <event>`, `status [<slug>] [--json]` (Q5)); `--flock <slug>` on `spawn`, `stop`, `resume` and
+  `status` (Q4).
 - Done when: `cargo run -- --help` lists exactly the 0020 table plus `setup` and `doctor`.
 
 #### 0.2 Runner with timeouts
@@ -253,12 +265,15 @@ prove the task; write them first.
 
 #### 1.2 Config file
 
-- What: read `config.toml` with `deny_unknown_fields`. One key today, `notes_root`, a path. A leading `~/`
-  expands to `HOME`; a relative path is an error. A missing file means every default.
+- What: read `config.toml` with `deny_unknown_fields`. Three keys: `notes_root`, a path; `default_child_model`,
+  a string, `sonnet` when unset (Q9); `coordinator_model`, a string, empty by default, which means the
+  maintainer's default model (Q32). A leading `~/` in `notes_root` expands to `HOME`; a relative path is an
+  error. A missing file means every default.
 - Files: `src/config.rs`.
-- ADR: 0026, 0004.
-- Tests: missing file; empty file; `notes_root` absolute, `~/`-relative and relative; an unknown key gives an
-  error naming the key; bad TOML gives an error naming the file.
+- ADR: 0026, 0004, 0025.
+- Tests: missing file; empty file; `notes_root` absolute, `~/`-relative and relative; `default_child_model`
+  unset gives `sonnet`, set gives the value; `coordinator_model` unset and empty both give none; an unknown key
+  gives an error naming the key; bad TOML gives an error naming the file.
 - Done when: every command reads config through this module only.
 
 #### 1.3 Names
@@ -266,7 +281,7 @@ prove the task; write them first.
 - What: validate slugs and child names; build hc names, labels, branch and worktree names, and the herdr space
   and tab ids.
 - Files: `src/names.rs`.
-- ADR: 0015, 0021, 0023; the hc name rule is open question 2, the length cap open question 19.
+- ADR: 0015, 0021, 0023; the hc name rule is Q3, the length cap Q12.
 - Tests: valid and invalid names (empty, upper case, `/`, `..`, leading `-`, too long); every derived name for
   one example.
 - Done when: no other module formats one of these strings.
@@ -284,21 +299,23 @@ prove the task; write them first.
 
 #### 2.2 Roster
 
-- What: types for the 0024 shape exactly: `version`, `flock`, `coordinator` (`session_id`, `folder`,
-  `state`), `children` (`name`, `role`, `model`, `session_id`, `folder`, `repo`, `branch`, `brief`, `state`).
-  `state` is `active` or `done`. `model`, `repo` and `branch` may be `null`. A `version` other than 1 is an
-  error that names the file. Operations: load, create, add child, set child state, set child model, set
-  coordinator state.
+- What: types for the 0024 shape plus one field: `version`, `flock`, `coordinator` (`session_id`, `folder`,
+  `state`, `started`), `children` (`name`, `role`, `model`, `session_id`, `folder`, `repo`, `branch`, `brief`,
+  `state`). `state` is `active` or `done`. `started` is a boolean, false until the coordinator's first launch
+  has succeeded (Q8). `model` is always a string, the model the child was started on (Q9). `repo` and `branch`
+  may be `null`. A `version` other than 1 is an error that names the file. Operations: load, create, add child,
+  remove child (Q11), set child state, set child model, set coordinator state, set coordinator started.
 - Files: `src/files/roster.rs`.
-- ADR: 0024, 0017, 0025.
-- Tests: round trip of the 0024 example; unknown `version`; adding a child whose name exists is an error;
-  `brief` stays relative (`briefs/<child>.md`).
+- ADR: 0024, 0017, 0025; Q8, Q9, Q11.
+- Tests: round trip of the 0024 example with `started` added; unknown `version`; adding a child whose name
+  exists is an error; removing a child frees its name; a `null` model is an error; `brief` stays relative
+  (`briefs/<child>.md`).
 - Done when: the roster is only changed through these operations, each under the lock.
 
 #### 2.3 Results and delivery marks
 
 - What: read only the result's frontmatter `status` (`working`, `done`, `failed`) and hash the whole file with
-  SHA-256 (proposed, open question 9). A file without a readable frontmatter is `unreadable`; a missing file
+  SHA-256 (Q27). A file without a readable frontmatter is `unreadable`; a missing file
   is `missing`. Read and write `results/.delivered.json`, a map from child name to hex SHA-256.
 - Files: `src/files/result.rs`, `src/files/marks.rs`.
 - ADR: 0024, 0008.
@@ -311,7 +328,7 @@ prove the task; write them first.
 
 - What: create a flock folder with `briefs/`, `results/` and the lock file; find a flock by slug; list flocks;
   resolve the notes folder. With `notes_root` set, create `<notes_root>/<folder name>/` and nothing inside it
-  (proposed, open question 4). crook never runs git in the notes root (0004).
+  (Q18). crook never runs git in the notes root (0004).
 - Files: `src/flock.rs`.
 - ADR: 0004, 0012.
 - Tests: create in a temp data home; find by slug; two folders with one slug is an error that names both;
@@ -320,17 +337,30 @@ prove the task; write them first.
 
 #### 2.5 Git worktrees
 
-- What: resolve `--repo` to its top level (`git rev-parse --show-toplevel`). Add
-  `git worktree add -b crook/<slug>/<child> <repo>/.worktrees/<slug>-<child>` from the current `HEAD`.
-  Safety check for removal: no uncommitted or untracked changes (`git status --porcelain`), and the branch tip
-  is pushed or merged (definition in open question 13). Remove with `git worktree remove` without `--force`.
-  Never delete the branch. Also `is_ignored(repo)` for `.worktrees/`, by `git check-ignore`, for `doctor`.
+- What: resolve `--repo` to its top level (`git rev-parse --show-toplevel`). Add `git worktree add -b
+  crook/<slug>/<child> <repo>/.worktrees/<slug>-<child>` from the current `HEAD`. Safety check for removal: no
+  uncommitted or untracked changes (`git status --porcelain`), and the branch tip is pushed (some remote-tracking branch
+  contains it) or merged (it is an ancestor of the branch the main worktree has checked out; a branch with no new
+  commits counts as merged) (Q13). Remove with `git worktree remove` without `--force`. Never delete the branch. Also
+  `is_ignored(repo)` for `.worktrees/`, by `git check-ignore`, for `doctor`.
 - Files: `src/git.rs`.
 - ADR: 0023.
-- Tests: against real `git` in temp folders (git is local and fast): add creates path and branch; an existing
-  path or branch refused; dirty, untracked, unpushed each block removal with a reason; pushed to a local bare
-  remote allows removal; the branch still exists after removal; ignored and not-ignored `.worktrees/`.
+- Tests: against real `git` in temp folders (git is local and fast): add creates path and branch; an existing path or
+  branch refused; dirty, untracked, unpushed each block removal with a reason; pushed to a local bare remote allows
+  removal; merged into the main branch allows removal; a branch with no new commits allows it; the branch still exists
+  after removal; ignored and not-ignored `.worktrees/`.
 - Done when: `spawn`, `stop`, `close` and `doctor` use only this module for git.
+
+#### 2.6 `roster.json` schema
+
+- What: `schema/roster.schema.json`, a JSON Schema for the 2.2 shape, committed to the repository (Q5). `version`
+  is 1; every field is required; `state` is `active` or `done`; `model` is a non-empty string; `repo` and
+  `branch` are a string or `null`; unknown fields are refused. Area 3's tests validate against the same file.
+- Files: `schema/roster.schema.json`, `tests/schema.rs`.
+- ADR: 0024; Q5.
+- Tests: the 0024 example with `started` added validates; a roster written by each 2.2 operation validates; a
+  `null` model, an unknown `state`, an unknown field and a missing `started` each fail.
+- Done when: the tests that write a roster (5.4, 6.1) check it with the shared schema helper.
 
 ### Milestone 3: install and self-location
 
@@ -349,18 +379,19 @@ prove the task; write them first.
 #### 3.2 Version of an install
 
 - What: read the plugin version of a folder from `<folder>/plugin/.claude-plugin/plugin.json`, field
-  `version` (proposed, open question 6). Compare versions as three numbers.
+  `version`. The release stamps it; in the repository, and so in debug builds, it reads `0.0.0-dev` (Q17).
+  Compare versions as three numbers.
 - Files: `src/install.rs`.
 - ADR: 0019.
-- Tests: parse and compare `0.2.0 < 0.10.0`; a pre-release or junk version compares as unknown.
+- Tests: parse and compare `0.2.0 < 0.10.0`; `0.0.0-dev`, a pre-release or a junk version compares as unknown.
 - Done when: the link and the hooks use this to read versions.
 
 #### 3.3 Forward-only `current` link
 
 - What: on every run, before the command, point `<data home>/crook/current` at the install folder, so
-  `current/plugin` and `current/mod` resolve (proposed, open question 5). Move it only when the link is
+  `current/plugin` and `current/mod` resolve (Q16). Move it only when the link is
   missing, dangling, or points at a lower version. Swap atomically: make a temp link and rename it over.
-  A debug build never moves it (open question 5). Failures warn on stderr and never stop the command.
+  A debug build never moves it (0019, Q16). Failures warn on stderr and never stop the command.
 - Files: `src/install.rs`, `src/main.rs`.
 - ADR: 0019, spike 18.
 - Tests: missing link; dangling link; older target moves; newer target stays; equal stays; unknown version
@@ -370,7 +401,7 @@ prove the task; write them first.
 #### 3.4 `CROOK_BIN`
 
 - What: a helper that returns the `CROOK_BIN` value to pass on: the variable when set; in a debug build with
-  no `CROOK_BIN`, its own `current_exe()` (proposed, open question 5).
+  no `CROOK_BIN`, its own `current_exe()` (0019: a debug build is started with `CROOK_BIN` set to itself).
 - Files: `src/install.rs`.
 - ADR: 0019, spike 23.
 - Tests: set, unset in a release build, unset in a debug build.
@@ -380,18 +411,16 @@ prove the task; write them first.
 
 #### 4.1 Capture real hc output as fixtures
 
-- What: in a scratch core (as the spikes did: `HC_SESSION` set, scratch `XDG_STATE_HOME` and
-  `XDG_RUNTIME_DIR`, folders under `$TMPDIR/crook-e2e-*`), record the stdout, stderr and exit code of:
-  `hc --version`, `hc schema`, `hc ls` and `hc ls --all` in their JSON form, `hc get <t>` for a running,
-  blocked and finished terminal, `hc run --bg` with labels, `hc send` for each outcome in spike 2, `hc kill`,
-  and whatever shows whether a core is running. Check that hc accepts `.` in a name (open question 2). Start
-  one `claude --session-id <uuid>` and note where `<uuid>.jsonl` lands under the Claude config folder (open
-  question 12). The exact flags for JSON output are not known to this plan; take them from `hc --help` in that
+- What: in a scratch core (as the spikes did: `HC_SESSION` set, scratch `XDG_STATE_HOME` and `XDG_RUNTIME_DIR`, folders
+  under `$TMPDIR/crook-e2e-*`), record the stdout, stderr and exit code of: `hc --version`, `hc schema`, `hc ls` and `hc
+  ls --all` in their JSON form, `hc get <t>` for a running, blocked and finished terminal, `hc run --bg` with labels,
+  `hc send` for each outcome in spike 2, `hc kill`, and whatever shows whether a core is running. Check that hc accepts
+  `.` in a name (Q3). The exact flags for JSON output are not known to this plan; take them from `hc --help` in that
   scratch core.
 - Files: `tests/fixtures/hc/<hc version>/*`, with a `README.md` saying how they were captured.
 - ADR: 0016, 0020. Depends on area 4's e2e rules for scratch cores.
 - Tests: none; this is input for 4.2 to 4.4.
-- Done when: each call listed has a fixture, and the two checks above are written down in the README.
+- Done when: each call listed has a fixture, and the check on `.` in names is written down in the README.
 
 #### 4.2 Real client
 
@@ -449,18 +478,20 @@ prove the task; write them first.
 
 - What: a pure function from a launch spec (coordinator or child; new or resume) to the argv in
   [The launch command](#the-launch-command), with `CROOK_BIN` from 3.4. The prompts:
-  - coordinator first start: the text from open question 10;
+  - coordinator first start: a fixed text that names the flock, its folder and the notes folder and points at
+    the `crook-coordinator` skill, followed by the `--task` text when `new` got one (Q1);
   - child first start: "Read <absolute brief path>. Write your result to <absolute result path>." with the
-    reporting rule from 0007 and 0024 (wording agreed with area 2);
+    reporting rule from 0007 and 0024 (wording agreed with area 2) (Q14);
   - child resume: 0017's text, "check what is already done on disk, then finish without redoing completed
-    work", plus the brief and result paths;
-  - coordinator resume: no prompt (open question 10).
+    work", plus the brief and result paths (Q14);
+  - coordinator resume: no prompt (0018).
 - Files: `src/launch.rs`.
-- ADR: 0007, 0013, 0017, 0018, 0019, 0025.
+- ADR: 0007, 0013, 0017, 0018, 0019, 0025; Q1, Q14, Q15, Q21, Q32.
 - Tests: golden argv for each of the four cases; the token before the prompt is `--session-id <uuid>` or
   `--resume <uuid>`; every `--add-dir` comes before `--agent`; `--plugin-dir` ends in `current/plugin`;
-  `--model` present only when given; `env CROOK_BIN=…` present only when 3.4 returns a value; `--no-notify`
-  and `--outlive-parent` never appear.
+  `--agent` is `crook:coordinator` or `crook:child`; a child always has `--model`, the coordinator only when
+  `coordinator_model` is set; `--settings` appears for `open` only; `env CROOK_BIN=…` present only when 3.4
+  returns a value; `--no-notify` and `--outlive-parent` never appear.
 - Done when: no other module assembles a `claude` or `hc run` argv.
 
 #### 5.2 herdr-app renames
@@ -468,7 +499,7 @@ prove the task; write them first.
 - What: `herdr-app do space.rename '{"id":"crook-<slug>","name":"<slug>"}'` and `tab.rename` for
   `crook-<slug>-coord` with the name `coordinator`, JSON argument form as in spike 25. The space may not exist
   yet when `hc run` returns, so retry a few times over about 3 seconds. If the app is not running or every try
-  fails, warn on stderr and go on.
+  fails, warn on stderr and go on. crook never calls `space.new` (0015, Q24).
 - Files: `src/herdr_app.rs`.
 - ADR: 0021, spike 25.
 - Tests: argv; retry then success; app missing gives a warning and success.
@@ -476,37 +507,41 @@ prove the task; write them first.
 
 #### 5.3 `crook open <slug>`
 
-- What: find the flock; refuse if the roster is `done` (open question 11); preflight; if the coordinator
-  already has a live terminal, rename and say so, starting nothing (open question 11); otherwise start it with
-  `--session-id` the first time and `--resume` after (0018). How "the first time" is known is open question 12;
-  the proposed rule is "no transcript file named `<session id>.jsonl` under the Claude config folder's
-  `projects/`". Then rename (5.2). Print one line.
+- What: find the flock; refuse if the roster is `done` (Q7); preflight; if the coordinator already has a live
+  terminal, redo the renames and say so, starting nothing (Q7); otherwise start it with `--session-id` while
+  the roster's `coordinator.started` is false and `--resume` after (0018, Q8). Set `started` under the lock as
+  soon as `hc run` succeeds; a failed launch leaves it false. Then rename (5.2). Print one line. `open` takes
+  the first task from `new` when `new` calls it (Q1).
 - Files: `src/cmd/open.rs`.
-- ADR: 0015, 0018, 0020, 0021.
-- Tests: first open uses `--session-id`; a later open uses `--resume`; labels and `--no-parent` present;
+- ADR: 0015, 0018, 0020, 0021; Q1, Q7, Q8, Q19, Q21.
+- Tests: first open uses `--session-id` and sets `started`; a later open uses `--resume`; a failed launch
+  leaves `started` false; `CROOK_BIN` and `--settings` present; labels and `--no-parent` present;
   live coordinator starts nothing; closed flock refused; unknown slug refused with the slugs that exist.
 - Done when: the mod can call `open` and get exit 0 with one line on stdout.
 
-#### 5.4 `crook new <slug>`
+#### 5.4 `crook new <slug> [--task <text>]`
 
-- What: validate the slug; refuse if any flock uses it; create the folder (2.4); write `roster.json` with a
-  fresh coordinator session id, `folder` set to the flock folder, `state: active`, no children; then run
-  `open` (5.3).
+- What: validate the slug; refuse if any flock uses it, closed ones included (Q2); create the folder and the
+  notes folder (2.4); write `roster.json` with a fresh coordinator session id, `folder` set to the flock
+  folder, `state: active`, `started: false`, no children; then run `open` (5.3), passing `--task` on (Q1).
 - Files: `src/cmd/new.rs`.
-- ADR: 0004, 0012, 0017, 0020, 0024.
-- Tests: folder and roster created with today's date from the injected clock; an existing slug refused before
-  anything is written; an invalid slug refused; `open` is called.
+- ADR: 0004, 0012, 0017, 0020, 0024; Q1, Q2.
+- Tests: folder and roster created with today's date from the injected clock; an existing slug, closed
+  flocks included, refused before anything is written; an invalid slug refused; `open` is called; `--task` text
+  reaches the coordinator's first prompt, and without it only the fixed text does.
 - Done when: `crook new demo` against the fake hc leaves the 0024 roster shape on disk and one coordinator
   launch recorded.
 
 #### 5.5 `crook close <slug>`
 
-- What: live terminals first (proposed, open question 11: end the coordinator with `hc kill`, which ends its
-  children, spike 4). Then mark every child and the coordinator `done` under the lock (0018, 0020). Then remove
-  each child's worktree when safe (2.5), and report the ones kept and why.
+- What: live terminals first: end the coordinator with `hc kill`, which ends its children (spike 4, Q6). Then
+  mark every child and the coordinator `done` under the lock (0018, 0020). Then remove each child's worktree
+  when safe (2.5), and print a `warning:` line for each worktree it keeps, with the reason (Q6). The
+  coordinator skill runs `close` only when the maintainer asks (Q6, area 2).
 - Files: `src/cmd/close.rs`.
-- ADR: 0018, 0020, 0023.
-- Tests: roster states after close; worktree removal tried per child; unsafe worktrees reported and kept;
+- ADR: 0018, 0020, 0023; Q6.
+- Tests: roster states after close; worktree removal tried per child; unsafe worktrees kept, each with a
+  `warning:` line;
   closing twice is a no-op with exit 0.
 - Done when: a closed flock is skipped by `resume` and refused by `open` and `spawn`.
 
@@ -515,17 +550,19 @@ prove the task; write them first.
 #### 6.1 `crook spawn <role> <child> <brief> [--repo <path>] [--model <model>]`
 
 - What: find the flock (shared mechanics); refuse if it is closed; validate the child name and that it is not
-  in the roster; the brief must exist and sit under the flock's `briefs/` (stored relative, 0024; the "must sit
-  under" rule is open question 19); if `--repo`, create the worktree (2.5) and use it as the folder, else use
-  the flock folder (0023); pick a session id; write the roster entry under the lock before launching (0007,
-  0017); preflight; launch with `--parent "$HC_TERMINAL_ID"` (0020). If the launch fails, see open question 21.
-  Print one line: the child's hc name and session id (format agreed with area 2).
+  in the roster; the brief must exist and sit under the flock's `briefs/` (stored relative, 0024; Q12); if
+  `--repo`, create the worktree (2.5) and use it as the folder, else use the flock folder (0023); pick a
+  session id; resolve the model: `--model`, else `default_child_model`, else `sonnet` (Q9); write the roster
+  entry, with that model, under the lock before launching (0007, 0017); preflight; launch with
+  `--parent "$HC_TERMINAL_ID"` (0020). The first prompt names the brief and the result path (Q14). If the launch
+  fails, remove the roster entry under the lock, and the worktree if clean, so the coordinator can retry with
+  the same name (Q11). Print one line: the child's hc name and session id (format agreed with area 2).
 - Files: `src/cmd/spawn.rs`.
-- ADR: 0007, 0017, 0020, 0023, 0024, 0025.
-- Tests: roster entry written before the `hc run` call (check order in the fake's call log); `model` recorded
-  or `null` (open question 14); `--repo` path and branch recorded; duplicate child refused; brief outside
-  `briefs/` refused; missing `HC_TERMINAL_ID` without `--flock` refused; two spawns in parallel threads both
-  land in the roster; a failed launch handled as open question 21 settles.
+- ADR: 0007, 0017, 0020, 0023, 0024, 0025; Q9, Q11, Q12, Q14.
+- Tests: roster entry written before the `hc run` call (check order in the fake's call log); `model` recorded as the
+  flag's value, the config's, or `sonnet`, never `null` (Q9); `--repo` path and branch recorded; duplicate child
+  refused; brief outside `briefs/` refused; missing `HC_TERMINAL_ID` without `--flock` refused; two spawns in parallel
+  threads both land in the roster; a failed launch removes the entry, so the same name can be spawned again (Q11).
 - Done when: the spawned argv matches 5.1's golden case.
 
 #### 6.2 `crook stop <child>`
@@ -540,33 +577,37 @@ prove the task; write them first.
 
 #### 6.3 `crook resume [<child>] [--model <model>]`
 
-- What: with no child, every `active` child with no live terminal; with a child, that one. Resume under the
-  original hc name (0017, spike 15) with `--resume <session id>`, the roster's role and model, in the roster's
-  folder. Parent: `$HC_TERMINAL_ID` when run from the coordinator; otherwise the coordinator's live terminal
-  found by label; refuse if it has none. `--model` needs a child; it updates the roster and resumes on that
-  model (0025, spike 26). If that child is live, see open question 15. The logic is a library function the
-  SessionStart hook calls directly (8.5).
+- What: with no child, every `active` child with no live terminal; with a child, that one. Resume under the original hc
+  name (0017, spike 15) with `--resume <session id>`, the roster's role and model (Q9: the roster's model, even if the
+  config has since changed), in the roster's folder. Parent: `$HC_TERMINAL_ID` when run from the coordinator; otherwise
+  the coordinator's live terminal found by label; refuse if it has none. `--model` needs a child; it updates the roster
+  and resumes on that model (0025, spike 26). If that child is live, refuse while hc reports it `working`; otherwise end
+  its terminal with `hc kill` without marking it `done`, wait until it is finished, and resume it on the new model
+  (Q10). The logic is a library function the SessionStart hook calls directly (8.5).
 - Files: `src/cmd/resume.rs`.
-- ADR: 0017, 0020, 0025.
+- ADR: 0017, 0020, 0025; Q9, Q10.
 - Tests: only active and not-live children resumed; done children skipped; original hc name reused; parent
   from env or from label lookup; no live coordinator refused; `--model` written to the roster before launch;
-  `--model` with no child refused.
+  `--model` with no child refused; `--model` on a working child refused; on an idle live child it is killed,
+  not marked `done`, and resumed on the new model.
 - Done when: one call resumes a flock's lost children against the fake hc, as spike 15 did by hand.
 
 ### Milestone 7: status
 
-#### 7.1 `crook status --json [<slug>]`
+#### 7.1 `crook status [<slug>] [--json]`
 
-- What: merge the roster, `hc ls` and the result files and marks. The positional `[<slug>]` and the plain-text
-  form without `--json` are additions to 0020's row (proposed, open question 22). No slug means every flock.
-  The output shape must be agreed with area 3 (open question 16); proposed:
+- What: merge the roster, `hc ls` and the result files and marks. No slug means every flock; with a slug, that
+  flock and its children. Without `--json` it prints a plain table (Q5). The JSON has the shape below, pinned
+  by the schema in 7.2 (Q5); the field names are still to settle with area 3 (see Open questions):
 
 ```json
 {
   "version": 1,
+  "crook_version": "0.1.0",
   "flocks": [
     {
-      "flock": "<slug>",
+      "slug": "<slug>",
+      "space": "crook-<slug>",
       "folder": "<abs path>",
       "notes_folder": "<abs path>",
       "state": "active",
@@ -589,10 +630,22 @@ prove the task; write them first.
   reachable, the command still prints the file side with `terminal: null` and a top-level `"hc_error"` string,
   so the mod can show something.
 - Files: `src/cmd/status.rs`.
-- ADR: 0014, 0020, 0024.
+- ADR: 0014, 0020, 0024; Q5.
 - Tests: golden JSON for a flock with a live coordinator, one live child, one paused child, one done child, one
-  unreadable result; hc down.
-- Done when: area 3 has signed off the shape.
+  unreadable result; hc down; the plain table for the same flock; a slug limits the output to that flock.
+- Done when: the golden JSON is the input for 7.2.
+
+#### 7.2 `status --json` schema
+
+- What: `schema/status.schema.json`, a JSON Schema for 7.1's output, committed to the repository (Q5). It
+  requires `version` 1, `crook_version` and `flocks`; `model` is a string; `terminal` is an object or `null`;
+  `result.status` is one of the five values; `hc_error` is an optional string. Area 3's tests validate against
+  the same file.
+- Files: `schema/status.schema.json`, `tests/schema.rs`.
+- ADR: 0020, 0024; Q5.
+- Tests: each golden JSON from 7.1 validates, hc-down output included; a missing required field, an unknown
+  `result.status` and a `null` model each fail.
+- Done when: the schema is committed and area 3 has the path.
 
 ### Milestone 8: hooks
 
@@ -600,7 +653,8 @@ prove the task; write them first.
 
 - What: read stdin JSON (`session_id`, `hook_event_name`, `source`, `cwd`); unknown fields ignored, bad JSON
   means do nothing. Install a panic hook that writes to stderr only; run the event in `catch_unwind`; an
-  overall budget (proposed 20 s, below a `hooks.json` timeout of 30 s set by area 2). Always exit 0. Output
+  overall budget below the timeout `hooks.json` sets (Q25): 100 s for `session-start`, whose timeout is 120 s,
+  and 20 s for the others, whose timeout is 30 s. Always exit 0. Output
   per event: `session-start` prints `hookSpecificOutput` JSON with `additionalContext`, the form v1's
   `src/hook/output.rs` used for SessionStart; `user-prompt-submit` prints the same form with
   `"hookEventName": "UserPromptSubmit"`, which is not checked against the Claude Code hooks reference yet
@@ -614,25 +668,32 @@ prove the task; write them first.
 
 #### 8.2 Session version records and self-reload
 
-- What: on SessionStart, write the plugin version the session loaded, keyed by session id (open question 6).
-  On Stop, read the version again through `CLAUDE_PLUGIN_ROOT` (spike 20 did this), or `current/plugin` when
-  that is unset; if it differs from the record, run `hc send "$HC_TERMINAL_ID" "/reload-plugins"` and, only on
-  `Sent`, update the record (0019, spike 20).
+- What: on SessionStart, write the plugin version the session loaded, keyed by session id, under
+  `${XDG_STATE_HOME:-~/.local/state}/crook/sessions/` (Q17). On Stop, read the version again through
+  `CLAUDE_PLUGIN_ROOT` (spike 20 did this; Q17), or `current/plugin` when that is unset; if it differs from the
+  record, run `hc send "$HC_TERMINAL_ID" "/reload-plugins"` and, only on `Sent`, update the record and set its
+  `reloaded` flag, which 8.3 turns into a nudge (0019, spike 20, Q26). Records older than 30 days are pruned
+  on `setup` and `doctor --fix` (Q17).
 - Files: `src/hook/version.rs`.
-- ADR: 0019.
-- Tests: same version sends nothing; new version sends once and updates the record; failed send keeps the old
-  record so the next Stop tries again; missing record writes one and sends nothing.
+- ADR: 0019; Q17, Q26.
+- Tests: same version sends nothing; new version sends once, updates the record and sets `reloaded`; failed
+  send keeps the old record so the next Stop tries again; missing record writes one and sends nothing; a record
+  older than 30 days is pruned, a newer one kept.
 - Done when: it runs in every crook session, coordinator and child.
 
 #### 8.3 `crook hook user-prompt-submit`
 
-- What: coordinator only. For each `results/*.md` (skip dot files) whose hash differs from its mark, add a line
-  `Undelivered child result: <absolute path>` (spike 14's wording; agreed with area 2) and save the mark under
-  the lock. In a child, do nothing. The rescan is a library function that 8.5 also calls.
+- What: in the coordinator, for each `results/*.md` (skip dot files) whose hash differs from its mark, add a
+  line `Undelivered child result: <absolute path>` (spike 14's wording; agreed with area 2) and save the mark
+  under the lock. In a child, add no result lines. In every session, when the version record has `reloaded`
+  set (8.2), add one line telling the model to load its `crook-coordinator` or `crook-child` skill again,
+  because a reload leaves the old skill text in the conversation, and clear the flag (Q26). The rescan is a
+  library function that 8.5 also calls.
 - Files: `src/hook/prompt.rs`.
-- ADR: 0008, 0020.
-- Tests: two changed results give two lines and two marks; no change gives no output; a child session does
-  nothing; an unreadable result is still reported (hash only).
+- ADR: 0008, 0019, 0020; Q26.
+- Tests: two changed results give two lines and two marks; no change gives no output; a child session gets no
+  result lines; an unreadable result is still reported (hash only); after a reload the first prompt in a
+  coordinator and in a child gets the nudge line, and the second prompt does not.
 - Done when: spike 14's last row holds against the fake hc.
 
 #### 8.4 `crook hook stop`
@@ -664,32 +725,39 @@ prove the task; write them first.
 
 #### 9.1 `crook setup`
 
-- What: copy the install's `mod/` to `<herdr-app home>/mods/crook/` and write `.crook-version`. If
-  `mods/crook/` exists without the marker, stop and say it belongs to someone else. Copy into a temporary
-  folder outside `mods/` (so herdr-app never loads a half copy), then swap: rename the old folder aside, rename
-  the new one in, delete the old. Whether an older binary may overwrite a newer mod is open question 17. Then
-  move `current` (3.3). Create the flocks root. The trust step of 0013 is open question 18; proposed: print the
-  one command the maintainer runs to trust each root.
+- What: install the install's `mod/` as `<herdr-app home>/mods/crook/`, with `HERDR_APP_HOME` honoured (Q22).
+  Build it in a staging folder outside `mods/` (so herdr-app never loads a half copy) and write `.crook-version`
+  last. If `mods/crook/` exists without the marker, stop and say it belongs to someone else. If its marker is
+  newer than this binary's version, refuse to replace it (Q22). Then swap: rename the old folder aside, rename
+  the staged one in, delete the old. No other command refreshes the mod by itself (Q22); `doctor --fix` calls
+  this routine. Then move `current` (3.3). Create the flocks root. For the trust step of 0013, print the
+  command that trusts each root (the flocks root, and the notes root when set) and run none, so CI can skip
+  it (Q22).
 - Files: `src/cmd/setup.rs`.
-- ADR: 0013, 0019.
-- Tests: fresh install; reinstall over a marked folder; refusal on an unmarked folder; the temp folder never
-  appears under `mods/`; `HERDR_APP_HOME` honoured.
+- ADR: 0013, 0019; Q22.
+- Tests: fresh install; reinstall over a marked folder; refusal on an unmarked folder; refusal on a newer
+  marker; the staged folder has no marker until the copy ends; the staging folder never appears under `mods/`;
+  `HERDR_APP_HOME` honoured; one trust command printed per root and none run.
 - Done when: `crook setup` twice in a row leaves one identical `mods/crook/`.
 
 #### 9.2 `crook doctor [--fix]`
 
-- What: report each check with ok, warn or fail, and exit 1 if any fails:
+- What: report each check with ok, warn or fail, and exit 1 if any fails. With `--json`, print one JSON object
+  with each check, its status and its fix, and the resolved `plugin_dir`, `mod_dir` and herdr-app home (Q23).
+  The checks:
   - hc version and schema (0016);
   - herdr-app on `PATH` (0019);
   - `crook` on the login shell's `PATH`: `$SHELL -l -c 'command -v crook'` (0019);
+  - the mise shim exists; when it is missing, warn and give `CROOK_BIN` as the fix (Q23);
   - mod installed and marker equal to this binary's version (0019);
   - `current` points at this binary's install folder (0019);
   - config path read and any error in it (0026);
   - each repository named in an `active` roster has `.worktrees/` ignored (2.5, 0023).
 - Fix: `--fix` runs `setup`'s mod install and the link move; the rest are report-only.
 - Files: `src/cmd/doctor.rs`.
-- ADR: 0016, 0019, 0023, 0026.
-- Tests: each check passing and failing with fakes; `--fix` repairs the mod and the link and nothing else.
+- ADR: 0016, 0019, 0023, 0026; Q22, Q23.
+- Tests: each check passing and failing with fakes; `--json` carries the three resolved paths; a missing shim
+  warns with `CROOK_BIN` as the fix; `--fix` repairs the mod and the link and nothing else.
 - Done when: a broken link and a missing mod both show as fail and are fixed by `--fix`.
 
 ### Milestone 10: completion
@@ -701,8 +769,8 @@ prove the task; write them first.
   children), with the completer named as bare `crook` so the script mise caches never holds a version path
   that mise later prunes (0019, spike 18). That API sits behind clap_complete's `unstable-dynamic` feature;
   pin the exact version. Not checked against `clap_complete` 4.6.12; check first. If it cannot name the
-  completer, fall back to hand-written scripts that call a hidden `crook completion list <kind>`, which is a
-  subcommand beyond 0020's table (open question 23).
+  completer, fall back to hand-written scripts that call a hidden `crook completion list <kind>`, a
+  subcommand beyond 0020's table that `--help` does not show (Q35).
 - Files: `src/cmd/completion.rs`, `src/cli.rs`.
 - ADR: 0020.
 - Tests: each shell's output contains `crook` and no absolute path to the build; slug candidates come from a
@@ -731,7 +799,8 @@ prove the task; write them first.
   `tests/rust/common.rs` did) and a fake `hc` script first on `PATH` that logs its argv and environment and
   answers from the fixtures. These cover the hook contract (exit 0, stdout shape), core start with the scrub,
   and the launch argv end to end.
-- Left to area 4's e2e runs, because they need real programs:
+- Left to area 4's e2e runs, because they need real programs; CI cannot run hc or herdr-app, so these run
+  locally only (Q34):
   - spikes 14 and 15 rerun through crook, and spike 23's scrub (11.1);
   - renames in the real herdr-app (0021), with the app open and closed;
   - self-location through the mise shim in a release install (0019 "Confirmation");
@@ -743,24 +812,29 @@ prove the task; write them first.
 
 Area 2, the plugin:
 
-- `hooks.json` calls `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}" hook <event>` for `session-start`,
-  `stop` and `user-prompt-submit`, with a timeout above crook's budget (8.1).
-- Agents named `coordinator` and `child`; the coordinator agent has no `model` (0025).
-- `.claude-plugin/plugin.json` carries a `version` equal to the crate version (open question 6).
-- The coordinator skill uses `crook spawn`, `stop`, `resume` and `status --json`; it expects the result path as
+- `hooks.json` calls `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}" hook <event>` for `session-start`, `stop` and
+  `user-prompt-submit`, with timeouts of 120 seconds for `session-start` and 30 for the others (Q25), each above crook's
+  budget (8.1).
+- Agents named `coordinator` and `child`, passed as `crook:coordinator` and `crook:child` (Q15); the
+  coordinator agent has no `model` (0025).
+- `.claude-plugin/plugin.json` carries `version`: `0.0.0-dev` in the repository, stamped by the release (Q17).
+- The coordinator skill uses `crook spawn`, `stop`, `resume` and `status --json`, always through the shim form and
+  never a bare `crook` (Q20), and runs `close` only when the maintainer asks (Q6); it expects the result path as
   the message text and the rescan line wording (8.3, 8.4); it carries the brief template (0024).
 - `plugin/` sits at the repository root (debug fallback, 3.1).
 
 Area 3, the mod:
 
-- Calls `crook new`, `open`, `close` and `status --json` through the shim, honouring `CROOK_BIN` (0019).
-- Agrees the `status --json` shape (7.1) and reads exit code plus stderr for errors.
+- Calls `crook new <slug> [--task <text>]`, `open`, `close` and `status --json` through the shim, honouring `CROOK_BIN`
+  (0019).
+- Validates against `schema/status.schema.json` and `schema/roster.schema.json` in its tests (Q5), and reads
+  exit code plus stderr for errors.
 - `mod/` sits at the repository root; `.crook-version` inside it is reserved for `setup`.
 
 Area 4, release, CI and e2e:
 
 - Archive layout `crook`, `plugin/`, `mod/` (0019); release profile keeps `panic = "unwind"`.
-- Version bumps change `Cargo.toml` and `plugin.json` together.
+- The release stamps `version` in `plugin.json` (Q17).
 - CI runs `cargo test`, clippy and fmt; coverage as v1.
 - The e2e skill allows scratch cores for fixture capture (4.1) and runs the checks in 11.1 and the test
   strategy's e2e list.
@@ -769,7 +843,7 @@ Area 4, release, CI and e2e:
 
 - **hc output drifts.** hc is 0.1.x (0002). Mitigation: fixtures named by hc version, lenient parsing, the
   preflight floor, and re-capturing fixtures when the floor moves.
-- **`hc send` waits on a draft.** It waits for a person's unfinished draft (0008), which can outlast the hook
+- **`hc send` waits on a draft** (Q25). It waits for a person's unfinished draft (0008), which can outlast the hook
   budget. A timeout kills the client; whether hc still delivers afterwards is not known. The mark stays old,
   so the worst case is a duplicate report from the rescan, not a lost one.
 - **Duplicate report in the same turn.** 0008 sends first and marks after. `hc send` presses Enter, which can
@@ -784,75 +858,37 @@ Area 4, release, CI and e2e:
 - **`clap_complete` dynamic completion is unstable.** Mitigation: pin the version, or fall back (10.1).
 - **Self-location through the mise shim** is checked with `python3` only, not crook (0019). The first
   release confirms it.
-- **`--resume` vs `--session-id` on `open`** depends on knowing whether the transcript exists (open question
-  12). Getting it wrong either fails to start or forks a new conversation.
+- **A crash between launch and the `started` write** leaves `started` false for a coordinator that exists, so
+  the next `open` passes `--session-id` for a session that is already there (Q8). What Claude Code does then
+  is not checked. Mitigation: the write follows `hc run` at once, under the lock.
 
 ## Open questions
 
-Each has a suggested answer. The tasks above build on the suggestion and name the question they depend on.
+The plan's earlier questions are decided by the maintainer. The answers are in
+[`open-questions.md`](open-questions.md); the tasks above cite them as Qn.
 
-1. **Flock id: slug or dated folder name?** 0004 names the folder `<yyyy-mm-dd>-<slug>`; 0020 takes
-   `<slug>`; 0024's roster has `"flock": "<slug>"`. Suggest: the id is the slug, unique across dates; labels,
-   branches and worktree names use the slug; `new` refuses a slug already used.
-2. **hc names across flocks.** 0007 uses `--name <child>`, which clashes when two flocks each have a child
-   called `review` in one core. Suggest: coordinator `<slug>`, child `<slug>.<child>`; check in 4.1 that hc
-   accepts `.`.
-3. **How a command or hook knows its flock and child.** No ADR says. Suggest: labels `crook.flock` and
-   `crook.child` read with `hc get "$HC_TERMINAL_ID"` (spike 14 did this), and a `--flock <slug>` option on
-   `spawn`, `stop`, `resume` and `status` for use outside a crook terminal.
-4. **Notes folder per flock.** 0004 and 0012 put `README.md` and `notes/` in the notes root but name no
-   subfolder. Suggest: `<notes_root>/<yyyy-mm-dd>-<slug>/`, created empty by `new`, passed to sessions with
-   `--add-dir`.
-5. **What `current` points at, and debug builds.** 0019 says `current` points at "its own `plugin/`" but
-   sessions use `current/plugin`. Suggest: `current` points at the install folder, so `current/plugin` and
-   `current/mod` both work; it lives under `XDG_DATA_HOME` like the flocks (0019 writes the literal default).
-   A debug build never moves it, launches sessions with the repository's `plugin/`, and sets `CROOK_BIN` to
-   itself when unset.
-6. **Where versions come from and where session records live.** 0019 says the hook "records the plugin
-   version" and reads it "through `current`". Suggest: read `version` from
-   `$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json` (falling back to `current/plugin`), keep the record in
-   `${XDG_STATE_HOME:-~/.local/state}/crook/sessions/<session id>`, and prune records older than 30 days on
-   `setup` and `doctor --fix`.
-7. **`--add-dir` in the child argv.** 0013 says pass the roots with `--add-dir`; 0007's command shows none.
-   Suggest: `--add-dir <flock folder>` and, when set, `--add-dir <notes folder>`, placed before `--agent` so
-   the prompt follows `--session-id` or `--resume`.
-8. **`CROOK_BIN` for `open`.** 0019 names `spawn` and `resume` only. Suggest: `open` passes it too, so a dev
-   coordinator's hooks run the dev build.
-9. **What the delivery hash covers.** 0024 says SHA-256 of "the result". Suggest: the whole file's bytes.
-10. **The coordinator's first prompt.** 0018 starts it with `'<first task>'`, but `crook new <slug>` takes no
-    task. Suggest: a fixed prompt naming the flock, its folder and the notes folder, and telling it to use the
-    `crook-coordinator` skill; the dialog's text, if any, goes in an optional `--task <text>` on `new`. On
-    `--resume`, no prompt.
-11. **`close` with live terminals, and `open` on a closed or live flock.** 0018 and 0020 only say `close`
-    marks the roster done. Suggest: `close` ends the coordinator with `hc kill` (its children end with it,
-    spike 4) and then marks done; `open` refuses a closed flock; `open` on a live coordinator renames and
-    starts nothing.
-12. **How `open` knows it is the first start.** 0018 says `--session-id` the first time, `--resume` after.
-    Suggest: look for `<session id>.jsonl` under `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/`. Not checked
-    that Claude Code keeps that layout; 4.1 confirms it.
-13. **"Pushed or merged" in 0023.** Suggest: pushed means some remote-tracking branch contains the tip;
-    merged means the tip is an ancestor of the branch the repository's main worktree has checked out. A
-    branch with no new commits counts as merged.
-14. **`spawn` without `--model`.** 0025 says the coordinator picks one. Suggest: the flag is optional,
-    the roster records `null`, and the agent file's model applies; the skill always passes it.
-15. **`resume <child> --model` on a live child.** 0025 is silent. Suggest: refuse while hc reports it
-    `working`; otherwise `hc kill` it, wait until finished, and resume.
-16. **The `status --json` shape.** No ADR fixes it. Suggest the shape in 7.1, agreed with area 3.
-17. **Mod install direction.** 0019 makes `current` forward-only but says nothing for the mod. Suggest:
-    `setup` also refuses to replace a mod whose marker is newer than the binary.
-18. **The trust step.** 0013 says "crook's setup step does this trust once"; 0019's `setup` list leaves it
-    out. Suggest: `setup` creates the flocks root and prints the command to trust it (and the notes root),
-    and `doctor` reports that it cannot check trust.
-19. **Name limits and brief location.** No ADR caps name length or says where a brief must be. Suggest: slugs
-    and child names at most 40 characters, and `spawn` refuses a brief outside the flock's `briefs/`, so the
-    roster's relative `brief` path (0024) always resolves.
-20. **Preflight in hooks.** 0020 says every command that touches hc runs preflight. Suggest: hooks skip the
-    version and schema checks and never start a core, to save two hc calls per turn; commands run the full
-    preflight.
-21. **A child whose launch failed.** 0017 and 0020 say `spawn` writes the roster entry before launching, but
-    not what happens when `hc run` fails. Suggest: remove the entry under the lock, so the coordinator can
-    retry with the same name. The other choice, marking it `done`, keeps a record but blocks the name.
-22. **`status` arguments.** 0020's row is `crook status --json` only. Suggest: an optional `<slug>` to limit
-    it to one flock, and a short plain-text table when `--json` is absent.
-23. **Completion helper.** If clap_complete's dynamic completion cannot be used, 10.1 adds a hidden
-    `crook completion list <kind>` beyond 0020's table. Suggest: allow it, hidden from `--help`.
+- Flock id: decided, see Q2.
+- hc names across flocks: decided, see Q3.
+- How a command or hook knows its flock and child: decided, see Q4.
+- Notes folder per flock: decided, see Q18.
+- What `current` points at, and debug builds: decided, see Q16.
+- Where versions come from and where session records live: decided, see Q17.
+- `--add-dir` in the child argv: decided, see Q18.
+- `CROOK_BIN` for `open`: decided, see Q19.
+- What the delivery hash covers: decided, see Q27.
+- The coordinator's first prompt: decided, see Q1.
+- `close` with live terminals, and `open` on a closed or live flock: decided, see Q6 and Q7.
+- How `open` knows it is the first start: decided, see Q8.
+- "Pushed or merged": decided, see Q13.
+- `spawn` without `--model`: decided, see Q9.
+- `resume <child> --model` on a live child: decided, see Q10.
+- Mod install direction: decided, see Q22.
+- The trust step: decided, see Q22.
+- Name limits and brief location: decided, see Q12.
+- Preflight in hooks: decided, see Q25.
+- A child whose launch failed: decided, see Q11.
+- `status` arguments: decided, see Q5.
+- Completion helper: decided, see Q35.
+
+The field names of the `status --json` shape are settled across both plans: `slug`, `space`, `crook_version`,
+and `folder` as an absolute path, whose last part the mod shows.

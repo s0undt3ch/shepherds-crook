@@ -382,3 +382,27 @@ and wrote what its `exec` calls returned to a scratch file. Then it was closed a
 
 So a `crook` installed with `mise use -g` will be found by the mod's `exec("crook", …)`, as long as the
 login shell activates mise, as the maintainer's does.
+
+## 22. `PATH` in a terminal of the maintainer's real hc core (2026-11-27)
+
+One throwaway terminal in the real core (herdr-app's), started from a stripped environment
+(`env -i HOME USER TMPDIR PATH=/usr/bin:/bin`) so the caller's `PATH` could not leak in:
+
+```sh
+hc run --bg --no-parent --no-notify --name crook-pathcheck --cwd ~ -- env
+```
+
+It ran `env` directly, as `hc run … claude` runs `claude`, and was removed with `hc rm` after reading.
+
+- `PATH` was the core's, not the caller's: 67 entries, the mise global install folders first (for example
+  `~/.local/share/mise/installs/ast-grep/0.51.3`), then `~/.local/share/mise/shims` at entry 47, then
+  `~/.local/bin` and Homebrew.
+- `SHELL` was `/opt/homebrew/bin/fish`; `HC_*` were the new terminal's own.
+
+So a Claude session started by `hc run`, and the hooks it runs, find a `crook` installed with `mise use -g`:
+through its install folder if it was installed when the core started, through the shims otherwise.
+
+The install folders are fixed when the core starts. After an upgrade, the old version's folder stays ahead of
+the shims in this `PATH` until mise prunes it (24 hours, spike 18) or the core restarts. Until then, hooks in
+hc sessions run the old `crook`, while the mod and new shells run the new one. [inferred from the `PATH`
+order; not run with two crook versions]

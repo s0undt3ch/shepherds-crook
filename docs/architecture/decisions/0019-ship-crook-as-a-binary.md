@@ -51,7 +51,10 @@ Finding its files:
   to the executable, a debug build uses the repository's own `plugin/` and `mod/`, whose path is fixed at
   compile time. Skill edits then show up without a rebuild. Release builds never fall back; they stop and say
   the install is broken.
-- On every run it points `~/.local/share/crook/current` at its own `plugin/`.
+- On every run it points `~/.local/share/crook/current` at its own `plugin/`, but only forward: a binary older
+  than the version `current` points at leaves it alone. Terminals in a running hc core keep the old version's
+  folder ahead of the shims in their `PATH` until mise prunes it, so hooks there run the old binary for up to
+  24 hours after an upgrade (spike 22). Without this rule they would point `current` back.
 - Every crook session starts with `--plugin-dir ~/.local/share/crook/current/plugin`, never the versioned
   folder. When mise prunes the old version, the next crook run has already moved the link. A session started
   on a versioned path that is later removed gets `Stop hook failed` (spike 18).

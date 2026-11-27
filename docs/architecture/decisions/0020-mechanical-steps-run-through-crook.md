@@ -108,14 +108,16 @@ The rest of 0007, 0008, 0009, 0016 and 0017 stands: the same commands, files and
 - Good, because hooks and commands get unit tests instead of end-to-end spikes only.
 - Bad, because more Rust must be written and tested before the first real effort.
 - Bad, because the variable list follows Claude Code's internals and can go stale.
-- Bad, because the hooks and the coordinator find `crook` on the PATH. Not checked for a session started by
-  `hc run` from the real core: spike 21 tested only herdr-app's `exec`.
+- Good, because sessions started by `hc run` in the real core find `crook` on the PATH: the core's `PATH`
+  has the mise global install folders and mise's shims (spike 22).
+- Bad, because after an upgrade, hooks in a running core run the old `crook` until mise prunes it or the core
+  restarts (spike 22). The previous version's hook behaviour must keep working against the new plugin's
+  files, and `current` only moves forward ([0019](0019-ship-crook-as-a-binary.md)).
 
 ### Confirmation
 
-Not yet tested. Before acceptance:
+Spike 22: sessions started by `hc run` in the real core find `crook` on the PATH. Before acceptance:
 
-- Check that `crook` is on the PATH of a Claude session started by `hc run` from the real core.
 - Start a scratch core through the variable removal above from inside a Claude session, and check its
   children show no transcript warning.
 

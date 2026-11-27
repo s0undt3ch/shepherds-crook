@@ -22,9 +22,13 @@ reviewed and reversed.
 | D12 | Captured stdout and stderr are capped at 16 MiB each; the excess is read and dropped. | A chatty child must not grow memory without limit or block on a full pipe. |
 | D13 | The environment rule is enforced by clippy's `disallowed-methods`, allowed only in `main.rs`; the substring test is gone. | The substring test was trivially bypassed by an import; clippy resolves the path. |
 | D14 | `main` routes `crook hook …` before clap, so every hook invocation exits 0. | Clap exits 2 on a usage error, which would break the hook contract (0020). |
+| D15 | The release-only test step passes `--no-tests=pass`. | With no `#[ignore]` tests yet, nextest fails with "no tests to run". |
+| D16 | No separate schema job: `tests/schema.rs` runs inside the normal test jobs once binary tasks 2.6 and 7.2 add it. | M1.6 asks for schema checks on both OSes, which the test jobs already give. |
+| D17 | Archive, smoke, packslip and mod jobs stay out of `ci.yml` until release M2 to M4. | Their subjects do not exist yet. |
+| D18 | Codecov uploads use OIDC, as v1 did; the repository has no secrets. | `gh secret list` is empty, and v1 never needed a token. |
 
 ## Milestones
 
 | Milestone | Status | Commit | Review findings |
 | --- | --- | --- | --- |
-| Foundation: release M0, binary 0 | done | (this commit) | 1 blocker (runner drain could hang), 3 should-fix (grandchildren survive timeout, bypassable env guard, hook exit codes), 4 nits; all fixed |
+| Foundation: release M0, binary 0 | done | `bb87293` | 1 blocker (runner drain could hang), 3 should-fix (grandchildren survive timeout, bypassable env guard, hook exit codes), 4 nits; all fixed |

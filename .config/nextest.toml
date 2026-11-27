@@ -1,0 +1,4 @@
+# The `ci` profile (`cargo llvm-cov nextest --profile ci`) also writes JUnit XML to
+# target/nextest/ci/junit.xml, which `codecov-stage-test-results` stages for Codecov.
+[profile.ci.junit]
+path = "junit.xml"

@@ -65,6 +65,254 @@ jobs:
         run: |
           prek run --all-files --show-diff-on-failure
 
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        # `$GITHUB_ENV` expects strict `KEY=VALUE` lines and rejects blank/comment
+        # lines as "Invalid format", so keep only the assignments.
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Set up mise
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ env.MISE_VERSION }}
+          cache: true
+          cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|test|${{ runner.os }}|${{ runner.arch }}
+
+      # The shared `~/.rustup` cache may have been saved by a job that never added this component.
+      - name: Add the llvm-tools component
+        run: rustup component add llvm-tools-preview
+
+      - id: rust-version-checksum
+        run: echo "version-sha256sum=$(rustc --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache `~/.cargo`
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ env.CACHE_SEED }}|${{ runner.os }}|cargo|${{ steps.rust-version-checksum.outputs.version-sha256sum }}|${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
+
+      # `--no-report` accumulates profiles; `report` merges them. The `ci` profile
+      # (.config/nextest.toml) also writes the JUnit file staged below. The schema checks
+      # (tests/schema.rs, once it exists) are ordinary tests, so this step runs them on both OSes.
+      - name: Run Rust tests with coverage
+        run: |
+          # `report` is not relied on to create the output directory.
+          mkdir -p target/coverage
+          cargo llvm-cov nextest --no-report --profile ci
+          cargo llvm-cov report --cobertura --output-path target/coverage/cobertura.xml
+
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          # Use OpenID Connect for secure authentication (no token needed)
+          use_oidc: true
+          # Without an explicit file the CLI's search also uploads `.d` files, cargo
+          # fingerprints and any source file with "coverage" in its name.
+          files: target/coverage/cobertura.xml
+          disable_search: true
+          flags: linux
+
+      - name: Stage test results for Codecov
+        if: ${{ !cancelled() }}
+        # Uploaded by the `codecov-notify` job: a test-results upload makes Codecov post
+        # checks and the PR comment at once, ignoring `codecov.notify.manual_trigger`.
+        uses: ./.github/actions/codecov-stage-test-results
+        with:
+          files: target/nextest/ci/junit.xml
+          flags: linux
+          name: Test / Test (Linux)
+          artifact-name: linux
+
+      # The `#[ignore]`d release-only tests build and run the release profile,
+      # so they run outside coverage instrumentation.
+      - name: Run the release-only tests
+        # `--no-tests=pass`: nextest exits non-zero when nothing matches, and no test is `#[ignore]`d yet.
+        run: cargo nextest run --release --run-ignored only --no-tests=pass
+
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-15
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        # `$GITHUB_ENV` expects strict `KEY=VALUE` lines and rejects blank/comment
+        # lines as "Invalid format", so keep only the assignments.
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Set up mise
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ env.MISE_VERSION }}
+          cache: true
+          cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|test|${{ runner.os }}|${{ runner.arch }}
+
+      # The shared `~/.rustup` cache may have been saved by a job that never added this component.
+      - name: Add the llvm-tools component
+        run: rustup component add llvm-tools-preview
+
+      - id: rust-version-checksum
+        run: echo "version-sha256sum=$(rustc --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache `~/.cargo`
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ env.CACHE_SEED }}|${{ runner.os }}|cargo|${{ steps.rust-version-checksum.outputs.version-sha256sum }}|${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
+
+      # `--no-report` accumulates profiles; `report` merges them. The `ci` profile
+      # (.config/nextest.toml) also writes the JUnit file staged below. The schema checks
+      # (tests/schema.rs, once it exists) are ordinary tests, so this step runs them on both OSes.
+      - name: Run Rust tests with coverage
+        run: |
+          # `report` is not relied on to create the output directory.
+          mkdir -p target/coverage
+          cargo llvm-cov nextest --no-report --profile ci
+          cargo llvm-cov report --cobertura --output-path target/coverage/cobertura.xml
+
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          # Use OpenID Connect for secure authentication (no token needed)
+          use_oidc: true
+          # Without an explicit file the CLI's search also uploads `.d` files, cargo
+          # fingerprints and any source file with "coverage" in its name.
+          files: target/coverage/cobertura.xml
+          disable_search: true
+          flags: macos
+
+      - name: Stage test results for Codecov
+        if: ${{ !cancelled() }}
+        # Uploaded by the `codecov-notify` job: a test-results upload makes Codecov post
+        # checks and the PR comment at once, ignoring `codecov.notify.manual_trigger`.
+        uses: ./.github/actions/codecov-stage-test-results
+        with:
+          files: target/nextest/ci/junit.xml
+          flags: macos
+          name: Test / Test (macOS)
+          artifact-name: macos
+
+      # The `#[ignore]`d release-only tests build and run the release profile,
+      # so they run outside coverage instrumentation.
+      - name: Run the release-only tests
+        # `--no-tests=pass`: nextest exits non-zero when nothing matches, and no test is `#[ignore]`d yet.
+        run: cargo nextest run --release --run-ignored only --no-tests=pass
+
+  test-tools:
+    name: Test (tools)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        # `$GITHUB_ENV` expects strict `KEY=VALUE` lines and rejects blank/comment
+        # lines as "Invalid format", so keep only the assignments.
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Setup ToolR
+        id: setup-toolr
+        uses: ./.github/actions/setup-toolr
+        with:
+          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|test-tools
+
+      # `--no-sync`: the action already synced the venv, so a missing or stale one fails fast.
+      - name: Run the tools tests with coverage
+        run: toolr project venv run --no-sync -- coverage run -m pytest tests/tools
+
+      - name: Write the tools coverage report
+        run: toolr project venv run --no-sync -- coverage xml -o coverage/tools.xml
+
+      - name: Upload tools coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: coverage/tools.xml
+          disable_search: true
+          flags: tools
+
+  codecov-notify:
+    name: Codecov Notify
+    # `.codecov.yml` sets `manual_trigger`, but a test-results upload notifies
+    # anyway, so those are uploaded here too, after every coverage upload.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - test-linux
+      - test-macos
+      - test-tools
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # Loads `mise.ci.toml`, and `mise.ci.lock` for the `--locked` install.
+      MISE_ENV: ci
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Install the Codecov CLI
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: github:codecov/codecov-cli
+          cache: true
+          cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|codecov-notify|${{ runner.os }}|${{ runner.arch }}
+
+      - name: Upload test results and tell Codecov every upload is in
+        uses: ./.github/actions/codecov-publish-test-results
+
   set-pipeline-exit-status:
     permissions: {}
     # This job exists so the branch ruleset can require a single check that
@@ -77,7 +325,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
+      - codecov-notify
       - pre-commit
+      - test-linux
+      - test-macos
+      - test-tools
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4

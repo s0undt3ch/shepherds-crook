@@ -24,9 +24,9 @@ Chosen option: the terminal's program is `claude --session-id <id> '<first task>
 does what it says, and 0017 already restores the coordinator and its children from disk.
 
 - When the coordinator exits, for any reason, its terminal ends and its children end with it (spike 4).
-- Starting the effort again runs `claude --resume <id>` in a new terminal, which then resumes every
+- Starting the flock again runs `claude --resume <id>` in a new terminal, which then resumes every
   `active` child from the roster as its own child (spike 11).
-- `/exit` pauses an effort; it does not close it. Closing an effort is a separate, explicit action that marks
+- `/exit` pauses a flock; it does not close it. Closing a flock is a separate, explicit action that marks
   the roster done.
 - The child hook's status-app check ([0009](0009-child-stop-hook-reports-completion.md)) stays. It costs one
   `hc get`, and a send to an ended coordinator fails loudly anyway (spike 2), so the result file waits for

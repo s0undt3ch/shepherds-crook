@@ -8,7 +8,7 @@ decision-makers: maintainer
 
 ## Context and problem statement
 
-With `notes_root` set ([0004](0004-effort-storage-location.md)), the notes root may be a git repository.
+With `notes_root` set ([0004](0004-flock-storage-location.md)), the notes root may be a git repository.
 Briefs and results change on every child turn and can hold raw logs and command output.
 
 ## Considered options
@@ -30,6 +30,6 @@ When a result matters, the coordinator writes it up in `notes/`.
 ### Consequences
 
 - Good, because the notes repository's history stays readable and free of raw logs.
-- Bad, because an effort spans two folders when `notes_root` is set; `README.md` must not link into
+- Bad, because a flock spans two folders when `notes_root` is set; `README.md` must not link into
   `briefs/` or `results/`, since those links break on other machines.
 - `notes/` fills only when the maintainer asks: nobody is forced to keep a diary.

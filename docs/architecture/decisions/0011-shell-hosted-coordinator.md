@@ -41,7 +41,7 @@ The loop: `sh -c "claude --session-id <id> '<first task>'; while :; do claude --
 - Good, because children keep working while the coordinator restarts, and notes survive without
   `--outlive-parent`.
 - Good, because text typed in during the restart gap reached the next Claude (observed once).
-- Bad, because `/exit` and Ctrl+C restart the coordinator instead of ending it; ending an effort means
+- Bad, because `/exit` and Ctrl+C restart the coordinator instead of ending it; ending a flock means
   ending the terminal, which ends its children too.
 - Bad, because the loop only covers Claude exiting. Losing the terminal itself (closed pane, core crash,
   reboot) ends the children; [0017](0017-resume-children-from-a-roster.md) covers that.

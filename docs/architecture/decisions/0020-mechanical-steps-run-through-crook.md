@@ -41,9 +41,9 @@ Chosen option: `crook` subcommands.
 
 | Command | Called by | Does |
 | --- | --- | --- |
-| `crook new <slug>` | The mod's "New effort" dialog, or the maintainer | Creates the effort folder ([0004](0004-effort-storage-location.md)) and its roster with the coordinator's session id, then does what `open` does |
-| `crook open <slug>` | The mod, or the maintainer | Starts the coordinator terminal with its `herdr.space`, `crook.effort` and `crook.version` labels ([0015](0015-spaces-from-herdr-labels.md)): `--session-id <id>` the first time, `--resume <id>` after that ([0018](0018-coordinator-runs-claude-directly.md)) |
-| `crook close <slug>` | The mod, or the maintainer | Marks the roster done, so the effort is closed rather than paused (0018) |
+| `crook new <slug>` | The mod's "New flock" dialog, or the maintainer | Creates the flock folder ([0004](0004-flock-storage-location.md)) and its roster with the coordinator's session id, then does what `open` does |
+| `crook open <slug>` | The mod, or the maintainer | Starts the coordinator terminal with its `herdr.space`, `crook.flock` and `crook.version` labels ([0015](0015-spaces-from-herdr-labels.md)): `--session-id <id>` the first time, `--resume <id>` after that ([0018](0018-coordinator-runs-claude-directly.md)) |
+| `crook close <slug>` | The mod, or the maintainer | Marks the roster done, so the flock is closed rather than paused (0018) |
 | `crook spawn <role> <child> <brief>` | The coordinator, through Bash | Picks the session id, writes the roster entry, then runs `hc run` with the flags in a fixed order and `--parent "$HC_TERMINAL_ID"` (0007) |
 | `crook stop <child>` | The coordinator | Marks the child `done` in the roster and ends its terminal, so a later resume does not bring it back |
 | `crook resume [<child>]` | The coordinator's SessionStart hook, or the maintainer | Resumes one child, or every `active` child with no live terminal, under its original name (0017) |
@@ -51,7 +51,7 @@ Chosen option: `crook` subcommands.
 | `crook hook <event>` | The plugin's hook config | See below |
 | `crook completion print <shell>` | mise, through the release manifest (below) | Prints tab completion for bash, zsh and fish, so the slugs and child names above complete |
 
-`new` and `open` stay separate so a mistyped slug fails instead of creating an effort.
+`new` and `open` stay separate so a mistyped slug fails instead of creating a flock.
 
 ### Completion
 
@@ -108,7 +108,7 @@ The rest of 0007, 0008, 0009, 0016 and 0017 stands: the same commands, files and
 - Good, because the launch command, roster writes and resume are the same every time.
 - Good, because resume no longer depends on the coordinator remembering to do it.
 - Good, because hooks and commands get unit tests instead of end-to-end spikes only.
-- Bad, because more Rust must be written and tested before the first real effort.
+- Bad, because more Rust must be written and tested before the first real flock.
 - Bad, because the variable list follows Claude Code's internals and can go stale.
 - Good, because hooks and the mod call `crook` through mise's shim ([0019](0019-ship-crook-as-a-binary.md)),
   which runs the active version even in a core started before an upgrade (spike 22).

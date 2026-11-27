@@ -17,7 +17,7 @@ whether a restarted coordinator could start its children again and have them car
 
 ## Considered options
 
-- A roster per effort; on start, the coordinator resumes every unfinished child by session id.
+- A roster per flock; on start, the coordinator resumes every unfinished child by session id.
 - `--outlive-parent` children that survive and are adopted again.
 - Accept the loss and start fresh children.
 
@@ -28,7 +28,7 @@ terminal or its core, and a reboot all end in the same place.
 
 How it works:
 
-- The roster lives in the effort's default location
+- The roster lives in the flock's default location
   ([0012](0012-split-child-traffic-from-curated-notes.md)). One entry per child: name, session id, folder,
   role, brief path, state (`active`, `done`).
 - The coordinator picks each child's session id and writes its roster entry before launching it with

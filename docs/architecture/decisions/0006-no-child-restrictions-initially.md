@@ -8,7 +8,7 @@ decision-makers: maintainer
 
 ## Context and problem statement
 
-Children need to read the effort's documents, including the notes root. Claude Code's `--add-dir` grants
+Children need to read the flock's documents, including the notes root. Claude Code's `--add-dir` grants
 read and write: its prompt says Claude "will be able to read, edit, and execute files here". A read-only
 folder would need deny rules for `Edit` and `Write`; whether those also stop shell commands from writing has
 not been checked.

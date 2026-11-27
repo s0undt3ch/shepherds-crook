@@ -51,4 +51,4 @@ and held a result while the coordinator was blocked.
 Accepted for now, with a known weak spot: a child doing several things in one brief. The hook reports when
 the result file changes, so a child that rewrites it after each step pings the coordinator each time, and
 one that writes it once only at the end reports nothing in between. Nothing checks the work against a
-checklist. Revisit once real efforts show which way it breaks.
+checklist. Revisit once real flocks show which way it breaks.

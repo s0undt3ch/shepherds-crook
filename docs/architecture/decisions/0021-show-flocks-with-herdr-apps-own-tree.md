@@ -4,11 +4,11 @@ date: 2026-11-27
 decision-makers: maintainer
 ---
 
-# Show an effort with herdr-app's own space, tab and agent tree
+# Show a flock with herdr-app's own space, tab and agent tree
 
 ## Context and problem statement
 
-The maintainer should see each effort in herdr-app as one unit: the effort, its coordinator on top, then the
+The maintainer should see each flock in herdr-app as one unit: the flock, its coordinator on top, then the
 coordinator's children, as a tree. A child should get its own tab, at least when the maintainer clicks it.
 
 herdr-app's Agents sidebar already draws a tree. It lists the live terminals whose `parent` is an agent under
@@ -20,20 +20,20 @@ starts every child with `--parent` set to the coordinator ([0020](0020-mechanica
 
 - herdr-app's own Spaces sidebar and Agents tree; children get a tab only when the maintainer keeps one.
 - The same, with a `herdr.tab` label on every child, so each child gets a tab at once.
-- A crook mod that replaces or forks the Spaces or Agents sidebar with an effort tree.
+- A crook mod that replaces or forks the Spaces or Agents sidebar with a flock tree.
 
 ## Decision outcome
 
 Chosen option: herdr-app's own sidebars, children without tabs until kept.
 
-- **Effort.** One space, from the coordinator's `herdr.space` label ([0015](0015-spaces-from-herdr-labels.md)).
-  `crook open` (and so `crook new`) renames the space to the effort's name with `space.rename` on every start:
+- **Flock.** One space, from the coordinator's `herdr.space` label ([0015](0015-spaces-from-herdr-labels.md)).
+  `crook open` (and so `crook new`) renames the space to the flock's name with `space.rename` on every start:
   the space goes when its coordinator ends, and comes back named after the coordinator's folder (spike 25).
 - **Coordinator.** The space's first tab, from its `herdr.tab` label. crook renames that tab with
   `tab.rename`; herdr-app otherwise names it from the session's title.
 - **Children.** No `herdr.space` or `herdr.tab` label. This amends 0015, where children carried labels too.
   Each child shows under the coordinator in the Agents tree. Clicking it peeks; "keep" gives it its own tab in
-  the effort's space, named after the child, and hc records the tab labels so the tab stays.
+  the flock's space, named after the child, and hc records the tab labels so the tab stays.
 - **Order.** The coordinator is the tree's root; its children follow in the order herdr-app lists them.
 
 crook adds no herdr-app code for this. What the tree cannot show (children in the roster with no live
@@ -64,7 +64,7 @@ came back with the default names. So `crook open` renames on every start, not on
 ### A `herdr.tab` label on every child
 
 - Good, because every child is one click away in the tab bar.
-- Bad, because an effort with many children floods the tab bar, while the tree already gives one-click
+- Bad, because a flock with many children floods the tab bar, while the tree already gives one-click
   access.
 
 ### A crook mod that replaces the Spaces or Agents sidebar

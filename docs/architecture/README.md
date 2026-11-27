@@ -21,7 +21,7 @@ that decisions cite lives in [`research/`](research/).
 | [0001](decisions/0001-record-architecture-decisions.md) | Record architecture decisions with MADR | Accepted |
 | [0002](decisions/0002-build-on-herdr-core-and-herdr-app.md) | Build on herdr-core and herdr-app | Accepted |
 | [0003](decisions/0003-coordinator-session-delegates-to-children.md) | A coordinator session delegates to child sessions | Accepted |
-| [0004](decisions/0004-effort-storage-location.md) | Effort storage: a default location, an optional notes root | Accepted |
+| [0004](decisions/0004-flock-storage-location.md) | Flock storage: a default location, an optional notes root | Accepted |
 | [0005](decisions/0005-markdown-for-herdr-md.md) | Write plain GitHub Markdown for herdr-md | Accepted |
 | [0006](decisions/0006-no-child-restrictions-initially.md) | No access restrictions for children, initially | Accepted |
 | [0007](decisions/0007-launch-children-with-hc-run.md) | Launch children with `hc run`, crook's agents and brief files | Accepted |
@@ -38,13 +38,17 @@ that decisions cite lives in [`research/`](research/).
 | [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Accepted |
 | [0019](decisions/0019-ship-crook-as-a-binary.md) | Ship crook as a binary, installed by mise, that installs its herdr mod | Accepted |
 | [0020](decisions/0020-mechanical-steps-run-through-crook.md) | Mechanical steps run through `crook` subcommands | Accepted |
-| [0021](decisions/0021-show-efforts-with-herdr-apps-own-tree.md) | Show an effort with herdr-app's own space, tab and agent tree | Accepted |
+| [0021](decisions/0021-show-flocks-with-herdr-apps-own-tree.md) | Show a flock with herdr-app's own space, tab and agent tree | Accepted |
 | [0022](decisions/0022-rust-fresh-code-v1-tooling.md) | Rust, fresh code on main, v1's tooling reused | Accepted |
+| [0023](decisions/0023-crook-manages-child-worktrees.md) | crook creates and removes child worktrees | Proposed |
+| [0024](decisions/0024-flock-file-formats.md) | File formats for the roster, briefs, results and delivery marks | Proposed |
+| [0025](decisions/0025-roles-and-child-models.md) | Two roles; the coordinator picks each child's model | Proposed |
+| [0026](decisions/0026-config-file.md) | crook's settings live in an XDG config file | Proposed |
 
 ## Open questions
 
-- **Names.** "crook" stays. "Effort" is still the working name for one piece of work (a bug, a feature, an
-  investigation); "project" and "space" are taken by Claude Code and herdr-app.
+- **Names.** Settled: "crook" for the tool, "flock" for one piece of work (a bug, a feature, an
+  investigation). The spike report keeps "effort", the earlier working name, where it records what ran.
 - **herdr-app with the window closed.** Do labelled terminals show up when the app opens later? See
   [research](research/2026-11-26-hc-herdr-app-spikes.md).
 - **Packaging.** Settled by [0019](decisions/0019-ship-crook-as-a-binary.md). A mise shim hands over to the

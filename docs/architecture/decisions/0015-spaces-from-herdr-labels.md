@@ -6,22 +6,22 @@ decision-makers: maintainer
 
 # Create herdr-app spaces with `herdr.space` labels
 
-Amended by [0021](0021-show-efforts-with-herdr-apps-own-tree.md): children carry no `herdr.*` labels;
+Amended by [0021](0021-show-flocks-with-herdr-apps-own-tree.md): children carry no `herdr.*` labels;
 they show under the coordinator in herdr-app's Agents tree.
 
 ## Context and problem statement
 
-Each effort should be one herdr-app space. herdr-app shows any terminal labelled
+Each flock should be one herdr-app space. herdr-app shows any terminal labelled
 `herdr.space=<id>` and `herdr.tab=<id>`, and an id it does not know becomes a new space or tab.
 
 ## Considered options
 
-- Invent ids (`crook-<effort>`) and label terminals; rename with `space.rename`.
+- Invent ids (`crook-<flock>`) and label terminals; rename with `space.rename`.
 - Call `herdr-app do space.new` and read back the id it chose.
 
 ## Decision outcome
 
-Chosen option: invented ids through labels. The "New effort" dialog may still use `space.new`; children and
+Chosen option: invented ids through labels. The "New flock" dialog may still use `space.new`; children and
 restarts use labels.
 
 ### Consequences

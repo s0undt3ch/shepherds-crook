@@ -39,7 +39,7 @@ Chosen option: crook's plugin agents plus brief files.
 - It does not pass `--outlive-parent`; see [0018](0018-coordinator-runs-claude-directly.md).
 
 ```sh
-hc run --bg --name <child> --label crook.effort=<id> \
+hc run --bg --name <child> --label crook.flock=<id> \
   claude --plugin-dir <crook> --agent <role> --session-id <uuid> "Read <brief>. Report to <coordinator>."
 ```
 

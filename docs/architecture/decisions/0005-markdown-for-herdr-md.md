@@ -8,7 +8,7 @@ decision-makers: maintainer
 
 ## Context and problem statement
 
-Effort documents are read in a Markdown reader inside herdr-app (the herdr-md mod), not in a particular
+Flock documents are read in a Markdown reader inside herdr-app (the herdr-md mod), not in a particular
 notes app.
 
 ## Decision outcome

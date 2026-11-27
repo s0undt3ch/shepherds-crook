@@ -12,7 +12,7 @@ crook has two parts:
 
 - A Claude Code plugin: the coordinator skill, the role agents
   ([0007](0007-launch-children-with-hc-run.md)) and the hooks ([0009](0009-child-stop-hook-reports-completion.md)).
-- A herdr-app mod: the "New effort" dialog and the effort panel.
+- A herdr-app mod: the "New flock" dialog and the flock panel.
 
 v1 never installed its plugin globally: every crook session got `--plugin-dir <crook's folder>`
 (`CONTRIBUTING.md` on `backup_crook_v1`). So the plugin needs a folder on disk, not a marketplace install.
@@ -88,7 +88,7 @@ Upgrades in live sessions:
   else, so it stops and says so;
 - moves `current`.
 
-The mod stays thin: UI only. It runs `exec` on the shim to start or resume an effort. herdr-app's `exec`
+The mod stays thin: UI only. It runs `exec` on the shim to start or resume a flock. herdr-app's `exec`
 also finds a bare `crook` through the login shell's PATH when the login shell activates mise (spikes 18 and
 21), but the shim does not depend on that.
 

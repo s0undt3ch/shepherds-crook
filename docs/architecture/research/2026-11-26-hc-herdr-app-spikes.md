@@ -497,3 +497,17 @@ So a rename lasts while the space has a terminal. An effort's space goes when it
 start must rename again.
 
 The space was closed with `space.close` and the terminal removed with `hc rm`.
+
+## 26. Worktree trust and choosing a child's model (2026-11-27)
+
+A scratch core and a scratch git repository under `$TMPDIR/crook-e2e-wt.*`, with a throwaway plugin whose
+`agents/child.md` sets `model: haiku`.
+
+| Step | Result |
+| --- | --- |
+| `claude` in the repository | Trust dialog; accepted |
+| `git worktree add -b crook/test/kid1 <repo>/.worktrees/test-kid1`, then `claude --agent child …` there | No trust dialog; replied `WORKTREE` on Haiku |
+| `claude --agent child --model sonnet --session-id <id> …` | Replied on Sonnet: `--model` beats the agent file's `model` |
+| `hc kill`, then `claude --agent child --model opus --resume <id> "What word did you reply with before? …"` | Replied on Opus with the earlier word: a resume can move a child to another model and keeps its conversation |
+
+So a worktree inside a trusted repository needs no trust step of its own.

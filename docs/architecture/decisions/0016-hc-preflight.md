@@ -16,7 +16,7 @@ variables to every child, which turns off the children's transcripts and so brea
 
 ## Decision outcome
 
-Before starting an effort, crook checks:
+Before starting a flock, crook checks:
 
 - `hc --version` is at least a pinned floor (0.1.22 today).
 - `hc schema` has `terminal.run` with `labels`.

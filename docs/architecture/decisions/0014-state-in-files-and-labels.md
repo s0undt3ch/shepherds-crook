@@ -8,7 +8,7 @@ decision-makers: maintainer
 
 ## Context and problem statement
 
-v1 kept effort and child state in SQLite and reconciled it with herdr. hc already knows every terminal, its
+v1 kept flock and child state in SQLite and reconciled it with herdr. hc already knows every terminal, its
 parent, status, labels and exit.
 
 ## Considered options

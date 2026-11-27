@@ -365,3 +365,20 @@ Hook log and screen:
 The model was not involved. The send from inside the Stop hook did not block the hook. `/reload-plugins` did
 not fire SessionStart again. The turn running when the upgrade lands still uses the old skills; the reload
 applies from the next turn.
+
+## 21. `exec` from a mod in the maintainer's real herdr-app (2026-11-27)
+
+herdr-app 0.1.18, started by launchd (parent pid 1), as from the Finder or Dock. A throwaway overlay mod
+`mods/crookspk-probe/` passed `herdr-app check`, was opened with `herdr-app do mod.open --name crookspk-probe`,
+and wrote what its `exec` calls returned to a scratch file. Then it was closed and its folder, and the empty
+`data/crookspk-probe/` the app made for it, were deleted. `herdr-app status` reported no errors afterwards.
+
+| Call | Result |
+| --- | --- |
+| `exec("sh", ["-c", "command -v jq; command -v mise; command -v claude; command -v hc"])` | `~/.local/share/mise/installs/jq/1.8.2/jq`, `/opt/homebrew/bin/mise`, `~/.local/bin/claude`, `~/.local/bin/hc` |
+| `exec("jq", ["--version"])` (a global mise tool) | `jq-1.8.2` |
+| `exec("mise", ["--version"])` | `2026.11.14 macos-arm64 (2026-11-24)` |
+| `PATH` seen by `exec` | the mise global install folders and `~/.local/share/mise/shims` |
+
+So a `crook` installed with `mise use -g` will be found by the mod's `exec("crook", …)`, as long as the
+login shell activates mise, as the maintainer's does.

@@ -73,8 +73,8 @@ Upgrades in live sessions:
 - moves `current`.
 
 The mod stays thin: UI only. It runs `exec("crook", [...])` to start or resume an effort, so it never needs a
-path. herdr-app's `exec` uses the login shell's PATH, which on the maintainer's machine includes mise's global
-tools (spike 18).
+path. herdr-app's `exec` uses the login shell's PATH, which includes mise's global tools when the login
+shell activates mise (spikes 18 and 21).
 
 `crook doctor` checks, and `crook doctor --fix` repairs what it can:
 
@@ -102,11 +102,10 @@ on that machine. crook does not copy itself across machines.
 
 ### Confirmation
 
-Spikes 17 to 20 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
+Spikes 17 to 21 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
 
 Not tested:
 
-- `exec("crook", …)` from a mod in the real herdr-app;
 - the binary finding its own install folder when started through a mise shim.
 
 ## Pros and cons of the options

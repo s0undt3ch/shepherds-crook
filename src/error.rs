@@ -24,4 +24,37 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error("{}: {source}", .path.display())]
+    File {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("invalid {kind} {name:?}: {reason}")]
+    InvalidName {
+        kind: &'static str,
+        name: String,
+        reason: &'static str,
+    },
+    #[error("{}: {message}", .path.display())]
+    Config {
+        path: std::path::PathBuf,
+        message: String,
+    },
+    #[error("{}: {message}", .path.display())]
+    Roster {
+        path: std::path::PathBuf,
+        message: String,
+    },
+    #[error("{}: {message}", .path.display())]
+    Marks {
+        path: std::path::PathBuf,
+        message: String,
+    },
+    #[error("{0}")]
+    Flock(String),
+    #[error("{0}")]
+    Env(String),
+    #[error("git {args}: {message}")]
+    Git { args: String, message: String },
 }

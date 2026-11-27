@@ -1,7 +1,16 @@
 pub mod cli;
+pub mod config;
 pub mod ctx;
 pub mod error;
+pub mod files;
+pub mod flock;
+pub mod git;
+pub mod names;
+pub mod paths;
 pub mod run;
+
+#[cfg(test)]
+mod testutil;
 
 /// `crook hook` must exit 0 whatever its arguments (ADR 0020), so `main` checks for it before
 /// clap parses and can exit 2 on a usage error.

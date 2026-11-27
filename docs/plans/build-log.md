@@ -31,6 +31,9 @@ reviewed and reversed.
 | D21 | The test jobs still install all of `mise.toml`. | Trimming saves minutes on a cold cache only; revisit if CI time hurts. |
 | D22 | The mise shim is `${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook`, in code, ADR 0019 and every plan. | Review: mise puts its shims under `MISE_DATA_DIR` or `XDG_DATA_HOME` when set (`XDG_DATA_HOME=/tmp/x mise doctor` showed `/tmp/x/mise/shims`); the fixed `~/.local/share` path would miss them. |
 | D23 | Worktree removal keeps the worktree when it holds any ignored file, naming up to three. | Review: `git worktree remove` deletes ignored files such as `.env`; ADR 0023 says cleanup never loses work, which wins over tidiness. |
+| D24 | `roster::load` reads `"version": 1.0` as 1. | JSON Schema treats 1.0 as the integer 1; loader and schema must agree. |
+| D25 | Every path function returns a `Result`; a missing or relative `HOME` fails only when a path needs it, and relative or empty `XDG_*` values are ignored. | The XDG spec says relative values are invalid and must be ignored (review finding). |
+| D26 | `flock::find` reports a folder with no roster, or a roster naming another flock, as a broken flock; `list` stays name-based. | Review nit: `find` ignored the roster; `status` must still be able to show broken flocks. |
 
 ## Milestones
 
@@ -38,3 +41,4 @@ reviewed and reversed.
 | --- | --- | --- | --- |
 | Foundation: release M0, binary 0 | done | `bb87293` | 1 blocker (runner drain could hang), 3 should-fix (grandchildren survive timeout, bypassable env guard, hook exit codes), 4 nits; all fixed |
 | Release M1: CI | done except M1.6 | `d43a2db`, fixes in the next commit | 0 blockers, 2 should-fix (fail-open coverage uploads, component globs), 4 nits (3 fixed); M1.6 waits for the schema tests (D16) |
+| Binary 1 and 2: paths, config, names, flock files, worktrees | done | (next commit) | 2 blockers (worktree removal lost detached-HEAD commits and untracked files), 7 should-fix (ignored files, parent-repo status, relative XDG, mise shim path, roster/schema mismatch, half-made flock burns the slug, a test proving nothing), 5 nits; all fixed. Watch: `run::tests::a_timeout_takes_the_grandchildren_with_it` failed once under load, not reproduced in 10 runs. |

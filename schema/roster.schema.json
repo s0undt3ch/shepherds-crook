@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "crook roster.json",
+  "description": "A flock's roster (ADR 0024). Written only by crook; the mod reads it through `crook status --json`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "flock",
+    "coordinator",
+    "children"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "flock": {
+      "$ref": "#/$defs/name"
+    },
+    "coordinator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "folder",
+        "state",
+        "started"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/nonblank"
+        },
+        "folder": {
+          "$ref": "#/$defs/nonblank"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "started": {
+          "type": "boolean"
+        }
+      }
+    },
+    "children": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "role",
+          "model",
+          "session_id",
+          "folder",
+          "repo",
+          "branch",
+          "brief",
+          "state"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/name"
+          },
+          "role": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "model": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "session_id": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "folder": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "brief": {
+            "type": "string",
+            "pattern": "^briefs/[^/]+$",
+            "not": {
+              "pattern": "^briefs/\\.\\.?$"
+            }
+          },
+          "state": {
+            "$ref": "#/$defs/state"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "maxLength": 40,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "state": {
+      "enum": [
+        "active",
+        "done"
+      ]
+    },
+    "nonblank": {
+      "type": "string",
+      "pattern": "\\S"
+    }
+  }
+}

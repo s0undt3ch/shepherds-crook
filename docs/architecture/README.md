@@ -37,12 +37,12 @@ that decisions cite lives in [`research/`](research/).
 | [0017](decisions/0017-resume-children-from-a-roster.md) | Resume children from a roster after a restart | Accepted |
 | [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Accepted |
 | [0019](decisions/0019-ship-crook-as-a-binary.md) | Ship crook as a binary, installed by mise, that installs its herdr mod | Accepted |
+| [0020](decisions/0020-mechanical-steps-run-through-crook.md) | Mechanical steps run through `crook` subcommands | Proposed |
 
 ## Open questions
 
 - **Names.** "crook" stays. "Effort" is still the working name for one piece of work (a bug, a feature, an
   investigation); "project" and "space" are taken by Claude Code and herdr-app.
-- **Read-only vault for children.** `--add-dir` grants read and write; parked by [0006](decisions/0006-no-child-restrictions-initially.md).
 - **herdr-app with the window closed.** Do labelled terminals show up when the app opens later? See
   [research](research/2026-11-26-hc-herdr-app-spikes.md).
 - **Packaging.** Settled by [0019](decisions/0019-ship-crook-as-a-binary.md). Untested until the first

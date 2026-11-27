@@ -40,10 +40,10 @@ that decisions cite lives in [`research/`](research/).
 | [0020](decisions/0020-mechanical-steps-run-through-crook.md) | Mechanical steps run through `crook` subcommands | Accepted |
 | [0021](decisions/0021-show-flocks-with-herdr-apps-own-tree.md) | Show a flock with herdr-app's own space, tab and agent tree | Accepted |
 | [0022](decisions/0022-rust-fresh-code-v1-tooling.md) | Rust, fresh code on main, v1's tooling reused | Accepted |
-| [0023](decisions/0023-crook-manages-child-worktrees.md) | crook creates and removes child worktrees | Proposed |
-| [0024](decisions/0024-flock-file-formats.md) | File formats for the roster, briefs, results and delivery marks | Proposed |
-| [0025](decisions/0025-roles-and-child-models.md) | Two roles; the coordinator picks each child's model | Proposed |
-| [0026](decisions/0026-config-file.md) | crook's settings live in an XDG config file | Proposed |
+| [0023](decisions/0023-crook-manages-child-worktrees.md) | crook creates and removes child worktrees | Accepted |
+| [0024](decisions/0024-flock-file-formats.md) | File formats for the roster, briefs, results and delivery marks | Accepted |
+| [0025](decisions/0025-roles-and-child-models.md) | Two roles; the coordinator picks each child's model | Accepted |
+| [0026](decisions/0026-config-file.md) | crook's settings live in an XDG config file | Accepted |
 
 ## Open questions
 

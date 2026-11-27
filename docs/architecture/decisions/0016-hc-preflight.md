@@ -1,5 +1,5 @@
 ---
-status: Proposed
+status: Accepted
 date: 2026-11-26
 decision-makers: maintainer
 ---

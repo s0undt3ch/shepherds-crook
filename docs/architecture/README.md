@@ -27,13 +27,13 @@ that decisions cite lives in [`research/`](research/).
 | [0007](decisions/0007-launch-children-with-hc-run.md) | Launch children with `hc run`, crook's agents and brief files | Accepted |
 | [0008](decisions/0008-messages-over-hc-send-results-folder-inbox.md) | Messages over `hc send`; the results folder is the inbox | Accepted |
 | [0009](decisions/0009-child-stop-hook-reports-completion.md) | A child Stop hook reports completion | Accepted |
-| [0010](decisions/0010-human-input-through-hc-blocked.md) | Human input goes through hc's `blocked` status | Proposed |
+| [0010](decisions/0010-human-input-through-hc-blocked.md) | Human input goes through hc's `blocked` status | Accepted |
 | [0011](decisions/0011-shell-hosted-coordinator.md) | Host the coordinator in a shell | Rejected |
-| [0012](decisions/0012-split-child-traffic-from-curated-notes.md) | Keep child traffic out of the notes root | Proposed |
-| [0013](decisions/0013-directory-access-through-trusted-roots.md) | Directory access through trusted stable roots | Proposed |
-| [0014](decisions/0014-state-in-files-and-labels.md) | State in files and hc labels, no database | Proposed |
-| [0015](decisions/0015-spaces-from-herdr-labels.md) | Create herdr-app spaces with `herdr.space` labels | Proposed |
-| [0016](decisions/0016-hc-preflight.md) | Preflight checks before using hc | Proposed |
+| [0012](decisions/0012-split-child-traffic-from-curated-notes.md) | Keep child traffic out of the notes root | Accepted |
+| [0013](decisions/0013-directory-access-through-trusted-roots.md) | Directory access through trusted stable roots | Accepted |
+| [0014](decisions/0014-state-in-files-and-labels.md) | State in files and hc labels, no database | Accepted |
+| [0015](decisions/0015-spaces-from-herdr-labels.md) | Create herdr-app spaces with `herdr.space` labels | Accepted |
+| [0016](decisions/0016-hc-preflight.md) | Preflight checks before using hc | Accepted |
 | [0017](decisions/0017-resume-children-from-a-roster.md) | Resume children from a roster after a restart | Accepted |
 | [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Accepted |
 

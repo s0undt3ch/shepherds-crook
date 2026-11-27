@@ -6,6 +6,9 @@ decision-makers: maintainer
 
 # Preflight checks before using hc
 
+Amended by [0020](0020-mechanical-steps-run-through-crook.md): when crook starts the core, it removes
+Claude's session variables instead of refusing.
+
 ## Context and problem statement
 
 hc is at 0.1.x and may change. A core started from inside a Claude Code session passes that session's

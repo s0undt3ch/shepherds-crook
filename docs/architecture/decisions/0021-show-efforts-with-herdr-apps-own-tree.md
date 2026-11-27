@@ -1,5 +1,5 @@
 ---
-status: Proposed
+status: Accepted
 date: 2026-11-27
 decision-makers: maintainer
 ---
@@ -72,7 +72,3 @@ came back with the default names. So `crook open` renames on every start, not on
 - Good, because crook controls the order and can show roster-only children.
 - Bad, because herdr-app's sidebars are ordinary mods that herdr updates; a fork drifts from them.
 - Bad, because it duplicates a tree herdr-app already draws.
-
-## More information
-
-When this is accepted, add an "amended by 0021" note to 0015.

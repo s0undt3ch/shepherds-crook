@@ -6,6 +6,9 @@ decision-makers: maintainer
 
 # Create herdr-app spaces with `herdr.space` labels
 
+Amended by [0021](0021-show-efforts-with-herdr-apps-own-tree.md): children carry no `herdr.*` labels;
+they show under the coordinator in herdr-app's Agents tree.
+
 ## Context and problem statement
 
 Each effort should be one herdr-app space. herdr-app shows any terminal labelled

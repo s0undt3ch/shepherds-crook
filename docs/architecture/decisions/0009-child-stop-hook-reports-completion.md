@@ -6,6 +6,8 @@ decision-makers: maintainer
 
 # A child Stop hook reports completion
 
+Amended by [0020](0020-mechanical-steps-run-through-crook.md): the hook below is `crook hook stop`.
+
 ## Context and problem statement
 
 The coordinator must learn when a child is done. hc notes the parent when a child blocks, errors or exits,

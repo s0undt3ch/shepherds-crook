@@ -1,5 +1,5 @@
 ---
-status: Proposed
+status: Accepted
 date: 2026-11-27
 decision-makers: maintainer
 ---
@@ -138,5 +138,3 @@ Looked at in v1 and left out:
   and builds the risky command itself, so a typed tool adds a TypeScript layer and a second interface for
   little gain.
 - `list` and `wipe`: not needed for the steps above. Add them when they are.
-
-When this is accepted, add "amended by 0020" notes to 0007, 0008, 0009, 0016 and 0017.

@@ -6,6 +6,9 @@ decision-makers: maintainer
 
 # Messages over `hc send`; the results folder is the inbox
 
+Amended by [0020](0020-mechanical-steps-run-through-crook.md): `crook hook user-prompt-submit` runs the
+results rescan.
+
 ## Context and problem statement
 
 Parent and children need to message each other. The question was whether to build an inbox.

@@ -6,6 +6,9 @@ decision-makers: maintainer
 
 # Launch children with `hc run`, crook's agents and brief files
 
+Amended by [0020](0020-mechanical-steps-run-through-crook.md): `crook spawn` builds and runs the launch
+command below; the coordinator no longer types it.
+
 ## Context and problem statement
 
 The coordinator must start children with a role, a model, a task and enough context to work without asking

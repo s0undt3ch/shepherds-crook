@@ -6,6 +6,9 @@ decision-makers: maintainer
 
 # Resume children from a roster after a restart
 
+Amended by [0020](0020-mechanical-steps-run-through-crook.md): `crook spawn` writes the roster entry, and
+the coordinator's SessionStart hook runs `crook resume`.
+
 ## Context and problem statement
 
 When the coordinator's terminal ends (`/exit`, pane closed, core crash, reboot, or a coordinator killed

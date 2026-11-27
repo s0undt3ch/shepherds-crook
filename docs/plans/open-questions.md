@@ -78,14 +78,14 @@ To do before the first release: check that the `release` environment and its `GH
 
 ## Batch 2: calls the planners made while applying batch 1 (2026-11-27)
 
-The binary planner settled these itself while folding in batch 1. They stand in the plans until the maintainer
-says otherwise.
+The binary planner settled these itself while folding in batch 1. The maintainer accepted 38 to 42 on
+2026-11-27.
 
 | # | Question | Planner's call | Status |
 | --- | --- | --- | --- |
-| 38 | Does `doctor --fix` refresh the mod, given Q22 says only `setup` does? | `doctor --fix` calls `setup`'s own routine; nothing else refreshes the mod. | open |
-| 39 | What does a debug build use when `CROOK_BIN` is unset? | Its own executable path, so its children call the debug build too. | open |
-| 40 | What happens to a worktree when `spawn --repo` fails to launch the child? | `spawn` removes the worktree it just made, if clean, so the retry with the same name (Q11) works. | open |
-| 41 | When are session records over 30 days old pruned (Q17)? | On `setup` and `doctor --fix`. | open |
-| 42 | How long may each hook run inside its timeout (Q25)? | 100 seconds for session-start, 20 for the others, leaving room before the 120 and 30 second timeouts. | open |
+| 38 | Does `doctor --fix` refresh the mod, given Q22 says only `setup` does? | `doctor --fix` calls `setup`'s own routine; nothing else refreshes the mod. | decided |
+| 39 | What does a debug build use when `CROOK_BIN` is unset? | Its own executable path, so its children call the debug build too. | decided |
+| 40 | What happens to a worktree when `spawn --repo` fails to launch the child? | `spawn` removes the worktree it just made, if clean, so the retry with the same name (Q11) works. | decided |
+| 41 | When are session records over 30 days old pruned (Q17)? | On `setup` and `doctor --fix`. | decided |
+| 42 | How long may each hook run inside its timeout (Q25)? | 100 seconds for session-start, 20 for the others, leaving room before the 120 and 30 second timeouts. | decided |
 | 43 | What is `folder` in `status --json`? | An absolute path; the mod shows its last part. | decided: aligned in the binary and mod plans |

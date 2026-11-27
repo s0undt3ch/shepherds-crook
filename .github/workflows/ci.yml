@@ -154,13 +154,14 @@ jobs:
         run: toolr ci mod-check
 
       # The status schema tests inside it skip until `schema/status.schema.json` exists.
+      # Node 24 reads a bare folder argument as a file, so pass a glob (Node expands it).
       - name: Run the mod tests with coverage
         run: |
           mkdir -p coverage
           node --test --experimental-test-coverage --test-coverage-include='mod/**' \
             --test-reporter=spec --test-reporter-destination=stdout \
             --test-reporter=lcov --test-reporter-destination=coverage/mod.lcov \
-            tests/mod
+            'tests/mod/*.test.mjs'
 
       - name: Upload mod coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1

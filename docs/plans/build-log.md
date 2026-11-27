@@ -66,6 +66,7 @@ reviewed and reversed.
 | D56 | `mod-check` reads each script from stdin with `--input-type=module`, and treats a missing `node` as a failure. The shim rule is: every bare `exec(` runs `"sh"` with `crookArgv(`, and `SHIM_SCRIPT` in `lib.js` holds the exact `SHIM` expression. | Without the module flag, a `.js` file is read as CommonJS or by syntax detection, depending on the nearest `package.json`. A rule on `exec("crook"` alone would let `exec(program, ...)` or `sh -c "crook ..."` through. Comments and `.exec(` on a regular expression are not calls. |
 | D57 | The mod's own tests run in the `mod-check` job with Node's built-in coverage (`--test-coverage-include='mod/**'`, lcov), uploaded under flag `mod`. `.codecov.yml` gains a `mod` component and `after_n_builds` 4. The status schema test skips until `schema/status.schema.json` exists; the job needs no change when it does. The test-tools job also gets Node 24.22.3, because the new tests run `node --check`. | Release M3.4. No type check against a `herdr.d.ts` stub: the mod plan adds none, so the stub is not written (M3's note). |
 | D58 | CodeQL's matrix gains `javascript-typescript`. | Release M3.6. `tests/` is already in `paths-ignore`, so the mod's tests are skipped. Not run on GitHub: the workflow's first run decides. |
+| D59 | Mod tests run as `node --test 'tests/mod/*.test.mjs'`, not `node --test tests/mod`. | Node 24, pinned in CI, reads a bare folder argument as a single file and fails; the local Node 26 hid this. |
 
 ## Milestones
 

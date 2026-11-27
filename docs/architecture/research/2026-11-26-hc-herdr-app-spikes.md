@@ -443,6 +443,10 @@ A first attempt that forgot to remove the variables from `hc server start` gave 
 the warning: the call that starts the core decides the environment of its terminals (the core's `hold`
 process carried the caller's variables).
 
+That first attempt failed because of zsh: the `-u NAME` flags were built into one string, and zsh does not
+split an unquoted `$var` into words, so `env` got one argument and removed nothing. Build such lists as an
+array, or run the wrapper in bash.
+
 ### `CROOK_BIN` to a child's hooks
 
 A throwaway plugin whose Stop hook ran `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}" hook stop` and

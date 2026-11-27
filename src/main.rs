@@ -28,13 +28,19 @@ fn main() -> ExitCode {
         current_exe: &std::env::current_exe,
         new_id: &|| uuid::Uuid::new_v4().to_string(),
     };
-    // Once per run, hooks included; a problem is a warning and never stops the command.
+    if crook::is_hook(&args) {
+        // Whatever happens inside, a hook exits 0 (ADR 0020).
+        crook::hook::main(
+            &ctx,
+            &args
+                .get(2)
+                .map_or_else(String::new, |a| a.to_string_lossy().into_owned()),
+        );
+        return ExitCode::SUCCESS;
+    }
+    // Once per run, as the hook does inside its own time budget; a problem is a warning and never stops the command.
     for warning in install::refresh(&ctx) {
         eprintln!("{warning}");
-    }
-    if crook::is_hook(&args) {
-        eprintln!("crook hook: not implemented");
-        return ExitCode::SUCCESS;
     }
     let cli = cli::Cli::parse_from(&args);
     match crook::dispatch(&cli.command, &ctx) {

@@ -247,8 +247,14 @@ test("status JSON validates against schema/status.schema.json", { skip: !existsS
     status([
       flock("a", {
         notes_folder: "/n",
-        coordinator: { session_id: "s", terminal: null },
-        children: [],
+        coordinator: { session_id: "s", terminal: { id: "t1", state: "idle", app: "claude-code" } },
+        children: [
+          {
+            name: "x", role: "child", model: "sonnet", state: "active", folder: "/w/x", repo: null, branch: null,
+            brief: "/f/briefs/x.md", terminal: null,
+            result: { path: "/f/results/x.md", status: "missing", delivered: false },
+          },
+        ],
       }),
     ]),
   );

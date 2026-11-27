@@ -52,3 +52,26 @@ fn concurrent_marks_all_survive() {
     });
     assert_eq!(load(dir.path()).expect("loads").len(), 8);
 }
+
+#[test]
+fn a_corrupt_file_counts_as_empty_and_the_next_mark_rewrites_it() {
+    let dir = folder();
+    std::fs::write(path(dir.path()), "garbage").expect("write");
+    let (marks, error) = load_or_empty(dir.path());
+    assert!(marks.is_empty());
+    assert!(
+        error
+            .expect("reported")
+            .to_string()
+            .contains(".delivered.json")
+    );
+    mark(dir.path(), "a", "h1").expect("marks");
+    assert_eq!(
+        load(dir.path())
+            .expect("healed")
+            .get("a")
+            .map(String::as_str),
+        Some("h1")
+    );
+    assert!(load_or_empty(dir.path()).1.is_none());
+}

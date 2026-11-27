@@ -8,6 +8,7 @@ pub mod flock;
 pub mod git;
 pub mod hc;
 pub mod herdr_app;
+pub mod hook;
 pub mod install;
 pub mod launch;
 pub mod names;

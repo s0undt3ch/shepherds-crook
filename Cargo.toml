@@ -17,6 +17,10 @@ thiserror = "2"
 toml = "1"
 uuid = { version = "1", features = ["v4"] }
 
+# Test-only: makes the hook panic when CROOK_HOOK_TEST_PANIC=1. Never in release archives.
+[features]
+test-panic = []
+
 # The hook catches panics with `catch_unwind`, which does nothing under `panic = "abort"`.
 [profile.release]
 panic = "unwind"

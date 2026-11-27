@@ -181,3 +181,60 @@ fn output_beyond_the_cap_is_dropped_without_blocking_the_child() {
         .expect("runs");
     assert_eq!(out.stdout.len(), super::MAX_CAPTURE);
 }
+
+#[test]
+fn a_budgeted_call_gets_the_time_left_not_its_own_longer_timeout() {
+    use super::Budgeted;
+    let runner = Budgeted::new(Instant::now() + Duration::from_millis(300));
+    let start = Instant::now();
+    let err = runner
+        .run(sh("sleep 30"), LONG)
+        .expect_err("cut by the budget");
+    assert!(matches!(err, Error::Timeout { .. }), "{err}");
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    // With nothing left, nothing is started.
+    let marker = std::env::temp_dir().join(format!("crook-budget-{}", std::process::id()));
+    let err = runner
+        .run(sh(&format!("touch {}", marker.display())), LONG)
+        .expect_err("no time left");
+    assert!(matches!(err, Error::Timeout { .. }));
+    assert!(!marker.exists(), "the command was started");
+}
+
+#[test]
+fn the_killer_ends_the_call_in_flight_and_its_children() {
+    use super::Budgeted;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let pidfile = dir.path().join("pid");
+    let runner = Budgeted::new(Instant::now() + LONG);
+    let killer = runner.killer();
+    let script = format!("echo $$ > {}; sleep 30 & wait", pidfile.display());
+    let start = Instant::now();
+    std::thread::scope(|scope| {
+        let call = scope.spawn(|| runner.run(sh(&script), LONG));
+        while !pidfile.exists() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        killer.kill();
+        let out = call.join().expect("thread").expect("returns an output");
+        assert_eq!(out.code, None, "ended by a signal");
+    });
+    assert!(start.elapsed() < Duration::from_secs(5));
+    let pid: i32 = std::fs::read_to_string(&pidfile)
+        .expect("pid")
+        .trim()
+        .parse()
+        .expect("n");
+    let gone = (0..50).any(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_err()
+    });
+    assert!(gone);
+    // Nothing is in flight now: a second kill is harmless.
+    killer.kill();
+}

@@ -198,6 +198,20 @@ impl Fixture {
         std::fs::write(dir.join("config.toml"), text).expect("write");
     }
 
+    /// A plugin folder whose `plugin.json` says `version`, which `$CLAUDE_PLUGIN_ROOT` points at, as
+    /// in a session's hook. Calling it again moves the version, as an upgrade moves the `current` link.
+    #[allow(clippy::expect_used)]
+    pub fn set_plugin_version(&self, version: &str) {
+        let plugin = self.root().join("plugin-root");
+        std::fs::create_dir_all(plugin.join(".claude-plugin")).expect("mkdir");
+        std::fs::write(
+            plugin.join(".claude-plugin/plugin.json"),
+            format!("{{\"name\": \"crook\", \"version\": \"{version}\"}}"),
+        )
+        .expect("plugin.json");
+        self.set_env("CLAUDE_PLUGIN_ROOT", &plugin.display().to_string());
+    }
+
     pub fn ctx(&self) -> Ctx<'_> {
         Ctx {
             env: &*self.env,
@@ -290,6 +304,7 @@ pub fn init_repo(parent: &std::path::Path) -> PathBuf {
 
 type RunHook<'a> = Box<dyn Fn(&crate::hc::RunSpec) + 'a>;
 type KillHook<'a> = Box<dyn Fn(&str) + 'a>;
+type SendHook<'a> = Box<dyn Fn(&str, &str) + 'a>;
 
 /// The fake core with a look at the moment of a `run` or a `kill`, to prove what had happened by
 /// then (the roster, the output so far).
@@ -297,6 +312,7 @@ pub struct HookedHc<'a> {
     pub inner: &'a crate::hc::fake::FakeHc,
     pub on_run: Option<RunHook<'a>>,
     pub on_kill: Option<KillHook<'a>>,
+    pub on_send: Option<SendHook<'a>>,
 }
 
 impl<'a> HookedHc<'a> {
@@ -305,6 +321,7 @@ impl<'a> HookedHc<'a> {
             inner,
             on_run: None,
             on_kill: None,
+            on_send: None,
         }
     }
 }
@@ -336,6 +353,9 @@ impl crate::hc::Hc for HookedHc<'_> {
         self.inner.run(spec)
     }
     fn send(&self, to: &str, text: &str) -> Result<crate::hc::SendOutcome, Error> {
+        if let Some(hook) = &self.on_send {
+            hook(to, text);
+        }
         self.inner.send(to, text)
     }
     fn kill(&self, id: &str) -> Result<crate::hc::KillOutcome, Error> {
@@ -363,4 +383,62 @@ impl Buffers {
             err: &mut self.err,
         }
     }
+}
+
+/// What a hook printed: stdout and stderr.
+pub struct HookRun {
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl HookRun {
+    /// The `additionalContext` of the one JSON line on stdout, or `None` when it printed nothing.
+    #[allow(clippy::expect_used)]
+    pub fn context(&self) -> Option<String> {
+        if self.stdout.is_empty() {
+            return None;
+        }
+        let doc: serde_json::Value =
+            serde_json::from_str(self.stdout.trim()).expect("one JSON line");
+        Some(
+            doc["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .expect("additionalContext")
+                .to_string(),
+        )
+    }
+}
+
+/// Runs `crook hook <event>` in the terminal `terminal` (None: no `$HC_TERMINAL_ID`), the core up.
+pub fn run_hook(
+    fx: &Fixture,
+    hc: &dyn crate::hc::Hc,
+    event: &str,
+    terminal: Option<&str>,
+    input: &str,
+) -> HookRun {
+    if let Some(t) = terminal {
+        fx.set_env("HC_TERMINAL_ID", t);
+    }
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    crate::hook::run(
+        &fx.ctx(),
+        hc,
+        &|| true,
+        event,
+        &mut input.as_bytes(),
+        &mut out,
+        &mut err,
+    );
+    HookRun {
+        stdout: String::from_utf8_lossy(&out).into_owned(),
+        stderr: String::from_utf8_lossy(&err).into_owned(),
+    }
+}
+
+pub const SESSION: &str = "11111111-aaaa-4bbb-8ccc-222222222222";
+
+pub fn hook_input(session: &str) -> String {
+    serde_json::json!({"session_id": session, "hook_event_name": "x", "source": "startup", "cwd": "/x"})
+        .to_string()
 }

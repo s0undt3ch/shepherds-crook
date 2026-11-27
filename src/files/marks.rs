@@ -30,10 +30,21 @@ pub fn load(folder: &Path) -> Result<Marks, Error> {
     }
 }
 
+/// As [`load`], but a file that cannot be read as marks counts as empty: the error comes back beside
+/// the map, for one warning. Nothing is known to be delivered then, so every result is reported once
+/// more and marked again, which writes the file afresh.
+pub fn load_or_empty(folder: &Path) -> (Marks, Option<Error>) {
+    match load(folder) {
+        Ok(marks) => (marks, None),
+        Err(e) => (Marks::new(), Some(e)),
+    }
+}
+
 /// Records that `child`'s result with this hash was delivered, under the flock's lock.
 pub fn mark(folder: &Path, child: &str, sha256: &str) -> Result<(), Error> {
     with_flock_lock(folder, || {
-        let mut marks = load(folder)?;
+        // A corrupt file is replaced, not an obstacle to delivering (the rescan would repeat for ever).
+        let mut marks = load_or_empty(folder).0;
         marks.insert(child.to_string(), sha256.to_string());
         write_json_atomic(&path(folder), &marks)
     })

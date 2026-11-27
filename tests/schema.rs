@@ -8,7 +8,7 @@ use std::path::Path;
 use crook::files::roster::{self, Child, Roster, State};
 use serde_json::{Value, json};
 
-use common::{assert_roster_file_valid, roster_errors};
+use common::{assert_roster_file_valid, roster_errors, status_errors};
 
 /// The ADR 0024 example, with `started` added.
 fn example() -> Value {
@@ -363,4 +363,127 @@ fn a_roster_is_refused_on_write_when_the_schema_would_refuse_it() {
     assert!(roster::add_child(folder, c).is_err());
     assert!(roster::create(dir.path(), &Roster::new("Bad", "sid", Path::new("/f"))).is_err());
     assert_roster_file_valid(folder);
+}
+
+/// The golden shape of `crook status --json` (binary plan 7.1), one child of each kind.
+fn status_example() -> Value {
+    let child = |name: &str, terminal: Value, status: &str| {
+        json!({
+            "name": name, "role": "child", "model": "sonnet", "state": "active",
+            "folder": "/r/.worktrees/demo-x", "repo": "/r", "branch": "crook/demo/x",
+            "brief": "/f/briefs/x.md", "terminal": terminal,
+            "result": {"path": "/f/results/x.md", "status": status, "delivered": true},
+        })
+    };
+    json!({
+        "version": 1,
+        "crook_version": "0.1.0",
+        "flocks": [{
+            "slug": "demo", "space": "crook-demo", "folder": "/f", "notes_folder": "/n", "state": "active",
+            "coordinator": {
+                "session_id": "11111111-1111-4111-8111-111111111111",
+                "terminal": {"id": "t3", "state": "working", "app": "claude-code"},
+            },
+            "children": [
+                child("a", json!({"id": "t4", "state": "idle", "app": null}), "working"),
+                child("b", Value::Null, "done"),
+            ],
+        }],
+    })
+}
+
+#[test]
+fn the_status_example_validates_and_so_does_hc_down() {
+    assert_eq!(status_errors(&status_example()), Vec::<String>::new());
+    let mut down = status_example();
+    down["hc_error"] = json!("hc is not installed");
+    down["flocks"][0]["coordinator"]["terminal"] = Value::Null;
+    assert_eq!(status_errors(&down), Vec::<String>::new());
+    let empty = json!({"version": 1, "crook_version": "0.1.0", "flocks": []});
+    assert_eq!(status_errors(&empty), Vec::<String>::new());
+}
+
+#[test]
+fn status_documents_that_break_the_schema_fail() {
+    type Mutation = Box<dyn Fn(&mut Value)>;
+    let cases: Vec<(&str, Mutation)> = vec![
+        ("version 2", Box::new(|v| v["version"] = json!(2))),
+        (
+            "no crook_version",
+            Box::new(|v| drop(v.as_object_mut().expect("o").remove("crook_version"))),
+        ),
+        (
+            "no flocks",
+            Box::new(|v| drop(v.as_object_mut().expect("o").remove("flocks"))),
+        ),
+        (
+            "hc_error not a string",
+            Box::new(|v| v["hc_error"] = json!(1)),
+        ),
+        (
+            "unknown result status",
+            Box::new(|v| v["flocks"][0]["children"][0]["result"]["status"] = json!("finished")),
+        ),
+        (
+            "null model",
+            Box::new(|v| v["flocks"][0]["children"][0]["model"] = Value::Null),
+        ),
+        (
+            "empty model",
+            Box::new(|v| v["flocks"][0]["children"][0]["model"] = json!("")),
+        ),
+        (
+            "terminal a string",
+            Box::new(|v| v["flocks"][0]["children"][0]["terminal"] = json!("t4")),
+        ),
+        (
+            "terminal without id",
+            Box::new(|v| {
+                v["flocks"][0]["coordinator"]["terminal"] = json!({"state": "idle", "app": null})
+            }),
+        ),
+        (
+            "unknown state",
+            Box::new(|v| v["flocks"][0]["state"] = json!("paused")),
+        ),
+        (
+            "delivered not a boolean",
+            Box::new(|v| v["flocks"][0]["children"][1]["result"]["delivered"] = json!("yes")),
+        ),
+        (
+            "no coordinator",
+            Box::new(|v| {
+                drop(
+                    v["flocks"][0]
+                        .as_object_mut()
+                        .expect("o")
+                        .remove("coordinator"),
+                )
+            }),
+        ),
+        (
+            "child without brief",
+            Box::new(|v| {
+                drop(
+                    v["flocks"][0]["children"][0]
+                        .as_object_mut()
+                        .expect("o")
+                        .remove("brief"),
+                )
+            }),
+        ),
+    ];
+    for (label, mutate) in &cases {
+        let mut v = status_example();
+        mutate(&mut v);
+        assert!(!status_errors(&v).is_empty(), "{label} should fail");
+    }
+}
+
+#[test]
+fn status_allows_fields_a_newer_crook_adds() {
+    let mut v = status_example();
+    v["future"] = json!(true);
+    v["flocks"][0]["children"][0]["future"] = json!(1);
+    assert_eq!(status_errors(&v), Vec::<String>::new());
 }

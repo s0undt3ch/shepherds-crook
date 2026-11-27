@@ -19,6 +19,7 @@ pub mod new;
 pub mod open;
 pub mod resume;
 pub mod spawn;
+pub mod status;
 pub mod stop;
 
 /// Where a command's output goes. A result is one line on stdout; a problem that does not stop the
@@ -42,7 +43,12 @@ impl Io<'_> {
 
 /// Runs a parsed command against the real hc, stdout and stderr.
 pub fn dispatch(command: &Command, ctx: &Ctx) -> Result<(), Error> {
-    let hc = HcClient::new(ctx.runner);
+    // `status` talks to hc for a bounded total time; every other command has its own per-call limits.
+    let budgeted = crate::run::Budgeted::new(std::time::Instant::now() + status::HC_BUDGET);
+    let hc = match command {
+        Command::Status { .. } => HcClient::new(&budgeted),
+        _ => HcClient::new(ctx.runner),
+    };
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
     let (mut out, mut err) = (stdout.lock(), stderr.lock());
@@ -91,6 +97,9 @@ pub fn dispatch_with(command: &Command, ctx: &Ctx, hc: &dyn Hc, io: &mut Io) -> 
             model.as_deref(),
             flock.as_deref(),
         ),
+        Command::Status { slug, json, flock } => {
+            status::run(ctx, hc, io, slug.as_deref().or(flock.as_deref()), *json)
+        }
         other => Err(Error::NotImplemented(other.name())),
     }
 }

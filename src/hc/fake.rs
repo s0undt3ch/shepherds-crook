@@ -110,6 +110,19 @@ impl FakeHc {
         }
     }
 
+    /// Sets the app a live terminal's program reports (`claude-code` for a real Claude Code).
+    pub fn set_app(&self, id: &str, app: &str) {
+        let mut s = self.state.borrow_mut();
+        if let Some(i) = find(&s.terminals, id) {
+            let status = s.terminals[i].status.get_or_insert_with(|| Status {
+                state: "idle".to_string(),
+                kind: None,
+                app: None,
+            });
+            status.app = Some(app.to_string());
+        }
+    }
+
     /// Ends a live terminal as its program exiting with `code`.
     pub fn exit(&self, id: &str, code: i32) {
         let mut s = self.state.borrow_mut();

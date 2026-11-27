@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "crook status --json",
+  "description": "What `crook status --json` prints (ADR 0020, binary plan 7.1). The mod and the coordinator read it. Unknown fields are allowed, so a newer crook can add some. When hc is unreachable the command still exits 0, every `terminal` is null and `hc_error` says why.",
+  "type": "object",
+  "required": [
+    "version",
+    "crook_version",
+    "flocks"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "crook_version": {
+      "type": "string"
+    },
+    "hc_error": {
+      "type": "string"
+    },
+    "flocks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/flock"
+      }
+    }
+  },
+  "$defs": {
+    "flock": {
+      "type": "object",
+      "required": [
+        "slug",
+        "space",
+        "folder",
+        "notes_folder",
+        "state",
+        "coordinator",
+        "children"
+      ],
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        },
+        "space": {
+          "type": "string"
+        },
+        "folder": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes_folder": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "coordinator": {
+          "type": "object",
+          "required": [
+            "session_id",
+            "terminal"
+          ],
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "terminal": {
+              "$ref": "#/$defs/terminal"
+            }
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/child"
+          }
+        }
+      }
+    },
+    "child": {
+      "type": "object",
+      "required": [
+        "name",
+        "role",
+        "model",
+        "state",
+        "folder",
+        "repo",
+        "branch",
+        "brief",
+        "terminal",
+        "result"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "folder": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "brief": {
+          "type": "string",
+          "minLength": 1
+        },
+        "terminal": {
+          "$ref": "#/$defs/terminal"
+        },
+        "result": {
+          "type": "object",
+          "required": [
+            "path",
+            "status",
+            "delivered"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "enum": [
+                "working",
+                "done",
+                "failed",
+                "unreadable",
+                "missing"
+              ]
+            },
+            "delivered": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "state": {
+      "description": "The roster's state: `done` is a stopped child or a closed flock.",
+      "enum": [
+        "active",
+        "done"
+      ]
+    },
+    "terminal": {
+      "description": "The live terminal with an agent in it (build-log D52), or null when hc has none or is unreachable. `state` is hc's status word (`working`, `idle`, `blocked`), or `live` before the program reports one.",
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "state",
+            "app"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "type": "string",
+              "minLength": 1
+            },
+            "app": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

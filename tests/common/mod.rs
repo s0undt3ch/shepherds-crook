@@ -26,3 +26,17 @@ pub fn assert_roster_file_valid(folder: &Path) {
     let errors = roster_errors(&value);
     assert!(errors.is_empty(), "{errors:#?}\n{text}");
 }
+
+pub fn status_schema() -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schema/status.schema.json");
+    serde_json::from_str(&std::fs::read_to_string(path).expect("schema file")).expect("schema json")
+}
+
+/// Every way `status` (a `crook status --json` document) breaks the schema, empty when it is valid.
+pub fn status_errors(status: &Value) -> Vec<String> {
+    let validator = jsonschema::validator_for(&status_schema()).expect("schema compiles");
+    validator
+        .iter_errors(status)
+        .map(|e| format!("{}: {e}", e.instance_path()))
+        .collect()
+}

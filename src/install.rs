@@ -88,7 +88,12 @@ pub fn find_own(ctx: &crate::Ctx) -> Result<Install, Error> {
 /// The `version` field of `<folder>/plugin/.claude-plugin/plugin.json`. The release stamps it; in
 /// the repository it reads `0.0.0-dev` (Q17).
 pub fn plugin_version(folder: &Path) -> Result<String, Error> {
-    let path = folder.join("plugin/.claude-plugin/plugin.json");
+    plugin_dir_version(&folder.join("plugin"))
+}
+
+/// As [`plugin_version`], for the plugin folder itself: `$CLAUDE_PLUGIN_ROOT`, or `current/plugin`.
+pub fn plugin_dir_version(plugin_dir: &Path) -> Result<String, Error> {
+    let path = plugin_dir.join(".claude-plugin/plugin.json");
     let bad = |message: &str| Error::Install(format!("{}: {message}", path.display()));
     let text = std::fs::read_to_string(&path).map_err(|source| Error::File {
         path: path.clone(),

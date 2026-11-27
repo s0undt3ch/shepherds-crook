@@ -6,7 +6,8 @@ use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use nix::sys::signal::{Signal, killpg};
@@ -128,6 +129,69 @@ impl Capture {
 
 impl Runner for RealRunner {
     fn run(&self, cmd: Cmd, timeout: Duration) -> Result<Output, Error> {
+        run_process(cmd, timeout, None)
+    }
+}
+
+/// A runner for something with a total time budget (a hook, `status`): each call gets the shorter of
+/// its own timeout and the time left, and a [`Killer`] can end the call in flight from another thread.
+pub struct Budgeted {
+    deadline: Instant,
+    slot: Arc<AtomicI32>,
+}
+
+/// Ends the process group of the call a [`Budgeted`] runner has in flight, if any.
+#[derive(Clone)]
+pub struct Killer(Arc<AtomicI32>);
+
+impl Killer {
+    pub fn kill(&self) {
+        let pgid = self.0.load(Ordering::SeqCst);
+        if pgid > 0 {
+            let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
+        }
+    }
+}
+
+impl Budgeted {
+    pub fn new(deadline: Instant) -> Budgeted {
+        Budgeted {
+            deadline,
+            slot: Arc::new(AtomicI32::new(0)),
+        }
+    }
+
+    pub fn killer(&self) -> Killer {
+        Killer(Arc::clone(&self.slot))
+    }
+}
+
+impl Runner for Budgeted {
+    fn run(&self, cmd: Cmd, timeout: Duration) -> Result<Output, Error> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(Error::Timeout {
+                program: cmd.program,
+                after: Duration::ZERO,
+            });
+        }
+        run_process(cmd, timeout.min(left), Some(&self.slot))
+    }
+}
+
+/// Clears the in-flight slot however the call ends.
+struct SlotGuard<'a>(Option<&'a AtomicI32>);
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.0 {
+            slot.store(0, Ordering::SeqCst);
+        }
+    }
+}
+
+fn run_process(cmd: Cmd, timeout: Duration, slot: Option<&AtomicI32>) -> Result<Output, Error> {
+    {
         let program = cmd.program.clone();
         let io = |source| Error::Io {
             program: program.clone(),
@@ -162,6 +226,11 @@ impl Runner for RealRunner {
                 program: program.clone(),
                 source,
             })?;
+        // The process group id is the child's pid (`process_group(0)`).
+        let _in_flight = SlotGuard(slot);
+        if let (Some(slot), Ok(pid)) = (slot, i32::try_from(child.id())) {
+            slot.store(pid, Ordering::SeqCst);
+        }
 
         let (tx, rx) = mpsc::channel();
         let mut cap = Capture::default();

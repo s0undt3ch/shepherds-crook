@@ -6,6 +6,9 @@ use std::process::{Command, Output};
 fn crook(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_crook"))
         .args(args)
+        // A developer's own hc terminal must never be reached from a test.
+        .env_remove("HC_TERMINAL_ID")
+        .env_remove("HC_TERMINAL_SOCKET")
         .output()
         .expect("crook starts")
 }
@@ -53,13 +56,9 @@ fn help_lists_exactly_the_planned_commands() {
 }
 
 /// Every form of the commands not built yet, each of which parses and then reports "not implemented".
-/// The lifecycle commands are tested in `tests/lifecycle.rs`.
+/// The lifecycle commands are tested in `tests/lifecycle.rs`, `status` in its own unit tests and the
+/// hooks in `tests/hook.rs`.
 const COMMANDS: &[&[&str]] = &[
-    &["status"],
-    &["status", "my-flock"],
-    &["status", "--json"],
-    &["status", "--json", "--flock", "my-flock"],
-    &["status", "my-flock", "--json"],
     &["setup"],
     &["doctor"],
     &["doctor", "--fix"],

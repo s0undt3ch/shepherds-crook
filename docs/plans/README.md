@@ -3,6 +3,8 @@
 One plan per area. Each task in a plan cites the ADRs it implements
 ([`docs/architecture`](../architecture/README.md)).
 
+Questions the plans raise, and the maintainer's answers, are in [open-questions.md](open-questions.md).
+
 | Plan | Area |
 | --- | --- |
 | [binary](2026-11-27-crook-binary.md) | The `crook` Rust binary |

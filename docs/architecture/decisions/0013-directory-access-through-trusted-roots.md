@@ -23,8 +23,9 @@ every new session, which is unusable.
 ## Decision outcome
 
 Chosen option: trust the stable roots once, by starting Claude in each and accepting. After that,
-`--add-dir <root>` and `--add-dir <root>/<new flock>` start with no prompt. crook's setup step does this
-trust once.
+`--add-dir <root>` and `--add-dir <root>/<new flock>` start with no prompt. `crook setup` prints the command
+that trusts each root, and the maintainer runs it once (question 22 in
+[`docs/plans/open-questions.md`](../../plans/open-questions.md)).
 
 ### Consequences
 

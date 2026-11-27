@@ -46,7 +46,8 @@ How it works:
   `claude --plugin-dir <crook> --agent <role> --resume <id> "<resume prompt>"` in the child's folder, as its
   own child. The resume prompt: check what is already done on disk, then finish without redoing completed
   work.
-- Each brief asks the child to keep a progress checklist in its results file. That is the state a resumed
+- The child skill tells every child to keep a progress checklist in its results file; the brief does not
+  repeat it (question 29 in [`docs/plans/open-questions.md`](../../plans/open-questions.md)). That is the state a resumed
   child reads, and the same checklist addresses the weak spot recorded in
   [0009](0009-child-stop-hook-reports-completion.md).
 

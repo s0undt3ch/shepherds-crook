@@ -27,7 +27,8 @@ Each flock should be one herdr-app space. herdr-app shows any terminal labelled
 
 ## Decision outcome
 
-Chosen option: invented ids through labels, for every terminal crook starts. crook never calls `space.new`
+Chosen option: invented ids through labels on the coordinator's terminal; children carry none
+([0021](0021-show-flocks-with-herdr-apps-own-tree.md)). crook never calls `space.new`
 (decided 2026-11-27, question 24 in [`docs/plans/open-questions.md`](../../plans/open-questions.md)).
 
 ### Consequences

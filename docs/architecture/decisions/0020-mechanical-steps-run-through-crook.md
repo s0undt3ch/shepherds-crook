@@ -49,9 +49,28 @@ Chosen option: `crook` subcommands.
 | `crook resume [<child>]` | The coordinator's SessionStart hook, or the maintainer | Resumes one child, or every `active` child with no live terminal, under its original name (0017) |
 | `crook status --json` | The mod and the coordinator | Merges the roster, `hc ls` labels and result marks |
 | `crook hook <event>` | The plugin's hook config | See below |
-| `crook completion print <shell>` | mise, through the packslip manifest's `completion` resource | Prints tab completion for bash, zsh and fish, so the slugs and child names above complete |
+| `crook completion print <shell>` | mise, through the release manifest (below) | Prints tab completion for bash, zsh and fish, so the slugs and child names above complete |
 
 `new` and `open` stay separate so a mistyped slug fails instead of creating an effort.
+
+### Completion
+
+The release manifest declares completion as a command, as v1's `.github/packslip.toml` did:
+
+```toml
+bin = ["crook"]
+
+[[resource]]
+kind = "completion"
+shells = ["bash", "zsh", "fish"]
+exec = ["crook", "completion", "print", "{shell}"]
+```
+
+packslip requires an `exec` completion to list its shells, put `{shell}` in its command, and start with one of
+the release's `bin` names ([packslip resources guide](https://packslip.dev/docs/resources/)). mise runs the
+command the first time the maintainer presses Tab, caches the output per version and shell, and loads it when
+mise is activated in the shell; it does not run it at install time
+([mise packslip resources](https://mise.jdx.dev/dev-tools/packslip-resources.html)).
 
 ### Hooks
 

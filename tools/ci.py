@@ -4,17 +4,21 @@ CI checks for the repository.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from pathlib import Path
 from pathlib import PurePosixPath
+from typing import NamedTuple
 
 from toolr import Context
 from toolr import command_group
+from toolr.types import ResolvedPath
 
 group = command_group("ci", "CI checks for the repository", docstring=__doc__)
 
@@ -755,3 +759,417 @@ def mod_herdr_check(ctx: Context, *, mod_dir: str = "mod") -> None:
     if errors:
         ctx.exit(1)
     ctx.info("mod-herdr-check: ok")
+
+
+PACKSLIP_PROJECT = "github.com/s0undt3ch/shepherds-crook"
+PACKSLIP_SOURCE_REPO = "https://github.com/s0undt3ch/shepherds-crook"
+PACKSLIP_COMPLETION_SHELLS = ["bash", "zsh", "fish"]
+
+# `X.Y.Z` or `X.Y.Z-<pre>`; CI archives use `0.0.0-ci`.
+ARCHIVE_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+ARCHIVE_TRIPLE = re.compile(r"^[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)+$")
+# What an archive must hold below its one top folder (0019).
+ARCHIVE_FILES = ("crook", "plugin/.claude-plugin/plugin.json", "mod/mod.json")
+# Files that a build or an editor leaves behind and an archive must not carry.
+ARCHIVE_IGNORE = shutil.ignore_patterns(".DS_Store", "__pycache__", "node_modules", "*.pyc")
+
+
+class Target(NamedTuple):
+    """One release archive: the Rust target triple and the runner that builds it natively."""
+
+    triple: str
+    runner: str
+    # False keeps a slow-queue runner off pull requests. Pushes to main and releases always build
+    # and smoke every target.
+    on_prs: bool = True
+
+
+# Q31: Linux (musl) and macOS, each on x86_64 and aarch64.
+TARGETS = (
+    Target("x86_64-unknown-linux-musl", "ubuntu-latest"),
+    Target("aarch64-unknown-linux-musl", "ubuntu-24.04-arm"),
+    Target("aarch64-apple-darwin", "macos-15"),
+    Target("x86_64-apple-darwin", "macos-15-intel", on_prs=False),
+)
+
+
+@group.command
+def targets(ctx: Context) -> None:
+    """Print the build targets as JSON, and set them as the `targets` step output.
+
+    The one list the CI and release builds, and their smoke jobs, all read. On a pull request
+    (`GITHUB_EVENT_NAME=pull_request`) it leaves out the targets marked `on_prs=False`. The JSON goes
+    to stdout as one plain line, so it can be piped.
+    """
+    pull_request = os.environ.get("GITHUB_EVENT_NAME") == "pull_request"
+    payload = json.dumps(
+        [{"triple": t.triple, "runner": t.runner} for t in TARGETS if t.on_prs or not pull_request],
+        separators=(",", ":"),
+    )
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with Path(output).open("a", encoding="utf-8") as fh:
+            fh.write(f"targets={payload}\n")
+    ctx.print(payload, markup=False, highlight=False, emoji=False, soft_wrap=True)
+
+
+def stage_archive_folder(root: Path, binary: Path, out: Path, *, version: str, triple: str) -> Path:
+    """Write `crook-<version>-<triple>/` under `out`: the binary, `plugin/`, `mod/` and the top-level docs.
+
+    Raises:
+        ValueError: A bad version or triple, or a source file or folder that is missing.
+    """
+    if not ARCHIVE_VERSION.match(version):
+        raise ValueError(f"version {version!r} is not X.Y.Z or X.Y.Z-<pre>")
+    if not ARCHIVE_TRIPLE.match(triple):
+        raise ValueError(f"target triple {triple!r} is not a Rust target triple")
+    if not binary.is_file():
+        raise ValueError(f"the binary {binary} does not exist")
+    for rel in ("plugin/.claude-plugin/plugin.json", "mod/mod.json", "LICENSE", "README.md"):
+        if not (root / rel).is_file():
+            raise ValueError(f"{root / rel} does not exist")
+    folder = out / f"crook-{version}-{triple}"
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir(parents=True)
+    shutil.copy2(binary, folder / "crook")
+    (folder / "crook").chmod(0o755)
+    for name in ("plugin", "mod"):
+        shutil.copytree(root / name, folder / name, symlinks=True, ignore=ARCHIVE_IGNORE)
+    for name in ("LICENSE", "README.md", "CHANGELOG.md"):
+        if (root / name).is_file():
+            shutil.copy2(root / name, folder / name)
+    return folder
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def pack_archive(folder: Path, dist: Path) -> Path:
+    """Write `<folder name>.tar.gz` and its `.sha256` (`<hex>  <name>`) into `dist`; return the tarball."""
+    dist.mkdir(parents=True, exist_ok=True)
+    tarball = dist / f"{folder.name}.tar.gz"
+
+    def _owner(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        return info
+
+    with tarfile.open(tarball, "w:gz") as tf:
+        tf.add(folder, arcname=folder.name, filter=_owner)
+    tarball.with_name(f"{tarball.name}.sha256").write_text(f"{_sha256(tarball)}  {tarball.name}\n", encoding="utf-8")
+    return tarball
+
+
+@group.command
+def stage_archive(
+    ctx: Context,
+    triple: str,
+    version: str,
+    *,
+    binary: ResolvedPath | None = None,
+    out: str | None = None,
+    dist: str | None = None,
+) -> None:
+    """Stage one release archive: `crook-<version>-<triple>/` holding `crook`, `plugin/` and `mod/`.
+
+    The folder also gets `LICENSE`, `README.md` and `CHANGELOG.md` when present. The CI build and the
+    e2e harness both stage through this command, so the layout (0019) has one source. mise strips a lone
+    top folder, so `plugin/` and `mod/` land next to `crook` once installed.
+
+    Args:
+        triple: The Rust target triple, as in `toolr ci targets`.
+        version: The version named in the folder and the archive. It does not change the binary.
+        binary: The built `crook`. Defaults to `target/<triple>/release/crook` in the repository.
+        out: The folder that receives `crook-<version>-<triple>/`. Defaults to `stage` in the repository.
+        dist: When given, also write `crook-<version>-<triple>.tar.gz` and its `.sha256` here.
+    """
+    root = Path(ctx.repo_root)
+    binary_path = Path(binary) if binary is not None else root / "target" / triple / "release" / "crook"
+    out_path = Path(out) if out is not None else root / "stage"
+    try:
+        folder = stage_archive_folder(root, binary_path, out_path, version=version, triple=triple)
+    except ValueError as exc:
+        ctx.error(f"stage-archive: {exc}", markup=False)
+        ctx.exit(1)
+    ctx.info(f"stage-archive: staged {folder}")
+    if dist is not None:
+        tarball = pack_archive(folder, Path(dist))
+        ctx.info(f"stage-archive: wrote {tarball}")
+
+
+def check_archive(tarball: Path) -> list[str]:
+    """The layout problems of one release tarball (0019); empty means it is good.
+
+    The tarball must have exactly one top folder, named as the tarball is, holding an executable `crook`,
+    `plugin/.claude-plugin/plugin.json` and `mod/mod.json`, and no member may leave that folder.
+    """
+    stem = tarball.name.removesuffix(".tar.gz")
+    try:
+        with tarfile.open(tarball, "r:gz") as tf:
+            members = tf.getmembers()
+    except (tarfile.TarError, OSError) as exc:
+        return [f"{tarball.name}: cannot read the tarball: {exc}"]
+    errors: list[str] = []
+    files: dict[str, tarfile.TarInfo] = {}
+    tops: set[str] = set()
+    for member in members:
+        path = PurePosixPath(member.name)
+        parts = [part for part in path.parts if part != "."]
+        if path.is_absolute() or ".." in parts:
+            errors.append(f"{tarball.name}: member {member.name!r} leaves the archive folder")
+            continue
+        if not parts:
+            continue
+        tops.add(parts[0])
+        if len(parts) > 1 and member.isfile():
+            files["/".join(parts[1:])] = member
+    if len(tops) != 1:
+        return errors + [f"{tarball.name}: expected one top folder, found {sorted(tops) or 'none'}"]
+    (top,) = tops
+    if top != stem:
+        errors.append(f"{tarball.name}: the top folder is {top!r}, expected {stem!r}")
+    errors += [f"{tarball.name}: {top}/{rel} is missing" for rel in ARCHIVE_FILES if rel not in files]
+    if "crook" in files and not files["crook"].mode & 0o111:
+        errors.append(f"{tarball.name}: {top}/crook is not executable")
+    return errors
+
+
+def _tarballs(ctx: Context, check: str, archive_dir: Path) -> list[Path]:
+    if not archive_dir.is_dir():
+        ctx.error(f"{check}: archives failed: {archive_dir} is not a directory", markup=False)
+        ctx.exit(1)
+    found = sorted(p for p in archive_dir.iterdir() if p.is_file() and p.name.endswith(".tar.gz"))
+    if not found:
+        ctx.error(f"{check}: archives failed: no *.tar.gz files found in {archive_dir}", markup=False)
+        ctx.exit(1)
+    return found
+
+
+@group.command
+def archive_check(ctx: Context, archive_dir: ResolvedPath) -> None:
+    """Check each release tarball's layout: one top folder with `crook`, `plugin/` and `mod/` (0019).
+
+    Also checks each `.sha256` file, when present, against its tarball.
+
+    Args:
+        archive_dir: Directory holding the `*.tar.gz` release archives.
+    """
+    tarballs = _tarballs(ctx, "archive-check", Path(archive_dir))
+    errors: list[str] = []
+    for tarball in tarballs:
+        errors += check_archive(tarball)
+        sidecar = tarball.with_name(f"{tarball.name}.sha256")
+        if sidecar.is_file():
+            expected = f"{_sha256(tarball)}  {tarball.name}"
+            if sidecar.read_text(encoding="utf-8").strip() != expected:
+                errors.append(f"{sidecar.name}: does not match {tarball.name}")
+    for error in errors:
+        ctx.error(f"archive-check: {error}", markup=False)
+    if errors:
+        ctx.exit(1)
+    ctx.info(f"archive-check: ok ({len(tarballs)} archives)")
+
+
+class PackslipFailure(NamedTuple):
+    """One failed `packslip-check` assertion: which check, and why."""
+
+    check: str
+    detail: str
+
+
+def _bin_path(entry: object) -> object:
+    return entry.get("path") if isinstance(entry, dict) else entry
+
+
+def _packslip_statement_failures(statement: object) -> list[PackslipFailure]:
+    """Check a `packslip show` statement against what a crook release must ship.
+
+    Args:
+        statement: The parsed `packslip show` JSON.
+
+    Returns:
+        Every failed assertion, in check order. Empty means the statement passes.
+    """
+    predicate = (statement.get("predicate") or {}) if isinstance(statement, dict) else None
+    if not isinstance(predicate, dict):
+        return [PackslipFailure("statement shape", "statement has no predicate object")]
+    artifacts = predicate.get("artifacts") or []
+    resources = predicate.get("resources") or []
+    failures = [
+        PackslipFailure("statement shape", f"predicate.{key} is not a list of objects")
+        for key, entries in (("artifacts", artifacts), ("resources", resources))
+        if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries)
+    ]
+    if failures:
+        return failures
+
+    if not artifacts:
+        failures.append(PackslipFailure("artifacts", "statement lists no artifacts"))
+
+    for artifact in artifacts:
+        name = artifact.get("name")
+        bins = artifact.get("bin") or []
+        if not isinstance(bins, list):
+            failures.append(PackslipFailure("artifact bin entries", f"{name}: bin is not a list"))
+            continue
+        if len(bins) != 1:
+            failures.append(
+                PackslipFailure("artifact bin entries", f"{name}: expected exactly one bin entry, got {len(bins)}")
+            )
+            continue
+        path = _bin_path(bins[0])
+        if not (isinstance(path, str) and path.endswith("/crook")):
+            failures.append(PackslipFailure("artifact bin entries", f"{name}: bin entry {path} does not end in /crook"))
+
+    failures.extend(
+        PackslipFailure(
+            "linux libc",
+            f"{a.get('name')}: os=linux but libc={a.get('libc') or 'null'} (expected musl)",
+        )
+        for a in artifacts
+        if a.get("os") == "linux" and a.get("libc") != "musl"
+    )
+
+    # packslip installs skills user-wide, so a skill here would load in sessions crook did not start
+    # (0019). The plugin's skills ship inside `plugin/`, which Claude Code loads per session.
+    skills = sorted(str(r.get("name")) for r in resources if r.get("kind") == "skill")
+    if skills:
+        failures.append(
+            PackslipFailure(
+                "skill resources",
+                f"statement lists skill resources ({' '.join(skills)}); packslip would install "
+                "them user-wide, so they must ship inside plugin/ instead",
+            )
+        )
+
+    if not any(r.get("kind") == "completion" and r.get("shells") == PACKSLIP_COMPLETION_SHELLS for r in resources):
+        failures.append(
+            PackslipFailure(
+                "completion resource",
+                f"no completion resource with shells == {json.dumps(PACKSLIP_COMPLETION_SHELLS)} found",
+            )
+        )
+
+    return failures
+
+
+def _packslip_fail(ctx: Context, check: str, detail: str) -> None:
+    ctx.error(f"packslip-check: {check} failed: {detail}", markup=False)
+
+
+def _as_text(data: str | bytes) -> str:
+    return data.decode(errors="replace") if isinstance(data, bytes) else data
+
+
+def _packslip_run(ctx: Context, check: str, *cmdline: str) -> str:
+    ret = ctx.run(*cmdline, capture_output=True, stream_output=False)
+    stdout = _as_text(ret.stdout.read())
+    if ret.returncode != 0:
+        stderr = _as_text(ret.stderr.read())
+        output = "\n".join(part for part in (stdout.rstrip(), stderr.rstrip()) if part)
+        _packslip_fail(ctx, check, output)
+        ctx.exit(1)
+    return stdout
+
+
+@group.command
+def packslip_check(
+    ctx: Context,
+    archive_dir: ResolvedPath,
+    packslip: ResolvedPath | None = None,
+    manifest: ResolvedPath | None = None,
+) -> None:
+    """Sign a throwaway packslip bundle from the built archives, then verify it.
+
+    Catches drift between `.github/packslip.toml` and the release archives before release day: every
+    archive has exactly one `crook` binary, Linux archives are musl, no skill resources are listed, and
+    the completion resource covers bash, zsh and fish. The bundle is signed with an ephemeral key and
+    never logged.
+
+    Args:
+        archive_dir: Directory holding the `*.tar.gz` release archives.
+        packslip: Path to the packslip CLI. Defaults to `packslip` on `PATH`.
+        manifest: The packslip manifest. Defaults to `.github/packslip.toml` in the repository root.
+    """
+    archives = [str(p) for p in _tarballs(ctx, "packslip-check", Path(archive_dir))]
+
+    if packslip is None:
+        packslip_bin = ctx.which("packslip")
+        if packslip_bin is None:
+            _packslip_fail(ctx, "packslip", "packslip not found on PATH")
+            ctx.exit(1)
+    elif packslip.is_file():
+        packslip_bin = str(packslip)
+    else:
+        _packslip_fail(ctx, "packslip", f"{packslip} is not a file")
+        ctx.exit(1)
+
+    manifest_path = manifest if manifest is not None else ctx.repo_root / ".github" / "packslip.toml"
+    if not manifest_path.is_file():
+        _packslip_fail(ctx, "manifest", f"{manifest_path} not found")
+        ctx.exit(1)
+
+    commit = _packslip_run(ctx, "git rev-parse HEAD", "git", "-C", str(ctx.repo_root), "rev-parse", "HEAD").strip()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        key = Path(tmp) / "k"
+        out = Path(tmp) / "out"
+        _packslip_run(ctx, "packslip keygen", packslip_bin, "keygen", "-o", str(key))
+        _packslip_run(
+            ctx,
+            "packslip create",
+            packslip_bin,
+            "create",
+            "--manifest",
+            str(manifest_path),
+            "--key",
+            str(key),
+            "--no-log",
+            "--out",
+            str(out),
+            "--project",
+            PACKSLIP_PROJECT,
+            "--version",
+            "0.0.0-ci",
+            "--commit",
+            commit,
+            "--source-repo",
+            PACKSLIP_SOURCE_REPO,
+            *archives,
+        )
+        bundle = out / "packslip.sigstore.json"
+        if not bundle.is_file():
+            _packslip_fail(ctx, "packslip create", f"expected bundle at {bundle}, none produced")
+            ctx.exit(1)
+        artifact_args = [arg for archive in archives for arg in ("--artifact", archive)]
+        _packslip_run(
+            ctx,
+            "packslip verify",
+            packslip_bin,
+            "verify",
+            str(bundle),
+            "--pubkey",
+            f"{key}.pub",
+            "--allow-unlogged",
+            *artifact_args,
+        )
+        show_out = _packslip_run(ctx, "packslip show", packslip_bin, "show", str(bundle))
+
+    try:
+        statement = json.loads(show_out)
+    except json.JSONDecodeError as exc:
+        _packslip_fail(ctx, "packslip show", f"output is not JSON: {exc}")
+        ctx.exit(1)
+
+    failures = _packslip_statement_failures(statement)
+    for failure in failures:
+        _packslip_fail(ctx, failure.check, failure.detail)
+    if failures:
+        ctx.exit(1)
+    ctx.print("packslip-check: ok")

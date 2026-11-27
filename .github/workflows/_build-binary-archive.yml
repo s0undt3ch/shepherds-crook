@@ -1,0 +1,113 @@
+name: Build Binary
+
+on:
+  workflow_call:
+    inputs:
+      release-version:
+        required: true
+        type: string
+        description: 'Version named in the archive (e.g. 1.0.0). It does not change the binary: that carries the Cargo.toml version.'
+      cache-seed:
+        required: true
+        type: string
+        description: 'Seed mixed into every cache key. Bump in the caller workflow to invalidate.'
+      mise-version:
+        required: true
+        type: string
+        description: 'Version of mise to install: MISE_VERSION from .github/env, passed on by the caller''s prepare job.'
+      targets:
+        required: true
+        type: string
+        description: 'JSON-encoded array of {triple, runner} objects describing which tar.gz archives to build. Callers take it from `toolr ci targets`.'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target.triple }}
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 40
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every triple builds natively: musl Linux on architecture-matched
+        # ubuntu runners, plus macOS. No docker, no `cross`.
+        target: ${{ fromJson(inputs.targets) }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Only the Rust toolchain: the staging command needs toolr, which the next step installs.
+      - name: Set up mise (installs the Rust toolchain pinned in mise.toml)
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ inputs.mise-version }}
+          install_args: rust
+          cache: true
+          cache_key_prefix: ${{ inputs.cache-seed }}|mise|${{ inputs.mise-version }}|build-binary|${{ runner.os }}|${{ runner.arch }}|${{ matrix.target.triple }}
+
+      - name: Setup ToolR
+        uses: ./.github/actions/setup-toolr
+        with:
+          cache-prefix: ${{ inputs.cache-seed }}|setup-toolr|build-binary|${{ matrix.target.triple }}
+
+      - name: Add Rust target
+        env:
+          TRIPLE: ${{ matrix.target.triple }}
+        run: rustup target add "$TRIPLE"
+
+      # musl-tools provides musl-gcc, which rust needs as the linker
+      # when targeting *-linux-musl. Architecture-native: x86_64-musl
+      # runs on ubuntu-latest (x86_64); aarch64-musl on ubuntu-24.04-arm
+      # (aarch64). apt-get installs the matching musl-gcc on each.
+      - name: Install musl-tools
+        if: contains(matrix.target.triple, '-linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build binary
+        env:
+          TRIPLE: ${{ matrix.target.triple }}
+        run: cargo build --release --locked --target "$TRIPLE"
+
+      # `crook-<version>-<triple>/` holding crook, plugin/, mod/ and the top-level docs (0019), then its
+      # tar.gz and .sha256 in dist/. The e2e harness stages through the same command.
+      - name: Stage and pack the archive
+        env:
+          TRIPLE: ${{ matrix.target.triple }}
+          VERSION: ${{ inputs.release-version }}
+        run: toolr ci stage-archive "$TRIPLE" "$VERSION" --dist dist
+
+      # SLSA build provenance, attested for every archive that ships to
+      # users: `gh attestation verify` can prove the archive was produced by
+      # this workflow against this exact commit.
+      - name: Attest archive provenance
+        # A fork's pull request gets no OIDC token, and its archives never ship.
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/crook-*.tar.gz
+
+      # ci.yml's smoke-binary and packslip-check, and release.yml, download by this name.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crook-archive-${{ matrix.target.triple }}
+          path: |
+            dist/crook-*.tar.gz
+            dist/crook-*.tar.gz.sha256
+          if-no-files-found: error

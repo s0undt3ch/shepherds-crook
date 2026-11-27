@@ -11,6 +11,7 @@ that decisions cite lives in [`research/`](research/).
 
 - **Accepted**: decided by the maintainer.
 - **Proposed**: a design call inferred from evidence, waiting for the maintainer to accept or reject it.
+- **Rejected**: turned down by the maintainer; kept as a record.
 - **Superseded by NNNN**: replaced; kept as a record.
 
 ## Decisions
@@ -27,17 +28,18 @@ that decisions cite lives in [`research/`](research/).
 | [0008](decisions/0008-messages-over-hc-send-results-folder-inbox.md) | Messages over `hc send`; the results folder is the inbox | Proposed |
 | [0009](decisions/0009-child-stop-hook-reports-completion.md) | A child Stop hook reports completion | Accepted |
 | [0010](decisions/0010-human-input-through-hc-blocked.md) | Human input goes through hc's `blocked` status | Proposed |
-| [0011](decisions/0011-shell-hosted-coordinator.md) | Host the coordinator in a shell | Proposed |
+| [0011](decisions/0011-shell-hosted-coordinator.md) | Host the coordinator in a shell | Rejected |
 | [0012](decisions/0012-split-child-traffic-from-curated-notes.md) | Keep child traffic out of the notes root | Proposed |
 | [0013](decisions/0013-directory-access-through-trusted-roots.md) | Directory access through trusted stable roots | Proposed |
 | [0014](decisions/0014-state-in-files-and-labels.md) | State in files and hc labels, no database | Proposed |
 | [0015](decisions/0015-spaces-from-herdr-labels.md) | Create herdr-app spaces with `herdr.space` labels | Proposed |
 | [0016](decisions/0016-hc-preflight.md) | Preflight checks before using hc | Proposed |
 | [0017](decisions/0017-resume-children-from-a-roster.md) | Resume children from a roster after a restart | Proposed |
+| [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Proposed |
 
 ## Open questions
 
-- **Names.** Keep "crook"? "Effort" is the working name for one piece of work (a bug, a feature, an
+- **Names.** "crook" stays. "Effort" is still the working name for one piece of work (a bug, a feature, an
   investigation); "project" and "space" are taken by Claude Code and herdr-app.
 - **Read-only vault for children.** `--add-dir` grants read and write; parked by [0006](decisions/0006-no-child-restrictions-initially.md).
 - **herdr-app with the window closed.** Do labelled terminals show up when the app opens later? See

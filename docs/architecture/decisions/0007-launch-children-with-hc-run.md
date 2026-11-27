@@ -31,7 +31,7 @@ Chosen option: hc templates plus brief files.
   template's command carries crook's settings with a SessionStart hook, which records the child's
   session id against its hc terminal id ([0017](0017-resume-children-from-a-roster.md)).
 - It never passes `--no-notify`: parent notes are how the coordinator hears that a child blocked or exited.
-- It does not pass `--outlive-parent`; see [0011](0011-shell-hosted-coordinator.md).
+- It does not pass `--outlive-parent`; see [0018](0018-coordinator-runs-claude-directly.md).
 
 ### Consequences
 

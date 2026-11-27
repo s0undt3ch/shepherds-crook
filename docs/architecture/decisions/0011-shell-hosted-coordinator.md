@@ -1,10 +1,13 @@
 ---
-status: Proposed
+status: Rejected
 date: 2026-11-26
 decision-makers: maintainer
 ---
 
 # Host the coordinator in a shell
+
+Rejected on 2026-11-27: the maintainer wants `/exit` and Ctrl+C to end the coordinator. Replaced by
+[0018](0018-coordinator-runs-claude-directly.md).
 
 ## Context and problem statement
 

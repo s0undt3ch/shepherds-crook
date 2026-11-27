@@ -23,7 +23,7 @@ Chosen option: a Stop hook in each child. On each turn end it:
 
 1. Does nothing unless `results/<child>.md` is new or changed since the last report.
 2. Runs `hc get <coordinator>` and sends only if the status app is `claude-code`
-   (see [0011](0011-shell-hosted-coordinator.md)).
+   (see [0018](0018-coordinator-runs-claude-directly.md)).
 3. Runs `hc send <coordinator> "<result path>"`. On failure it leaves the file for the rescan
    ([0008](0008-messages-over-hc-send-results-folder-inbox.md)).
 

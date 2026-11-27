@@ -8,10 +8,9 @@ decision-makers: maintainer
 
 ## Context and problem statement
 
-When the coordinator's terminal ends (pane closed, core crash, reboot, or a coordinator killed outright),
-its children end too. The respawn loop ([0011](0011-shell-hosted-coordinator.md)) only covers Claude
-exiting inside a terminal that stays. The maintainer asked whether a restarted coordinator could start its
-children again and have them carry on.
+When the coordinator's terminal ends (`/exit`, pane closed, core crash, reboot, or a coordinator killed
+outright), its children end too ([0018](0018-coordinator-runs-claude-directly.md)). The maintainer asked
+whether a restarted coordinator could start its children again and have them carry on.
 
 ## Considered options
 
@@ -21,12 +20,8 @@ children again and have them carry on.
 
 ## Decision outcome
 
-Chosen option: a roster, plus the respawn loop. They cover different failures:
-
-| Failure | Covered by |
-| --- | --- |
-| Claude exits or crashes in the coordinator's terminal | respawn loop (children keep running) |
-| Terminal lost, core crash, reboot, coordinator killed | roster resume (children restarted) |
+Chosen option: a roster. It is the only recovery path: the coordinator exiting, crashing, losing its
+terminal or its core, and a reboot all end in the same place.
 
 How it works:
 

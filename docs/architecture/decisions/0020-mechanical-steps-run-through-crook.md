@@ -87,8 +87,10 @@ result file for the rescan (0008), so nothing is lost.
 
 ### Preflight
 
-Every command that touches hc runs the 0016 preflight first. When crook starts a core itself, it removes the
-variables a running Claude session sets, instead of refusing:
+Every command that touches hc runs the 0016 preflight first. When no core is running, crook starts one with
+`hc server start` before any other hc call, with the variables a running Claude session sets removed, instead
+of refusing. The call that starts the core fixes the environment its terminals get; later callers' variables
+do not reach them (spike 23). The variables:
 
 - `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`;
 - `CLAUDE_CODE_SESSION_*`, `CLAUDE_CODE_CHILD_*`, `CLAUDE_CODE_MESSAGING_*`;
@@ -113,10 +115,9 @@ The rest of 0007, 0008, 0009, 0016 and 0017 stands: the same commands, files and
 
 ### Confirmation
 
-Before acceptance:
-
-- Start a scratch core through the variable removal above from inside a Claude session, and check its
-  children show no transcript warning.
+Spike 23: a scratch core started from inside a Claude session with the variables above removed gave its
+children only user settings and no transcript warning, even for children started later from a caller that
+still had every variable.
 
 After the first build, run spikes 14 and 15 again through `crook spawn`, `crook hook` and `crook resume`
 instead of hand-built commands.

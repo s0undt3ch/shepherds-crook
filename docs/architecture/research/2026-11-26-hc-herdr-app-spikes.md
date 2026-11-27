@@ -410,3 +410,49 @@ order; not run with two crook versions]
 Follow-up: a shim is not tied to the `PATH` order. `~/.local/share/mise/shims/ast-grep --version` ran the
 global version (`ast-grep 0.51.3`, rc 0) from a folder whose `mise.toml` was never trusted. Calling the shim
 by its full path avoids the stale-folder problem above. Used by [0019](../decisions/0019-ship-crook-as-a-binary.md).
+
+## 23. Passing `CROOK_BIN` to children, and a core started without Claude's variables (2026-11-27)
+
+### `mise link` for a dev build
+
+In a scratch mise (`MISE_DATA_DIR` and friends under `$TMPDIR`):
+
+| Step | Result |
+| --- | --- |
+| `mise link packslip:github.com/s0undt3ch/shepherds-crook@dev <dev folder>` | Linked; `mise ls` shows `dev (symlink)` |
+| `mise x -- crook`, `mise which crook` | Both found and ran the dev build |
+| `mise reshim --force` | No `crook` shim, with the binary in the folder's root or in `bin/` |
+| Control: `mise link jq@dev` with a fake `bin/jq`, same reshim | `jq` shim created |
+
+So the shim cannot point at a dev build. Why only packslip versions get no shim is not known.
+
+### A core started without Claude's variables
+
+A scratch core (`HC_SESSION=cenv`), started with `hc server start` from inside this Claude session with the
+[0020](../decisions/0020-mechanical-steps-run-through-crook.md) list removed (`CLAUDECODE`, `CLAUDE_PID`,
+`CLAUDE_EFFORT`, `CLAUDE_CODE_SESSION_*`, `CLAUDE_CODE_CHILD_*`, `CLAUDE_CODE_MESSAGING_*`,
+`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`):
+
+- A child started by a cleaned `hc run` had only `CLAUDE_CONFIG_DIR` and four user settings
+  (`CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`, `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, `CLAUDE_CODE_ENABLE_TELEMETRY`,
+  `CLAUDE_CODE_SUBAGENT_MODEL`).
+- A child started next by an `hc run` that still had every variable got the same, clean set.
+- Three Claude children showed no "Transcript saving is off" warning.
+
+A first attempt that forgot to remove the variables from `hc server start` gave every child the marker and
+the warning: the call that starts the core decides the environment of its terminals (the core's `hold`
+process carried the caller's variables).
+
+### `CROOK_BIN` to a child's hooks
+
+A throwaway plugin whose Stop hook ran `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}" hook stop` and
+logged the path it chose. `CROOK_BIN` pointed at a fake dev `crook` that logged its arguments.
+
+| Child | `CROOK_BIN` in its hook |
+| --- | --- |
+| `hc run … -- env CROOK_BIN=<dev> claude …` | Set; the dev `crook` ran with `hook stop` |
+| `CROOK_BIN=<dev> hc run … -- claude …` (caller's environment only) | Unset; the hook fell back to the shim path |
+| A parent terminal started with `env CROOK_BIN=<dev>`, which ran `hc run … -- env CROOK_BIN="$CROOK_BIN" claude …` | Set; the dev `crook` ran |
+
+All three replied with their word. `hc run` has no option for one variable; the API's `terminal.run` takes an
+`env` map (`hc schema`), but the `env` prefix in the argv is enough.

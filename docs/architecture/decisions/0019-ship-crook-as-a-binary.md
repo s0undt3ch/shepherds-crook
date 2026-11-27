@@ -58,6 +58,12 @@ Finding its files:
   `exec`. The shim always runs the version mise has active now. A bare `crook` in a terminal of a running hc
   core would find the old version's folder ahead of the shims for up to 24 hours after an upgrade (spike 22).
   The maintainer's dotfiles already run mempalace and qdrant services through their shims for the same reason.
+- `CROOK_BIN` overrides the shim, for development. The hook commands read
+  `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}"`, and the mod does the same. A debug build is started
+  with `CROOK_BIN` set to itself. A terminal gets the environment of the call that started its hc core, not
+  of the caller of `hc run`, and `hc run` has no option to set one variable, so `crook spawn` and
+  `crook resume` pass it on as `env CROOK_BIN=<path> claude …` when it is set (spike 23). `mise link` does not
+  cover this: it registers a local build, but mise makes no shim for a linked packslip version (spike 23).
 - Every crook session starts with `--plugin-dir ~/.local/share/crook/current/plugin`, never the versioned
   folder. When mise prunes the old version, the next crook run has already moved the link. A session started
   on a versioned path that is later removed gets `Stop hook failed` (spike 18).

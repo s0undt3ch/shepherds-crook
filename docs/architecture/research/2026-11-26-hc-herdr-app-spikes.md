@@ -282,3 +282,44 @@ rename. That rewrite is done by the installing agent, from the docs; not tested.
 
 Not tested: the mod loaded live in the maintainer's real app; the warning `check` printed about a stranded
 async task came from the spike's own file write.
+
+## 18. crook installed by mise through packslip (2026-11-27)
+
+mise 2026.11.14. The maintainer will install crook globally with mise's `packslip:` backend.
+
+### What mise keeps from a release
+
+- mise's packslip backend unpacks the whole archive into a per-version install folder, not just the
+  executable (`install_artifact(…, ArchiveLayout::Declared, …)` in
+  [`src/backend/packslip.rs`](https://github.com/jdx/mise/blob/HEAD/src/backend/packslip.rs)). A lone
+  top-level folder in the archive is stripped.
+- `packslip:github.com/jdx/hk@latest` installed into a scratch `MISE_DATA_DIR`. The hk tarball holds `hk`
+  and `skills/`; the install folder `installs/packslip-github-com-jdx-hk/2.14.0/` held the same, plus mise's
+  own `.mise-*` files.
+- mise links `latest`, `2` and `2.14` to `2.14.0` in the tool's install folder.
+- `mise upgrade` removes the version it upgraded from after `upgrade.prune_after` (24h here), or at once
+  with `--prune`.
+
+### PATH seen by a herdr-app mod
+
+- The running herdr-app process has `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`.
+- herdr-app's docs say Finder launches load the login shell's PATH for `exec`.
+- The maintainer's login shell is fish. `fish -l` from an empty environment finds mise-installed tools
+  (`jq` resolved to `~/.local/share/mise/installs/jq/1.8.2/jq`) and has the mise shims folder on PATH.
+- Not tested: `exec("crook", …)` from a mod in the real app.
+
+### Plugin folders that move or disappear
+
+A fake mise layout: `1.0.0/plugin`, `1.1.0/plugin`, then `1.2.0/plugin`, and a `latest` link. Each plugin
+has a `tester` agent ("Begin every reply with ROLE-<version>") and a Stop hook script at
+`${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh` that logs its version.
+
+| Case | Result |
+| --- | --- |
+| `claude -p --plugin-dir <latest>/plugin` (link to 1.0.0) | `ROLE-1.0.0 PINEAPPLE`; the 1.0.0 hook ran |
+| Live session started on `<latest>/plugin`; `latest` moved to 1.1.0 and 1.0.0 deleted; next prompt | Replied `ROLE-1.0.0 TWO` (agent text is read at start); the Stop hook ran 1.1.0's script |
+| Live session started on `1.1.0/plugin` directly; 1.1.0 deleted; next prompt | Replied, then `Stop hook failed` |
+| The first session resumed with `--plugin-dir <latest>/plugin` (now 1.2.0) after 1.0.0 was gone | Remembered ONE and TWO; the 1.2.0 hook ran. It still began replies with `ROLE-1.0.0`, likely copying its own history |
+
+So a session must load the plugin through a path that survives a version being removed. A live session
+can run an old agent text next to a newer version's hooks.

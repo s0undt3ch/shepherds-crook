@@ -4,7 +4,7 @@ date: 2026-11-27
 decision-makers: maintainer
 ---
 
-# Ship crook as a binary that installs its plugin and herdr mod
+# Ship crook as a binary, installed by mise, that installs its herdr mod
 
 ## Context and problem statement
 
@@ -15,77 +15,87 @@ crook has two parts:
 - A herdr-app mod: the "New effort" dialog and the effort panel.
 
 v1 never installed its plugin globally: every crook session got `--plugin-dir <crook's folder>`
-(`CONTRIBUTING.md` on `backup_crook_v1`). So the plugin needs a stable folder on disk, not a marketplace
-install.
+(`CONTRIBUTING.md` on `backup_crook_v1`). So the plugin needs a folder on disk, not a marketplace install.
 
 herdr installs shared mods by copying a folder into `~/.config/herdr-app/mods/`, never overwriting and
 renaming on a clash ([`defaults/AGENTS.md`](https://github.com/herdrdev/herdr-app/blob/HEAD/defaults/AGENTS.md),
-"Layouts and mods other people made"). There is no versioning or update path. A mod cannot learn its own
-folder name at run time, so a renamed copy cannot find files next to it (spike 17).
+"Layouts and mods other people made"). A mod cannot learn its own folder name (spike 17).
+
+The maintainer installs tools with mise. crook will be installed globally with mise's `packslip:` backend,
+not per project. mise unpacks the whole release archive into one folder per version and removes the old
+version 24 hours after an upgrade (spike 18).
 
 ## Considered options
 
-- A `crook` binary that carries the plugin and the mod, unpacks them per version, and installs the mod.
+- A `crook` binary released with packslip, its archive carrying the plugin and the mod; `crook setup` installs
+  the mod.
 - One herdr mod folder that carries the plugin, installed by copying.
 - A marketplace plugin plus a separately copied mod.
 
 ## Decision outcome
 
-Chosen option: a `crook` binary.
+Chosen option: a `crook` binary released with packslip.
 
-Layout on disk:
+The release:
 
-- `~/.local/share/crook/<version>/plugin/` holds the plugin. The binary unpacks it on first run of that
-  version.
-- `~/.local/share/crook/current` is a link to the newest unpacked version.
-- Every crook session starts with `--plugin-dir ~/.local/share/crook/current/plugin`, and its terminal gets the
-  label `crook.version=<version>`.
+- Each release archive holds the `crook` executable, `plugin/` and `mod/`. The packslip manifest declares
+  `crook` as its executable.
+- The maintainer installs it with `mise use -g packslip:github.com/<owner>/shepherds-crook`. Per-project
+  installs are not supported.
+- mise owns the version folders: installing, upgrading and pruning them. crook unpacks nothing itself.
+
+Finding its files:
+
+- The binary finds `plugin/` and `mod/` next to its own executable, in its mise install folder.
+- On every run it points `~/.local/share/crook/current` at its own `plugin/`.
+- Every crook session starts with `--plugin-dir ~/.local/share/crook/current/plugin`, never the versioned
+  folder. When mise prunes the old version, the next crook run has already moved the link. A session started
+  on a versioned path that is later removed gets `Stop hook failed` (spike 18).
+- The terminal gets the label `crook.version=<version>`.
 
 `crook setup`:
 
-- installs the mod into `<appHome>/mods/crook/` with a `.crook-version` marker;
+- installs `mod/` into `<appHome>/mods/crook/` with a `.crook-version` marker;
 - overwrites that folder only when the marker is there; a `mods/crook/` without the marker belongs to someone
   else, so it stops and says so;
-- points `current` at its own version;
-- removes an older version's folder only when no live terminal carries its `crook.version` label (`hc ls`).
+- moves `current`.
 
 The mod stays thin: UI only. It runs `exec("crook", [...])` to start or resume an effort, so it never needs a
-plugin path.
+path. herdr-app's `exec` uses the login shell's PATH, which on the maintainer's machine includes mise's global
+tools (spike 18).
 
 `crook doctor` checks, and `crook doctor --fix` repairs what it can:
 
 - hc's version and schema ([0016](0016-hc-preflight.md));
 - herdr-app is installed;
+- `crook` is on the login shell's PATH;
 - the mod is installed and its marker matches the binary's version;
-- `current` points at the binary's version;
-- old versions no live terminal uses, which can go.
+- `current` points at this binary's `plugin/`.
 
-Children on another machine (`hc run --on`) need crook there too: install the binary on that machine and run
-`crook setup`. crook does not copy itself across machines.
+Children on another machine (`hc run --on`) need crook there too: install it with mise and run `crook setup`
+on that machine. crook does not copy itself across machines.
 
 ### Consequences
 
-- Good, because the plugin and the mod come from one artefact and cannot drift apart.
+- Good, because one signed release carries the binary, the plugin and the mod: they cannot drift apart.
+- Good, because mise handles download, verification, versions and cleanup.
 - Good, because crook owns `mods/crook/` and never needs herdr's rename on a clash.
-- Good, because live sessions keep their plugin files: old versions go only when nothing uses them.
-- Good, because the mod needs no paths, so a renamed or moved mod still works.
-- Bad, because installing from herdr.dev/mods by copying the folder is no longer enough; the mod's `RECIPE.md`
-  points to the binary instead.
-- Bad, because a binary has to be built and released per platform.
-- Bad, because a live session that started on an old version follows `current` on its next resume. Old and new
-  plugins must stay compatible across a resume.
+- Good, because the mod needs no paths.
+- Bad, because a live session reads its agent text at start but its hooks through `current`, so after an
+  upgrade it runs an old role text with new hooks (spike 18). Hooks must stay compatible with the previous
+  version's agents and skills.
+- Bad, because installing from herdr.dev/mods by copying the folder is no longer enough; the mod's
+  `RECIPE.md` points to mise instead.
+- Bad, because the binary must be built and released per platform.
 
 ### Confirmation
 
-From spike 17 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md): `herdr-app check` passes
-with extra folders in a mod, `appHome()` is `~/.config/herdr-app` or `$HERDR_APP_HOME`, and Claude loads a
-role from `--plugin-dir`.
+Spikes 17 and 18 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
 
-Not tested, for a spike before this is accepted:
+Not tested:
 
-- a mod's `exec("crook", ...)` finds `crook` on PATH when herdr-app is started from the Finder;
-- `--plugin-dir` through a symlinked `current`;
-- removing a version folder while no terminal uses it, then resuming a session that started on it.
+- `exec("crook", …)` from a mod in the real herdr-app;
+- the binary finding its own install folder when started through a mise shim.
 
 ## Pros and cons of the options
 

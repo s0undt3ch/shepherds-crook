@@ -38,6 +38,7 @@ that decisions cite lives in [`research/`](research/).
 | [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Accepted |
 | [0019](decisions/0019-ship-crook-as-a-binary.md) | Ship crook as a binary, installed by mise, that installs its herdr mod | Accepted |
 | [0020](decisions/0020-mechanical-steps-run-through-crook.md) | Mechanical steps run through `crook` subcommands | Proposed |
+| [0021](decisions/0021-show-efforts-with-herdr-apps-own-tree.md) | Show an effort with herdr-app's own space, tab and agent tree | Proposed |
 
 ## Open questions
 

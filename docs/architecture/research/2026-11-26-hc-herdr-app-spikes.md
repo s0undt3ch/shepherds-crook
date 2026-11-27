@@ -260,3 +260,25 @@ hc run --bg --name <n> --cwd <dir> \
 | `claude --model haiku --allowedTools "Bash Read" "Reply with the word PINEAPPLE."` | Prompt never ran; Claude sat idle |
 
 `first_message` is null for plain launches: hc does not track a prompt passed on Claude's command line.
+
+## 17. A herdr mod that carries crook's plugin (2026-11-27)
+
+herdr-app 0.1.18. A scratch mod `mods/crookspk/` under a scratch `HERDR_APP_HOME`, holding `mod.json`,
+`main.js` and a `plugin/` folder (the spike 16 plugin). `init()` logged `appHome()`, `home()`, `checking()`
+and `import.meta.url`, and wrote them to a file.
+
+| Check | Result |
+| --- | --- |
+| `herdr-app check <mod>` with `plugin/` inside the mod folder | `check passed` |
+| `appHome()`, no `HERDR_APP_HOME` | `~/.config/herdr-app` |
+| `appHome()`, `HERDR_APP_HOME=<scratch>` | `<scratch>` |
+| `import.meta.url` | `undefined` |
+| `herdr.d.ts`: an API for the mod's own name or folder | None found |
+| `claude -p --plugin-dir <mod>/plugin --agent tester "Reply with the word PINEAPPLE."` | `ROLE-OK PINEAPPLE` |
+
+So a mod cannot learn its own folder name at run time. herdr's install rules say a renamed mod has "the
+mod's own `mods/<name>/` paths" rewritten too, so a literal `mods/crook/plugin` in `main.js` follows a
+rename. That rewrite is done by the installing agent, from the docs; not tested.
+
+Not tested: the mod loaded live in the maintainer's real app; the warning `check` printed about a stranded
+async task came from the spike's own file write.

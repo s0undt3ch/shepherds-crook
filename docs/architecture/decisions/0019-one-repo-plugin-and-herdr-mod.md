@@ -49,6 +49,11 @@ Chosen option: the mod carries the plugin.
   to it (for example as `CROOK_PLUGIN_DIR`), so the coordinator passes it on to every child and every resume
   ([0017](0017-resume-children-from-a-roster.md)).
 - Plain Claude sessions outside crook never see crook's skills, agents or hooks.
+- The mod writes its plugin path as a literal, `appHome() + "/mods/crook/plugin"`. A mod cannot read its own
+  folder name at run time (spike 17), but herdr's install rules rewrite a renamed mod's own `mods/<name>/`
+  paths, so the literal follows a rename.
+- Children on another machine (`hc run --on`) need crook there too: that machine must have the crook mod
+  installed, so the same plugin path exists on it. crook does not copy the plugin across machines.
 
 ### Consequences
 
@@ -56,19 +61,17 @@ Chosen option: the mod carries the plugin.
 - Good, because crook leaves no trace in Claude Code's global setup.
 - Good, because an upgrade is a re-copy of one folder.
 - Bad, because the mod has no update path: herdr copies are never updated by themselves.
-- Bad, because a herdr rename on a name clash changes the folder, so the mod must build the path from its own
-  folder name, not a fixed `crook`.
+- Bad, because a rename on a name clash relies on the installing agent rewriting the mod's own paths.
+- Bad, because every machine that runs crook children needs the mod installed.
 - Bad, because every install shows herdr's "runs programs" warning.
 
 ### Confirmation
 
-Not tested:
+Spike 17 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md): `herdr-app check` passes with
+`plugin/` inside the mod, `appHome()` is `~/.config/herdr-app` or `$HERDR_APP_HOME`, and Claude loads the
+role from `--plugin-dir <mod>/plugin`.
 
-- whether `herdr-app check` accepts a mod folder that also holds a `plugin/` folder;
-- what `appHome()` returns, and whether a mod can learn its own folder name;
-- children on another machine (`hc run --on`): the plugin folder is only on this one.
-
-A spike should answer the first two before this is accepted.
+Not tested: the mod live in the real app; the rename rewrite; children on another machine.
 
 ## Pros and cons of the options
 

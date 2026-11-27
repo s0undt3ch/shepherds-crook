@@ -1,0 +1,9 @@
+{
+  "name": "crook",
+  "version": "0.0.0-dev",
+  "description": "Runs a session as the coordinator of a crook flock, or as one of its child sessions.",
+  "author": {
+    "name": "s0undt3ch"
+  },
+  "license": "Apache-2.0"
+}

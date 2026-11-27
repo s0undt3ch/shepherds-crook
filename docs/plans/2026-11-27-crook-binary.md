@@ -47,8 +47,10 @@ Every command depends on the rules in this section. Where an ADR is silent, the 
 
 ### Names and ids
 
-- A slug and a child name match `^[a-z0-9]+(-[a-z0-9]+)*$` and are at most 40 characters (Q12, Q45). So they
-  start and end with a letter or digit and have no double dash. They end up in paths, branch names, hc names and labels.
+- A slug and a child name match `^[a-z0-9]+(-[a-z0-9]+)*$` (Q45). A slug is at most 16 characters and not
+  address-shaped (`^t[0-9]+$` is refused); a child name is at most 15 (D27). hc names are at most 32 characters
+  and a child's is `<slug>.<child>`. So they start and end with a letter or digit and have no double dash. They
+  end up in paths, branch names, hc names and labels.
 - The flock id is the slug (Q2). The folder is `<yyyy-mm-dd>-<slug>` (0004). Slugs are unique across dates and
   across closed flocks: `new` refuses a slug that any folder already uses, and `open` finds the one folder that
   ends in `-<slug>` and whose `roster.json` says `"flock": "<slug>"`.
@@ -282,8 +284,9 @@ prove the task; write them first.
   and tab ids.
 - Files: `src/names.rs`.
 - ADR: 0015, 0021, 0023; the hc name rule is Q3, the length cap Q12, the character rule Q45.
-- Tests: valid and invalid names (empty, upper case, `/`, `..`, leading `-`, trailing `-`, `--`, 41 characters;
-  40 is valid), for slugs and for child names; every derived name for one example.
+- Tests: valid and invalid names (empty, upper case, `/`, `..`, leading `-`, trailing `-`, `--`; a slug of 17
+  characters and a child name of 16 are refused, 16 and 15 are valid; `t7` is refused as a slug), for slugs and
+  child names; every derived name for one example.
 - Done when: no other module formats one of these strings.
 
 ### Milestone 2: flock files and worktrees
@@ -534,9 +537,11 @@ prove the task; write them first.
 
 #### 5.5 `crook close <slug>`
 
-- What: live terminals first: end the coordinator with `hc kill`, which ends its children (spike 4, Q6). Then
-  mark every child and the coordinator `done` under the lock (0018, 0020). Then remove each child's worktree
-  when safe (2.5), and print a `warning:` line for each worktree it keeps, with the reason (Q6). The
+- What: end each live child with `hc kill` first, so no worktree is in use. Then mark every child and the
+  coordinator `done` under the lock (0018, 0020). Then remove each child's worktree when safe (2.5), and print
+  a `warning:` line for each worktree it keeps, with the reason (Q6). End the coordinator with `hc kill` last:
+  the coordinator usually runs `close` itself, from a process inside its own terminal, so everything above
+  must be finished and printed before that terminal ends (D33). The
   coordinator skill runs `close` only when the maintainer asks (Q6, area 2). On a flock that is already closed,
   `close` still exits 0 and kills nothing, but it retries removing any worktree kept earlier, with the same
   rule (clean, and pushed or merged: 0023, 2.5), and prints the same `warning:` line for each one it still

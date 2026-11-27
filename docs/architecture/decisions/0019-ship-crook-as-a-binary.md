@@ -52,9 +52,12 @@ Finding its files:
   compile time. Skill edits then show up without a rebuild. Release builds never fall back; they stop and say
   the install is broken.
 - On every run it points `~/.local/share/crook/current` at its own `plugin/`, but only forward: a binary older
-  than the version `current` points at leaves it alone. Terminals in a running hc core keep the old version's
-  folder ahead of the shims in their `PATH` until mise prunes it, so hooks there run the old binary for up to
-  24 hours after an upgrade (spike 22). Without this rule they would point `current` back.
+  than the version `current` points at leaves it alone.
+- Everything crook starts calls the binary through mise's shim, `~/.local/share/mise/shims/crook`, never a
+  versioned path and never a bare `crook` looked up on the `PATH`: the plugin's hook commands and the mod's
+  `exec`. The shim always runs the version mise has active now. A bare `crook` in a terminal of a running hc
+  core would find the old version's folder ahead of the shims for up to 24 hours after an upgrade (spike 22).
+  The maintainer's dotfiles already run mempalace and qdrant services through their shims for the same reason.
 - Every crook session starts with `--plugin-dir ~/.local/share/crook/current/plugin`, never the versioned
   folder. When mise prunes the old version, the next crook run has already moved the link. A session started
   on a versioned path that is later removed gets `Stop hook failed` (spike 18).
@@ -79,9 +82,9 @@ Upgrades in live sessions:
   else, so it stops and says so;
 - moves `current`.
 
-The mod stays thin: UI only. It runs `exec("crook", [...])` to start or resume an effort, so it never needs a
-path. herdr-app's `exec` uses the login shell's PATH, which includes mise's global tools when the login
-shell activates mise (spikes 18 and 21).
+The mod stays thin: UI only. It runs `exec` on the shim to start or resume an effort. herdr-app's `exec`
+also finds a bare `crook` through the login shell's PATH when the login shell activates mise (spikes 18 and
+21), but the shim does not depend on that.
 
 `crook doctor` checks, and `crook doctor --fix` repairs what it can:
 

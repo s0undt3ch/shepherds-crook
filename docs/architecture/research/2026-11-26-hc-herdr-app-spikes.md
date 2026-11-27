@@ -406,3 +406,7 @@ The install folders are fixed when the core starts. After an upgrade, the old ve
 the shims in this `PATH` until mise prunes it (24 hours, spike 18) or the core restarts. Until then, hooks in
 hc sessions run the old `crook`, while the mod and new shells run the new one. [inferred from the `PATH`
 order; not run with two crook versions]
+
+Follow-up: a shim is not tied to the `PATH` order. `~/.local/share/mise/shims/ast-grep --version` ran the
+global version (`ast-grep 0.51.3`, rc 0) from a folder whose `mise.toml` was never trusted. Calling the shim
+by its full path avoids the stale-folder problem above. Used by [0019](../decisions/0019-ship-crook-as-a-binary.md).

@@ -18,6 +18,8 @@ mise install
 prek install
 ```
 
+How to change the design, the ADRs and the docs: [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licence
 
 See [LICENSE](LICENSE).

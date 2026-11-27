@@ -31,4 +31,6 @@ pub struct Ctx<'a> {
     /// The running executable, which the install paths are derived from (ADR 0019). A lookup
     /// that can fail, so it runs only for the commands that need it.
     pub current_exe: &'a dyn Fn() -> std::io::Result<PathBuf>,
+    /// A fresh session id (a v4 UUID), so tests can pin them.
+    pub new_id: &'a dyn Fn() -> String,
 }

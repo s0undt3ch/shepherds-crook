@@ -18,7 +18,8 @@ const EXAMPLE: &str = r#"{
       "repo": "/r",
       "branch": "crook/demo/fix-bug",
       "brief": "briefs/fix-bug.md",
-      "state": "active"
+      "state": "active",
+      "started": true
     }
   ]
 }"#;
@@ -42,6 +43,7 @@ fn child(name: &str) -> Child {
         branch: None,
         brief: format!("briefs/{name}.md"),
         state: State::Active,
+        started: false,
     }
 }
 
@@ -125,6 +127,34 @@ fn a_missing_started_is_an_error() {
     let dir = flock_dir();
     write_raw(dir.path(), &EXAMPLE.replace(", \"started\": true", ""));
     assert!(load(dir.path()).is_err());
+}
+
+#[test]
+fn a_missing_child_started_is_an_error() {
+    let dir = flock_dir();
+    write_raw(
+        dir.path(),
+        &EXAMPLE.replace(",\n      \"started\": true", ""),
+    );
+    assert!(load(dir.path()).is_err());
+}
+
+#[test]
+fn set_child_started_flips_only_that_child() {
+    let dir = flock_dir();
+    seeded(dir.path());
+    add_child(dir.path(), child("a")).expect("adds");
+    add_child(dir.path(), child("b")).expect("adds");
+    set_child_started(dir.path(), "a", true).expect("sets");
+    let roster = load(dir.path()).expect("loads");
+    assert_eq!(
+        roster
+            .children
+            .iter()
+            .map(|c| c.started)
+            .collect::<Vec<_>>(),
+        [true, false]
+    );
 }
 
 #[test]
@@ -270,4 +300,16 @@ fn concurrent_adds_all_survive() {
         }
     });
     assert_eq!(load(dir.path()).expect("loads").children.len(), 8);
+}
+
+#[test]
+fn mark_all_done_closes_the_coordinator_and_every_child() {
+    let dir = flock_dir();
+    seeded(dir.path());
+    add_child(dir.path(), child("a")).expect("adds");
+    add_child(dir.path(), child("b")).expect("adds");
+    mark_all_done(dir.path()).expect("closes");
+    let roster = load(dir.path()).expect("loads");
+    assert_eq!(roster.coordinator.state, State::Done);
+    assert!(roster.children.iter().all(|c| c.state == State::Done));
 }

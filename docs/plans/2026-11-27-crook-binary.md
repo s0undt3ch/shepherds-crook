@@ -647,7 +647,7 @@ prove the task; write them first.
 - Rules: `terminal` is `null` when hc has no live terminal for it. `result.status` is `working`, `done`,
   `failed`, `unreadable` or `missing` (0024). `delivered` compares the file's hash with its mark. If hc is not
   reachable, the command still prints the file side with `terminal: null` and a top-level `"hc_error"` string,
-  so the mod can show something.
+  so the mod can show something, and it exits 0: the JSON carries the error, not the exit code.
 - Files: `src/cmd/status.rs`.
 - ADR: 0014, 0020, 0024; Q5.
 - Tests: golden JSON for a flock with a live coordinator, one live child, one paused child, one done child, one

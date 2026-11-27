@@ -32,7 +32,9 @@ Chosen option: crook creates and removes worktrees.
 - Without `--repo`, the child runs in the flock's folder: for research or writing that touches no repository.
 - `crook stop <child>` and `crook close <flock>` remove a child's worktree only when it has no uncommitted
   changes and its branch is pushed or merged. Otherwise they leave it, keep the roster entry, and say why.
-  The branch itself is never deleted.
+  The branch itself is never deleted. The one exception: when `spawn` fails to launch the child, it deletes
+  the empty branch it has just made (`git branch -d`), so a retry with the same name works (D51 in
+  [`docs/plans/build-log.md`](../../plans/build-log.md)).
 - The repository must already be trusted in Claude Code. A worktree inside a trusted repository needs no trust
   step of its own (spike 26).
 

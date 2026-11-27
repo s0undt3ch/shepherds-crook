@@ -30,7 +30,8 @@ fn example() -> Value {
             "repo": "/r",
             "branch": "crook/demo/fix-bug",
             "brief": "briefs/fix-bug.md",
-            "state": "active"
+            "state": "active",
+            "started": true
         }]
     })
 }
@@ -46,6 +47,7 @@ fn child(name: &str, repo: Option<&str>) -> Child {
         branch: repo.map(|_| format!("crook/demo/{name}")),
         brief: format!("briefs/{name}.md"),
         state: State::Active,
+        started: false,
     }
 }
 
@@ -154,6 +156,7 @@ fn every_field_is_required() {
         "branch",
         "brief",
         "state",
+        "started",
     ] {
         let mut v = example();
         v["children"][0]
@@ -318,6 +321,19 @@ fn the_loader_and_the_schema_agree_on_bad_rosters() {
         (
             "extra field",
             mutated(|v| v["children"][0]["extra"] = json!(1)),
+        ),
+        (
+            "child started missing",
+            mutated(|v| {
+                v["children"][0]
+                    .as_object_mut()
+                    .expect("object")
+                    .remove("started");
+            }),
+        ),
+        (
+            "child started not a boolean",
+            mutated(|v| v["children"][0]["started"] = json!("yes")),
         ),
         (
             "started missing",

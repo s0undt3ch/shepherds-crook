@@ -52,22 +52,9 @@ fn help_lists_exactly_the_planned_commands() {
     assert_eq!(listed, expected, "help was:\n{help}");
 }
 
-/// Every form from the plan, each of which parses and then reports "not implemented".
+/// Every form of the commands not built yet, each of which parses and then reports "not implemented".
+/// The lifecycle commands are tested in `tests/lifecycle.rs`.
 const COMMANDS: &[&[&str]] = &[
-    &["new", "my-flock"],
-    &["new", "my-flock", "--task", "do the thing"],
-    &["open", "my-flock"],
-    &["close", "my-flock"],
-    &["spawn", "child", "worker", "briefs/worker.md"],
-    &[
-        "spawn", "child", "worker", "b.md", "--repo", "/tmp/r", "--model", "haiku",
-    ],
-    &["spawn", "child", "worker", "b.md", "--flock", "my-flock"],
-    &["stop", "worker"],
-    &["stop", "worker", "--flock", "my-flock"],
-    &["resume"],
-    &["resume", "worker"],
-    &["resume", "worker", "--model", "opus", "--flock", "my-flock"],
     &["status"],
     &["status", "my-flock"],
     &["status", "--json"],

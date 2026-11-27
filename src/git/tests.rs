@@ -516,3 +516,28 @@ fn removal_never_passes_force() {
         "the branch is never touched"
     );
 }
+
+#[test]
+fn delete_merged_branch_removes_an_empty_branch_and_keeps_one_with_work() {
+    let repo = Repo::new();
+    let empty = repo.add("empty");
+    assert_eq!(
+        remove_worktree(&RealRunner, &repo.root, &empty).expect("removes"),
+        Removal::Removed
+    );
+    assert!(delete_merged_branch(&RealRunner, &repo.root, &empty.branch).expect("runs"));
+    assert_eq!(raw(&repo.root, &["branch", "--list", "crook/*"]), "");
+
+    let busy = repo.add("busy");
+    commit(&busy.path, "b.txt", "work\n");
+    // The worktree has to go first, since git will not delete a branch that is checked out.
+    raw(
+        &repo.root,
+        &["worktree", "remove", busy.path.to_str().expect("utf8")],
+    );
+    assert!(!delete_merged_branch(&RealRunner, &repo.root, &busy.branch).expect("runs"));
+    assert_eq!(
+        raw(&repo.root, &["branch", "--list", "crook/*"]),
+        "crook/demo/busy"
+    );
+}

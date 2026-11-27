@@ -26,6 +26,7 @@ fn main() -> ExitCode {
         runner: &RealRunner,
         clock: &SystemClock,
         current_exe: &std::env::current_exe,
+        new_id: &|| uuid::Uuid::new_v4().to_string(),
     };
     // Once per run, hooks included; a problem is a warning and never stops the command.
     for warning in install::refresh(&ctx) {

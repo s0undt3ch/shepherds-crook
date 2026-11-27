@@ -101,11 +101,16 @@ pub fn herdr_tab(slug: &str) -> String {
     format!("crook-{slug}-coord")
 }
 
+/// The label keys crook puts on its terminals (ADR 0019, 0020, Q4).
+pub const LABEL_FLOCK: &str = "crook.flock";
+pub const LABEL_CHILD: &str = "crook.child";
+pub const LABEL_VERSION: &str = "crook.version";
+
 /// Labels on the coordinator's terminal, as `key=value` (ADR 0019, 0020, 0021).
 pub fn coordinator_labels(slug: &str, version: &str) -> Vec<String> {
     vec![
-        format!("crook.flock={slug}"),
-        format!("crook.version={version}"),
+        format!("{LABEL_FLOCK}={slug}"),
+        format!("{LABEL_VERSION}={version}"),
         format!("herdr.space={}", herdr_space(slug)),
         format!("herdr.tab={}", herdr_tab(slug)),
     ]
@@ -114,9 +119,9 @@ pub fn coordinator_labels(slug: &str, version: &str) -> Vec<String> {
 /// Labels on a child's terminal: no `herdr.*` (ADR 0021, Q4).
 pub fn child_labels(slug: &str, child: &str, version: &str) -> Vec<String> {
     vec![
-        format!("crook.flock={slug}"),
-        format!("crook.version={version}"),
-        format!("crook.child={child}"),
+        format!("{LABEL_FLOCK}={slug}"),
+        format!("{LABEL_VERSION}={version}"),
+        format!("{LABEL_CHILD}={child}"),
     ]
 }
 

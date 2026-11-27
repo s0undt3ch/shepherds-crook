@@ -1,6 +1,16 @@
 //! Helpers shared by unit tests.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::ffi::OsString;
+use std::io::Write;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::{Duration, SystemTime};
+
+use crate::ctx::Clock;
+use crate::run::{Cmd, Output, RealRunner, Runner};
+use crate::{Ctx, Error};
 
 /// An injected environment holding exactly `pairs`.
 pub fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
@@ -9,4 +19,348 @@ pub fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<>
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
         .collect();
     move |key| map.get(key).cloned()
+}
+
+/// A writer whose contents the test can read at any moment, even while a command holds it.
+#[derive(Clone, Default)]
+pub struct SharedBuf(pub Rc<RefCell<Vec<u8>>>);
+
+impl SharedBuf {
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.borrow()).into_owned()
+    }
+}
+
+impl Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// 2026-11-27 12:00 UTC.
+pub struct FixedClock;
+
+pub const FIXED_DATE: &str = "2026-11-27";
+
+impl Clock for FixedClock {
+    fn now(&self) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_795_780_800)
+    }
+}
+
+/// Runs real `git` (temp repositories are fast and exact), records `herdr-app` calls and answers
+/// them, and reports every other program as missing, so `date` falls back to the fixed clock.
+#[derive(Default)]
+pub struct Router {
+    herdr: RefCell<Vec<Cmd>>,
+    herdr_failures: Cell<usize>,
+    herdr_missing: Cell<bool>,
+}
+
+impl Router {
+    pub fn herdr_calls(&self) -> Vec<Cmd> {
+        self.herdr.borrow().clone()
+    }
+
+    /// The next `times` herdr-app calls exit 1.
+    pub fn fail_herdr(&self, times: usize) {
+        self.herdr_failures.set(times);
+    }
+
+    pub fn remove_herdr(&self) {
+        self.herdr_missing.set(true);
+    }
+}
+
+impl Runner for Router {
+    fn run(&self, cmd: Cmd, timeout: Duration) -> Result<Output, Error> {
+        match cmd.program.as_str() {
+            "git" => RealRunner.run(cmd, timeout),
+            "herdr-app" => {
+                self.herdr.borrow_mut().push(cmd);
+                if self.herdr_missing.get() {
+                    return Err(Error::Spawn {
+                        program: "herdr-app".to_string(),
+                        source: std::io::Error::other("not found"),
+                    });
+                }
+                if self.herdr_failures.get() > 0 {
+                    self.herdr_failures.set(self.herdr_failures.get() - 1);
+                    return Ok(Output {
+                        code: Some(1),
+                        stdout: String::new(),
+                        stderr: "no such space".to_string(),
+                    });
+                }
+                Ok(Output::success("{\"ok\": true}\n"))
+            }
+            other => Err(Error::Spawn {
+                program: other.to_string(),
+                source: std::io::Error::other("not found"),
+            }),
+        }
+    }
+}
+
+type EnvFn = dyn Fn(&str) -> Option<String>;
+type VarsFn = dyn Fn() -> Vec<(OsString, OsString)>;
+type ExeFn = dyn Fn() -> std::io::Result<PathBuf>;
+type IdFn = dyn Fn() -> String;
+
+/// A temp XDG tree and everything a `Ctx` needs, owned in one place so a test borrows a `Ctx`
+/// from it.
+pub struct Fixture {
+    pub dir: tempfile::TempDir,
+    vars: Rc<RefCell<std::collections::HashMap<String, String>>>,
+    pub runner: Router,
+    clock: FixedClock,
+    env: Box<EnvFn>,
+    all_vars: Box<VarsFn>,
+    exe: Box<ExeFn>,
+    ids: Box<IdFn>,
+}
+
+impl Default for Fixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Fixture {
+    #[allow(clippy::expect_used)]
+    pub fn new() -> Fixture {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonical");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir");
+        let exe_path = bin.join("crook");
+        std::fs::write(&exe_path, "").expect("exe");
+        let p = |name: &str| root.join(name).display().to_string();
+        let vars: std::collections::HashMap<String, String> = [
+            ("HOME", p("home")),
+            ("XDG_DATA_HOME", p("data")),
+            ("XDG_CONFIG_HOME", p("config")),
+            ("XDG_STATE_HOME", p("state")),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let vars = Rc::new(RefCell::new(vars));
+        let for_env = Rc::clone(&vars);
+        let for_vars = Rc::clone(&vars);
+        let counter = Cell::new(0u32);
+        Fixture {
+            dir,
+            vars,
+            runner: Router::default(),
+            clock: FixedClock,
+            env: Box::new(move |k| for_env.borrow().get(k).cloned()),
+            all_vars: Box::new(move || {
+                for_vars
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.into(), v.into()))
+                    .collect()
+            }),
+            exe: Box::new(move || Ok(exe_path.clone())),
+            ids: Box::new(move || {
+                counter.set(counter.get() + 1);
+                format!("00000000-0000-4000-8000-{:012}", counter.get())
+            }),
+        }
+    }
+
+    pub fn set_env(&self, key: &str, value: &str) {
+        self.vars
+            .borrow_mut()
+            .insert(key.to_string(), value.to_string());
+    }
+
+    #[allow(clippy::expect_used)]
+    pub fn root(&self) -> PathBuf {
+        self.dir.path().canonicalize().expect("canonical")
+    }
+
+    pub fn flocks_root(&self) -> PathBuf {
+        self.root().join("data/crook/flocks")
+    }
+
+    /// Writes `config.toml` under the fixture's config home.
+    #[allow(clippy::expect_used)]
+    pub fn write_config(&self, text: &str) {
+        let dir = self.root().join("config/crook");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("config.toml"), text).expect("write");
+    }
+
+    pub fn ctx(&self) -> Ctx<'_> {
+        Ctx {
+            env: &*self.env,
+            vars: &*self.all_vars,
+            runner: &self.runner,
+            clock: &self.clock,
+            current_exe: &*self.exe,
+            new_id: &*self.ids,
+        }
+    }
+}
+
+pub const COORD_SID: &str = "00000000-0000-4000-8000-0000000000aa";
+
+/// A flock as `new` leaves it, without starting anything: folder, roster, no children.
+#[allow(clippy::expect_used)]
+pub fn make_flock(fx: &Fixture, slug: &str) -> crate::flock::Flock {
+    let ctx = fx.ctx();
+    let config = crate::config::load(ctx.env).expect("config");
+    let made = crate::flock::create(ctx.env, &config, FIXED_DATE, slug).expect("creates");
+    let roster = crate::files::roster::Roster::new(slug, COORD_SID, &made.folder);
+    crate::files::roster::create(&made.folder, &roster).expect("roster");
+    made
+}
+
+/// Starts the flock's coordinator in the fake core, as `crook open` would, and returns its address.
+#[allow(clippy::expect_used)]
+pub fn start_coordinator(hc: &crate::hc::fake::FakeHc, flock: &crate::flock::Flock) -> String {
+    use crate::hc::{Hc, Parent, RunSpec};
+    hc.run(&RunSpec {
+        name: flock.slug.clone(),
+        cwd: flock.folder.clone(),
+        labels: vec![(crate::names::LABEL_FLOCK.to_string(), flock.slug.clone())],
+        parent: Parent::None,
+        argv: vec!["claude".to_string()],
+    })
+    .expect("coordinator")
+    .address
+}
+
+#[allow(clippy::expect_used)]
+pub fn write_brief(flock: &crate::flock::Flock, name: &str) {
+    std::fs::write(
+        flock.briefs_dir().join(format!("{name}.md")),
+        "# Goal\n\nDo it.\n",
+    )
+    .expect("brief");
+}
+
+#[allow(clippy::expect_used)]
+pub fn load_roster(flock: &crate::flock::Flock) -> crate::files::roster::Roster {
+    crate::files::roster::load(&flock.folder).expect("roster loads")
+}
+
+/// A git repository with one commit, whose own config overrides the developer's.
+#[allow(clippy::expect_used)]
+pub fn init_repo(parent: &std::path::Path) -> PathBuf {
+    let root = parent.join("repo");
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    let hooks = root.join(".git/no-hooks");
+    std::fs::create_dir(&hooks).expect("mkdir");
+    let excludes = root.join(".git/no-excludes");
+    std::fs::write(&excludes, "").expect("write");
+    for (k, v) in [
+        ("user.name", "Crook Test"),
+        ("user.email", "crook@example.invalid"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", hooks.to_str().expect("utf8")),
+        ("core.excludesFile", excludes.to_str().expect("utf8")),
+    ] {
+        git(&["config", k, v]);
+    }
+    std::fs::write(root.join("a.txt"), "one\n").expect("write");
+    git(&["add", "a.txt"]);
+    git(&["commit", "-q", "-m", "one"]);
+    root
+}
+
+type RunHook<'a> = Box<dyn Fn(&crate::hc::RunSpec) + 'a>;
+type KillHook<'a> = Box<dyn Fn(&str) + 'a>;
+
+/// The fake core with a look at the moment of a `run` or a `kill`, to prove what had happened by
+/// then (the roster, the output so far).
+pub struct HookedHc<'a> {
+    pub inner: &'a crate::hc::fake::FakeHc,
+    pub on_run: Option<RunHook<'a>>,
+    pub on_kill: Option<KillHook<'a>>,
+}
+
+impl<'a> HookedHc<'a> {
+    pub fn new(inner: &'a crate::hc::fake::FakeHc) -> Self {
+        HookedHc {
+            inner,
+            on_run: None,
+            on_kill: None,
+        }
+    }
+}
+
+impl crate::hc::Hc for HookedHc<'_> {
+    fn version(&self) -> Result<String, Error> {
+        self.inner.version()
+    }
+    fn schema(&self) -> Result<crate::hc::Schema, Error> {
+        self.inner.schema()
+    }
+    fn ls(&self, all: bool) -> Result<Vec<crate::hc::Terminal>, Error> {
+        self.inner.ls(all)
+    }
+    fn ls_by_label(
+        &self,
+        all: bool,
+        labels: &[(String, String)],
+    ) -> Result<Vec<crate::hc::Terminal>, Error> {
+        self.inner.ls_by_label(all, labels)
+    }
+    fn get(&self, id: &str) -> Result<Option<crate::hc::Terminal>, Error> {
+        self.inner.get(id)
+    }
+    fn run(&self, spec: &crate::hc::RunSpec) -> Result<crate::hc::Terminal, Error> {
+        if let Some(hook) = &self.on_run {
+            hook(spec);
+        }
+        self.inner.run(spec)
+    }
+    fn send(&self, to: &str, text: &str) -> Result<crate::hc::SendOutcome, Error> {
+        self.inner.send(to, text)
+    }
+    fn kill(&self, id: &str) -> Result<crate::hc::KillOutcome, Error> {
+        if let Some(hook) = &self.on_kill {
+            hook(id);
+        }
+        self.inner.kill(id)
+    }
+    fn server_start(&self, env: &[(OsString, OsString)]) -> Result<(), Error> {
+        self.inner.server_start(env)
+    }
+}
+
+/// Both output streams of a command, readable afterwards (and, through clones, meanwhile).
+#[derive(Default)]
+pub struct Buffers {
+    pub out: SharedBuf,
+    pub err: SharedBuf,
+}
+
+impl Buffers {
+    pub fn io(&mut self) -> crate::cmd::Io<'_> {
+        crate::cmd::Io {
+            out: &mut self.out,
+            err: &mut self.err,
+        }
+    }
 }

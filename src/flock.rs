@@ -24,13 +24,28 @@ impl Flock {
         names::folder_name(&self.date, &self.slug)
     }
 
+    pub fn briefs_dir(&self) -> PathBuf {
+        self.folder.join("briefs")
+    }
+
+    /// `relative` is a roster `brief` field, `briefs/<child>.md`.
+    pub fn brief_path(&self, relative: &str) -> PathBuf {
+        self.folder.join(relative)
+    }
+
+    /// `results/<child>.md` (ADR 0024).
+    pub fn result_path(&self, child: &str) -> PathBuf {
+        self.folder.join("results").join(format!("{child}.md"))
+    }
+
     /// The folder for the coordinator's `README.md` and `notes/` (ADR 0012).
     pub fn notes_folder(&self, config: &Config) -> PathBuf {
         paths::notes_folder(&self.folder, &self.dir_name(), config.notes_root.as_deref())
     }
 }
 
-fn is_date(s: &str) -> bool {
+/// Whether `s` is shaped `yyyy-mm-dd`.
+pub fn is_date(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 10
         && b.iter().enumerate().all(|(i, c)| {

@@ -36,6 +36,8 @@ struct State {
     calls: Vec<Call>,
     failures: HashMap<&'static str, usize>,
     forced_send: Option<SendOutcome>,
+    /// The next `run` times out; `true` means the terminal started anyway.
+    timeout_run: Option<bool>,
 }
 
 pub struct FakeHc {
@@ -59,6 +61,7 @@ impl FakeHc {
                 calls: Vec::new(),
                 failures: HashMap::new(),
                 forced_send: None,
+                timeout_run: None,
             }),
         }
     }
@@ -82,6 +85,12 @@ impl FakeHc {
     /// `kill` or `server_start`) fail.
     pub fn fail(&self, call: &'static str, times: usize) {
         self.state.borrow_mut().failures.insert(call, times);
+    }
+
+    /// The next `run` ends in a timeout, as when hc is too slow to answer. With `started`, the
+    /// terminal exists all the same, which a caller cannot tell from the timeout alone.
+    pub fn time_out_next_run(&self, started: bool) {
+        self.state.borrow_mut().timeout_run = Some(started);
     }
 
     /// Every `send` answers with this, whatever the target.
@@ -265,6 +274,13 @@ impl Hc for FakeHc {
                 }
             },
         };
+        let timeout = s.timeout_run.take();
+        if timeout == Some(false) {
+            return Err(Error::Timeout {
+                program: "hc".to_string(),
+                after: std::time::Duration::from_secs(10),
+            });
+        }
         let terminal = Terminal {
             address: format!("t{}", s.terminals.len() + 1),
             name: Some(spec.name.clone()),
@@ -276,6 +292,12 @@ impl Hc for FakeHc {
             ..Terminal::default()
         };
         s.terminals.push(terminal.clone());
+        if timeout == Some(true) {
+            return Err(Error::Timeout {
+                program: "hc".to_string(),
+                after: std::time::Duration::from_secs(10),
+            });
+        }
         // hc prints only address, agent, cwd, name, parent, state and turn: no labels.
         Ok(Terminal {
             labels: Default::default(),

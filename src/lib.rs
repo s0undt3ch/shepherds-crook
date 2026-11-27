@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod cmd;
 pub mod config;
 pub mod ctx;
 pub mod error;
@@ -6,7 +7,9 @@ pub mod files;
 pub mod flock;
 pub mod git;
 pub mod hc;
+pub mod herdr_app;
 pub mod install;
+pub mod launch;
 pub mod names;
 pub mod paths;
 pub mod run;
@@ -27,7 +30,7 @@ pub use error::Error;
 /// need no `set_var`.
 pub type Env<'a> = &'a dyn Fn(&str) -> Option<String>;
 
-/// Runs a parsed command. Every command is a stub until its task lands.
-pub fn dispatch(command: &cli::Command, _ctx: &Ctx) -> Result<(), Error> {
-    Err(Error::NotImplemented(command.name()))
+/// Runs a parsed command against the real hc, stdout and stderr.
+pub fn dispatch(command: &cli::Command, ctx: &Ctx) -> Result<(), Error> {
+    cmd::dispatch(command, ctx)
 }

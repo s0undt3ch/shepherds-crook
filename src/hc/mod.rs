@@ -60,6 +60,19 @@ impl Terminal {
     pub fn is_live(&self) -> bool {
         self.state == TermState::Live
     }
+
+    /// A bare shell, which is what a lost terminal comes back as after a core crash or a reboot: same
+    /// address, name and labels, none of the original program (D52). `hc ls` names the program in
+    /// `agent` (`sh` for a shell, `claude` once the session reports itself), and `status.app` is
+    /// set only by a program that speaks OSC 7501. A launch through `env` shows as `env`, so only
+    /// a known shell name counts: an unrecognised program is never mistaken for a shell and killed.
+    pub fn is_shell(&self) -> bool {
+        const SHELLS: [&str; 10] = [
+            "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "nu", "pwsh",
+        ];
+        let reports = self.status.as_ref().is_some_and(|s| s.app.is_some());
+        !reports && self.agent.as_deref().is_some_and(|a| SHELLS.contains(&a))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

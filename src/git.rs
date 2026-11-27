@@ -251,6 +251,13 @@ pub fn remove_worktree(
     }
 }
 
+/// `git branch -d`: deletes the branch only when it is fully merged, so one with work on it stays
+/// (ADR 0023). For the branch a failed `spawn` just made, which has no commits of its own, so the
+/// retry with the same name can make it again (Q11, Q40). `false` when git refused.
+pub fn delete_merged_branch(runner: &dyn Runner, repo: &Path, branch: &str) -> Result<bool, Error> {
+    Ok(run(runner, repo, &["branch", "-d", branch])?.is_success())
+}
+
 /// Whether `<repo>/.worktrees/` is ignored, by the repository's `.gitignore` or any other ignore
 /// file git reads, for `doctor` (ADR 0023). Probes a path inside the folder, which also matches a
 /// pattern written as `.worktrees/`.

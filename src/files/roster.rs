@@ -45,6 +45,10 @@ pub struct Child {
     /// Relative to the flock folder, under `briefs/` (Q12).
     pub brief: String,
     pub state: State,
+    /// False until a launch has succeeded or the terminal was seen live (D50). `spawn` writes the
+    /// entry before `hc run`, so a crash between the two leaves a child that was never started and
+    /// must be launched with `--session-id`, not `--resume`.
+    pub started: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +250,25 @@ pub fn set_coordinator_state(folder: &Path, state: State) -> Result<(), Error> {
 pub fn set_coordinator_started(folder: &Path, started: bool) -> Result<(), Error> {
     modify(folder, |roster| {
         roster.coordinator.started = started;
+        Ok(())
+    })
+}
+
+/// Marks every child and the coordinator `done` in one cycle, which is what closing a flock is
+/// (ADR 0018, 0020). One write, so a crash leaves the flock closed or not, never half.
+pub fn mark_all_done(folder: &Path) -> Result<(), Error> {
+    modify(folder, |roster| {
+        roster.coordinator.state = State::Done;
+        for child in &mut roster.children {
+            child.state = State::Done;
+        }
+        Ok(())
+    })
+}
+
+pub fn set_child_started(folder: &Path, name: &str, started: bool) -> Result<(), Error> {
+    modify(folder, |roster| {
+        child_mut(folder, roster, name)?.started = started;
         Ok(())
     })
 }

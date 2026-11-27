@@ -34,8 +34,8 @@ that decisions cite lives in [`research/`](research/).
 | [0014](decisions/0014-state-in-files-and-labels.md) | State in files and hc labels, no database | Proposed |
 | [0015](decisions/0015-spaces-from-herdr-labels.md) | Create herdr-app spaces with `herdr.space` labels | Proposed |
 | [0016](decisions/0016-hc-preflight.md) | Preflight checks before using hc | Proposed |
-| [0017](decisions/0017-resume-children-from-a-roster.md) | Resume children from a roster after a restart | Proposed |
-| [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Proposed |
+| [0017](decisions/0017-resume-children-from-a-roster.md) | Resume children from a roster after a restart | Accepted |
+| [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Accepted |
 
 ## Open questions
 

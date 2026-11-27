@@ -11,7 +11,8 @@ decision-makers:
 
 ## Context and problem statement
 
-crook has settings: `notes_root` ([0004](0004-flock-storage-location.md)) today, more later. Every subcommand
+crook has settings: `notes_root` ([0004](0004-flock-storage-location.md)), and the models in
+[0025](0025-roles-and-child-models.md). Every subcommand
 reads them, so they need one fixed place. On macOS, Rust's usual config helpers point at
 `~/Library/Application Support`, while crook already keeps its data under `${XDG_DATA_HOME:-~/.local/share}`.
 
@@ -25,6 +26,8 @@ reads them, so they need one fixed place. On macOS, Rust's usual config helpers 
 Chosen option: `${XDG_CONFIG_HOME:-~/.config}/crook/config.toml`, on macOS too.
 
 - TOML, because the maintainer edits it by hand.
+- Keys: `notes_root`; `default_child_model` (`sonnet` when unset); `coordinator_model` (empty: the maintainer's
+  default model; e2e sets a cheap one).
 - A missing file means every default; crook works with no config ([0004](0004-flock-storage-location.md)).
 - An unknown key is an error that names the key, so a typo never passes silently.
 - `crook doctor` reports the path it read and any error in it.

@@ -15,7 +15,7 @@ crook has two parts:
 
 - A Claude Code plugin: the coordinator skill, the role agents
   ([0007](0007-launch-children-with-hc-run.md)) and the hooks ([0009](0009-child-stop-hook-reports-completion.md)).
-- A herdr-app mod: the "New flock" dialog and the flock panel.
+- A herdr-app mod: the "New flock" dialog. A panel for flocks is deferred ([0021](0021-show-flocks-with-herdr-apps-own-tree.md)).
 
 v1 never installed its plugin globally: every crook session got `--plugin-dir <crook's folder>`
 (`CONTRIBUTING.md` on `backup_crook_v1`). So the plugin needs a folder on disk, not a marketplace install.
@@ -54,8 +54,8 @@ Finding its files:
   to the executable, a debug build uses the repository's own `plugin/` and `mod/`, whose path is fixed at
   compile time. Skill edits then show up without a rebuild. Release builds never fall back; they stop and say
   the install is broken.
-- On every run it points `~/.local/share/crook/current` at its own `plugin/`, but only forward: a binary older
-  than the version `current` points at leaves it alone.
+- On every run it points `${XDG_DATA_HOME:-~/.local/share}/crook/current` at its own install folder, but only
+  forward: a binary older than the version `current` points at leaves it alone. A debug build never moves it.
 - Everything crook starts calls the binary through mise's shim, `~/.local/share/mise/shims/crook`, never a
   versioned path and never a bare `crook` looked up on the `PATH`: the plugin's hook commands and the mod's
   `exec`. The shim always runs the version mise has active now. A bare `crook` in a terminal of a running hc
@@ -67,7 +67,7 @@ Finding its files:
   of the caller of `hc run`, and `hc run` has no option to set one variable, so `crook spawn` and
   `crook resume` pass it on as `env CROOK_BIN=<path> claude …` when it is set (spike 23). `mise link` does not
   cover this: it registers a local build, but mise makes no shim for a linked packslip version (spike 23).
-- Every crook session starts with `--plugin-dir ~/.local/share/crook/current/plugin`, never the versioned
+- Every crook session starts with `--plugin-dir <data home>/crook/current/plugin`, never the versioned
   folder. When mise prunes the old version, the next crook run has already moved the link. A session started
   on a versioned path that is later removed gets `Stop hook failed` (spike 18).
 - The terminal gets the label `crook.version=<version>`.
@@ -101,7 +101,7 @@ also finds a bare `crook` through the login shell's PATH when the login shell ac
 - herdr-app is installed;
 - `crook` is on the login shell's PATH;
 - the mod is installed and its marker matches the binary's version;
-- `current` points at this binary's `plugin/`.
+- `current` points at this binary's install folder.
 
 Children on another machine (`hc run --on`) need crook there too: install it with mise and run `crook setup`
 on that machine. crook does not copy itself across machines.

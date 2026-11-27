@@ -28,11 +28,13 @@ Chosen option: two roles, model chosen per child.
 
 - Roles: `coordinator` and `child`. Each agent file says who the session is and which skill to use; the skills
   hold the behaviour. More roles are added later as more agent files.
-- The coordinator runs on the maintainer's default model.
+- The coordinator runs on `coordinator_model` from the config file ([0026](0026-config-file.md)), or on the
+  maintainer's default model when that is unset.
 - `crook spawn` takes `--model <model>`. The coordinator picks the cheapest model it judges able to do the
   brief well; the skill gives the guidance (Haiku for mechanical work, Sonnet by default, Opus for hard
-  reasoning). The roster records the model, and `crook resume` uses it. `--model` overrides the agent file's
-  `model` (spike 26).
+  reasoning). Without `--model`, `spawn` uses `default_child_model` from the config file, `sonnet` when unset.
+  The roster records the model actually used, and `crook resume` uses it, even if the config changes later.
+  `--model` overrides the agent file's `model` (spike 26).
 - When a child's result shows the model was not enough (`status: failed`, or work the coordinator judges
   short of the brief), the coordinator asks the maintainer before moving it to a more expensive model. It
   names the child, the model it would move to, and why. On a yes, crook resumes the child on that model:

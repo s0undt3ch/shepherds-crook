@@ -27,8 +27,8 @@ Each flock should be one herdr-app space. herdr-app shows any terminal labelled
 
 ## Decision outcome
 
-Chosen option: invented ids through labels. The "New flock" dialog may still use `space.new`; children and
-restarts use labels.
+Chosen option: invented ids through labels, for every terminal crook starts. crook never calls `space.new`
+(decided 2026-11-27, question 24 in [`docs/plans/open-questions.md`](../../plans/open-questions.md)).
 
 ### Consequences
 

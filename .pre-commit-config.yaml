@@ -79,6 +79,15 @@ repos:
             tools/precommit/(workflows|_common)\.py$
           )$
 
+      # The plugin's shape, hooks, skill names and templates, with no Claude needed. CI also
+      # runs `claude plugin validate --strict` and the tag compatibility check (plugin-check job).
+      - id: plugin-check
+        name: Check the plugin files
+        entry: toolr ci plugin-check
+        language: system
+        pass_filenames: false
+        files: ^(plugin/|tools/ci\.py$)
+
       # Unit tests live in a `tests.rs` file next to their module (binary plan, "Crate and module layout").
       - id: no-inline-test-modules
         name: Keep test modules in their own files

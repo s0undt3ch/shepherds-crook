@@ -47,6 +47,10 @@ reviewed and reversed.
 | D37 | Preflight's wait loop runs `server start` with the scrubbed environment before every `hc schema` retry. | Review: a bare `schema` could start a stopped core with the session's Claude variables still set. |
 | D38 | The fake hc copies real hc 0.1.22 exactly (no labels from `run`, a bare-word status from `ls`, a finished parent accepted), checked against the captured fixtures. | Review: a fake kinder than real hc would let later milestones pass tests and fail for real. |
 | D39 | A relative `CROOK_BIN` is refused, and the environment is carried as raw OS strings end to end. | Review: a relative path breaks in a child's own folder, and non-UTF-8 variables were being dropped from the core. |
+| D40 | CI runs `claude plugin validate --strict plugin/` in the `plugin-check` job, installing the CLI with `npm ci` from the lock file in `.github/claude-code/` (Renovate's npm manager bumps it) on Node 24 (the CLI needs 22 or newer; jactionlint refuses an unlocked `npm install`). No JSON-shape fallback is needed. | The release plan left this unchecked. Checked: the npm package installs and `validate --strict` passes with an empty `HOME` and no login (2.1.332); the native binary comes from the package's postinstall, so `--ignore-scripts` breaks it. |
+| D41 | `toolr ci plugin-check` is also a pre-commit hook (shape only, no tag compare); the CI job runs it with `--since-last-release` and fetches full history and tags. | The pre-commit job has no tags; the own job also hosts `validate`, so M2.6 is an own job. |
+| D42 | The compatibility check covers agent files, skill folders and supporting files that a tagged `SKILL.md` names; other files may change. Tags sort by version with pre-releases below their release. | "Names that never change" freezes names a live conversation can still use; flagging every file would block harmless edits. |
+| D43 | Agent bodies are capped at 30 lines and must name exactly one `crook-<role>` skill, with no `skills:` frontmatter key. | Plugin plan, agent files and Tier 1 structure test ("a line cap"); the real cap was not set, the files are 5 lines now. |
 
 ## Milestones
 

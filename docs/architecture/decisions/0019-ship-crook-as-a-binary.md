@@ -108,7 +108,6 @@ Not tested:
 
 - `exec("crook", …)` from a mod in the real herdr-app;
 - the binary finding its own install folder when started through a mise shim.
-- what a mid-turn reload does to a long tool run.
 
 ## Pros and cons of the options
 

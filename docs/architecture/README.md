@@ -51,6 +51,11 @@ that decisions cite lives in [`research/`](research/).
   investigation). The spike report keeps "effort", the earlier working name, where it records what ran.
 - **herdr-app with the window closed.** Do labelled terminals show up when the app opens later? See
   [research](research/2026-11-26-hc-herdr-app-spikes.md).
+- **Login after a reboot.** What do hc and herdr-app restore when the maintainer logs in again? Needs a real
+  reboot; the roster resume of [0017](decisions/0017-resume-children-from-a-roster.md) is tested only after a core
+  stop (spike 15).
+- **A crook panel.** What herdr-app's tree cannot show: children in the roster with no live terminal, each
+  child's role, links to its brief and result. Left out of [0021](decisions/0021-show-flocks-with-herdr-apps-own-tree.md).
 - **Packaging.** Settled by [0019](decisions/0019-ship-crook-as-a-binary.md). A mise shim hands over to the
   install folder, checked with another tool; the first release confirms it for crook.
 

@@ -3,3 +3,7 @@ __pycache__/
 .DS_Store
 # prek's hook cache in CI (setup-pre-commit sets PREK_HOME here).
 .cache/
+target/
+coverage/
+.coverage
+.coverage.*

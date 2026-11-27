@@ -1,0 +1,14 @@
+# Only `src/main.rs` reads the process environment or machine paths; everything else goes
+# through `Ctx` (ADR 0020), so tests need no `set_var` and hooks cannot depend on stray variables.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+disallowed-methods = [
+    { path = "std::env::var", reason = "read the environment through Ctx::env" },
+    { path = "std::env::var_os", reason = "read the environment through Ctx::env" },
+    { path = "std::env::vars", reason = "read the environment through Ctx::env" },
+    { path = "std::env::vars_os", reason = "read the environment through Ctx::env" },
+    { path = "std::env::home_dir", reason = "derive paths from Ctx::env" },
+    { path = "std::env::temp_dir", reason = "derive paths from Ctx::env" },
+    { path = "std::env::current_dir", reason = "derive paths from Ctx::env" },
+]

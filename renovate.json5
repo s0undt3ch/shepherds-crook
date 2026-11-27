@@ -14,13 +14,13 @@
   schedule: ["before 6am on monday"],
 
   // Open fix PRs for OSV advisories. Direct deps are covered; transitive ones
-  // in uv.lock can get a PR too. Where none appears,
-  // `lockFileMaintenance` below or a manual
+  // in Cargo.lock or uv.lock can get a PR too. Where none appears,
+  // `lockFileMaintenance` below or a manual `cargo update -p` /
   // `toolr project venv lock` remains the fallback. Security PRs bypass the
   // weekly schedule above.
   osvVulnerabilityAlerts: true,
 
-  // Once a month, regenerate the lockfiles (`uv lock`) to
+  // Once a month, regenerate the lockfiles (`cargo update`, `uv lock`) to
   // pull every dep, direct and transitive, up to the newest version its
   // existing manifest range already allows. This does NOT widen the ranges
   // themselves (the regular per-dep PRs do that); it keeps the locked graph
@@ -30,7 +30,24 @@
     schedule: ["before 6am on the first day of the month"],
   },
 
+  // The packslip CLI pin in ci.yml, and the version named in release.yml's
+  // cross-reference comment, have no native manager.
   customManagers: [
+    {
+      customType: "regex",
+      description: "Track the packslip CLI pin next to the jdx/packslip action",
+      managerFilePatterns: [
+        "/^\\.github/workflows/ci\\.yml$/",
+        "/^\\.github/workflows/release\\.yml$/",
+      ],
+      matchStrings: [
+        "PACKSLIP_VERSION: (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "github:jdx/packslip@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+      ],
+      depNameTemplate: "jdx/packslip",
+      datasourceTemplate: "github-tags",
+      extractVersionTemplate: "^v?(?<version>.*)$",
+    },
     {
       customType: "regex",
       description: "Track the mise version every workflow installs",
@@ -52,6 +69,17 @@
       datasourceTemplate: "github-tags",
       extractVersionTemplate: "^v?(?<version>.*)$",
     },
+    {
+      // Same dep as the `rust` pin in mise.toml (the mise manager's datasource and
+      // package), so the "Rust toolchain" group below moves both in one PR.
+      customType: "regex",
+      description: "Track the crate rust-version alongside the mise Rust pin",
+      managerFilePatterns: ["/^Cargo\\.toml$/"],
+      matchStrings: ['rust-version = "(?<currentValue>\\d+\\.\\d+\\.\\d+)"'],
+      depNameTemplate: "rust",
+      packageNameTemplate: "rust",
+      datasourceTemplate: "rust-version",
+    },
   ],
 
   assignees: ["s0undt3ch"],
@@ -61,6 +89,11 @@
   // rules come last and override `github-actions` and `mise tools` for the ToolR pins.
   packageRules: [
     // ---- Ecosystem labels ----
+    {
+      description: "Tag Rust crate updates",
+      matchManagers: ["cargo"],
+      addLabels: ["dependencies:rust"],
+    },
     {
       description: "Tag Python (pyproject.toml) updates",
       matchManagers: ["pep621"],
@@ -74,11 +107,30 @@
 
     // ---- Grouping to cut PR noise ----
     {
+      // mise.toml and Cargo.toml must name the same toolchain. Give each
+      // release a week before forcing it on contributors.
+      description: "Bump the mise Rust pin and the crate rust-version together",
+      groupName: "Rust toolchain",
+      matchManagers: ["mise", "custom.regex"],
+      matchDepNames: ["rust"],
+      addLabels: ["dependencies:rust"],
+      minimumReleaseAge: "7 days",
+    },
+    {
       // GHA digest pins drift constantly; reviewing one weekly PR is
       // saner than ~20 individual ones.
       description: "Group all GitHub Actions updates",
       groupName: "github-actions",
       matchManagers: ["github-actions"],
+    },
+    {
+      // Same group as the actions so the packslip CLI pin and the
+      // jdx/packslip action pin always move in one PR.
+      description: "Group the packslip CLI pin with GitHub Actions",
+      groupName: "github-actions",
+      matchManagers: ["custom.regex"],
+      matchDepNames: ["jdx/packslip"],
+      addLabels: ["dependencies:github-actions"],
     },
     {
       // mise CLI tools (the pre-commit-hook binaries, prek, uv and so on).
@@ -89,7 +141,7 @@
       description: "Group mise CLI tooling updates",
       groupName: "mise tools",
       matchManagers: ["mise"],
-      matchDepNames: ["!aqua:s0undt3ch/ToolR", "!s0undt3ch/ToolR"],
+      matchDepNames: ["!rust", "!aqua:s0undt3ch/ToolR", "!s0undt3ch/ToolR"],
     },
 
     // ---- Keep every in-repo pin of the ToolR release in lockstep ----

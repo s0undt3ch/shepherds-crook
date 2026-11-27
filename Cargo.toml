@@ -1,0 +1,24 @@
+[package]
+name = "crook"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+description = "Orchestrates Claude Code sessions across projects"
+license = "Apache-2.0"
+repository = "https://github.com/s0undt3ch/shepherds-crook"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+nix = { version = "0.32.0", default-features = false, features = ["signal"] }
+thiserror = "2"
+
+# The hook catches panics with `catch_unwind`, which does nothing under `panic = "abort"`.
+[profile.release]
+panic = "unwind"
+lto = "thin"
+strip = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

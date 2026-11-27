@@ -15,9 +15,12 @@ use crate::hc::{Hc, Terminal};
 use crate::{Ctx, Error, install, launch, names, paths};
 
 pub mod close;
+pub mod completion;
+pub mod doctor;
 pub mod new;
 pub mod open;
 pub mod resume;
+pub mod setup;
 pub mod spawn;
 pub mod status;
 pub mod stop;
@@ -100,6 +103,9 @@ pub fn dispatch_with(command: &Command, ctx: &Ctx, hc: &dyn Hc, io: &mut Io) -> 
         Command::Status { slug, json, flock } => {
             status::run(ctx, hc, io, slug.as_deref().or(flock.as_deref()), *json)
         }
+        Command::Completion(what) => completion::run(ctx, io, what),
+        Command::Setup => setup::run(ctx, io),
+        Command::Doctor { fix, json } => doctor::run(ctx, hc, io, *fix, *json),
         other => Err(Error::NotImplemented(other.name())),
     }
 }

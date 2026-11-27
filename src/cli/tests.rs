@@ -103,3 +103,17 @@ fn hook_takes_any_event_name() {
 fn status_slug_and_flock_conflict() {
     assert!(Cli::try_parse_from(["crook", "status", "a", "--flock", "b"]).is_err());
 }
+
+#[test]
+fn only_doctor_and_setup_leave_the_current_link_alone() {
+    for (args, refreshes) in [
+        (&["doctor"][..], false),
+        (&["doctor", "--fix"], false),
+        (&["setup"], false),
+        (&["status"], true),
+        (&["open", "a"], true),
+        (&["completion", "print", "bash"], true),
+    ] {
+        assert_eq!(parse(args).refreshes_link(), refreshes, "{args:?}");
+    }
+}

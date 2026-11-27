@@ -4,6 +4,8 @@ CI checks for the repository.
 
 from __future__ import annotations
 
+import fnmatch
+import gzip
 import hashlib
 import json
 import os
@@ -770,8 +772,22 @@ ARCHIVE_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 ARCHIVE_TRIPLE = re.compile(r"^[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)+$")
 # What an archive must hold below its one top folder (0019).
 ARCHIVE_FILES = ("crook", "plugin/.claude-plugin/plugin.json", "mod/mod.json")
-# Files that a build or an editor leaves behind and an archive must not carry.
-ARCHIVE_IGNORE = shutil.ignore_patterns(".DS_Store", "__pycache__", "node_modules", "*.pyc")
+# Files that a build, herdr-app or an editor leaves behind. An archive carries only what git tracks under
+# `plugin/` and `mod/`, and `archive-check` rejects these names even when someone tracked one.
+ARCHIVE_JUNK = (
+    ".DS_Store",
+    "__pycache__",
+    "node_modules",
+    "gpui-kit.d.ts",
+    "jsconfig.json",
+    "*.pyc",
+    "*~",
+    "*.orig",
+    "*.rej",
+    "*.swp",
+    "*.swo",
+    "*.bak",
+)
 
 
 class Target(NamedTuple):
@@ -828,18 +844,61 @@ def stage_archive_folder(root: Path, binary: Path, out: Path, *, version: str, t
     for rel in ("plugin/.claude-plugin/plugin.json", "mod/mod.json", "LICENSE", "README.md"):
         if not (root / rel).is_file():
             raise ValueError(f"{root / rel} does not exist")
+    tracked = _tracked_files(root)
     folder = out / f"crook-{version}-{triple}"
     if folder.exists():
         shutil.rmtree(folder)
     folder.mkdir(parents=True)
     shutil.copy2(binary, folder / "crook")
     (folder / "crook").chmod(0o755)
-    for name in ("plugin", "mod"):
-        shutil.copytree(root / name, folder / name, symlinks=True, ignore=ARCHIVE_IGNORE)
+    for rel in tracked:
+        source = root / rel
+        if source.is_symlink():
+            raise ValueError(f"{rel} is a symbolic link; an archive never carries one")
+        if not source.is_file():
+            raise ValueError(f"{rel} is tracked by git but is not a file in the working tree")
+        target = folder / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    for rel in ("plugin/.claude-plugin/plugin.json", "mod/mod.json"):
+        if not (folder / rel).is_file():
+            raise ValueError(f"{rel} is not tracked by git, so it would not ship")
     for name in ("LICENSE", "README.md", "CHANGELOG.md"):
         if (root / name).is_file():
             shutil.copy2(root / name, folder / name)
     return folder
+
+
+def _tracked_files(root: Path) -> list[str]:
+    """The files git tracks (index included) under `plugin/` and `mod/`."""
+    try:
+        done = subprocess.run(  # noqa: S603
+            ["git", "ls-files", "-z", "--cached", "--", "plugin", "mod"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError(f"cannot list the files git tracks in {root}: {exc}") from exc
+    return sorted(name for name in done.stdout.decode().split("\0") if name)
+
+
+def _archive_mtime(root: Path) -> int:
+    """`SOURCE_DATE_EPOCH` when set, else the time of the last commit, else 0."""
+    given = os.environ.get("SOURCE_DATE_EPOCH", "")
+    if given.isdigit():
+        return int(given)
+    try:
+        done = subprocess.run(  # noqa: S603
+            ["git", "log", "-1", "--format=%ct"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        return int(done.stdout.strip())
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return 0
 
 
 def _sha256(path: Path) -> str:
@@ -850,17 +909,26 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def pack_archive(folder: Path, dist: Path) -> Path:
-    """Write `<folder name>.tar.gz` and its `.sha256` (`<hex>  <name>`) into `dist`; return the tarball."""
+def pack_archive(folder: Path, dist: Path, *, mtime: int = 0) -> Path:
+    """Write `<folder name>.tar.gz` and its `.sha256` (`<hex>  <name>`) into `dist`; return the tarball.
+
+    The bytes depend only on the folder's contents and `mtime`: members are sorted, owners are cleared and
+    every member and the gzip header carry `mtime`.
+    """
     dist.mkdir(parents=True, exist_ok=True)
     tarball = dist / f"{folder.name}.tar.gz"
 
     def _owner(info: tarfile.TarInfo) -> tarfile.TarInfo:
         info.uid = info.gid = 0
         info.uname = info.gname = ""
+        info.mtime = mtime
         return info
 
-    with tarfile.open(tarball, "w:gz") as tf:
+    with (
+        tarball.open("wb") as raw,
+        gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=mtime) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tf,
+    ):
         tf.add(folder, arcname=folder.name, filter=_owner)
     tarball.with_name(f"{tarball.name}.sha256").write_text(f"{_sha256(tarball)}  {tarball.name}\n", encoding="utf-8")
     return tarball
@@ -878,6 +946,8 @@ def stage_archive(
 ) -> None:
     """Stage one release archive: `crook-<version>-<triple>/` holding `crook`, `plugin/` and `mod/`.
 
+    `plugin/` and `mod/` hold only the files git tracks there, so a working tree's stray files and links
+    never ship. The tarball is reproducible: its times come from `SOURCE_DATE_EPOCH`, else the last commit.
     The folder also gets `LICENSE`, `README.md` and `CHANGELOG.md` when present. The CI build and the
     e2e harness both stage through this command, so the layout (0019) has one source. mise strips a lone
     top folder, so `plugin/` and `mod/` land next to `crook` once installed.
@@ -899,7 +969,7 @@ def stage_archive(
         ctx.exit(1)
     ctx.info(f"stage-archive: staged {folder}")
     if dist is not None:
-        tarball = pack_archive(folder, Path(dist))
+        tarball = pack_archive(folder, Path(dist), mtime=_archive_mtime(root))
         ctx.info(f"stage-archive: wrote {tarball}")
 
 
@@ -907,7 +977,8 @@ def check_archive(tarball: Path) -> list[str]:
     """The layout problems of one release tarball (0019); empty means it is good.
 
     The tarball must have exactly one top folder, named as the tarball is, holding an executable `crook`,
-    `plugin/.claude-plugin/plugin.json` and `mod/mod.json`, and no member may leave that folder.
+    `plugin/.claude-plugin/plugin.json` and `mod/mod.json`; no member may leave that folder, be a link or
+    be a file git would not ship.
     """
     stem = tarball.name.removesuffix(".tar.gz")
     try:
@@ -927,6 +998,11 @@ def check_archive(tarball: Path) -> list[str]:
         if not parts:
             continue
         tops.add(parts[0])
+        if not (member.isfile() or member.isdir()):
+            errors.append(f"{tarball.name}: member {member.name!r} is a link or a special file")
+            continue
+        if any(fnmatch.fnmatch(part, pattern) for part in parts[1:] for pattern in ARCHIVE_JUNK):
+            errors.append(f"{tarball.name}: member {member.name!r} is a stray file that git would not ship")
         if len(parts) > 1 and member.isfile():
             files["/".join(parts[1:])] = member
     if len(tops) != 1:
@@ -955,7 +1031,7 @@ def _tarballs(ctx: Context, check: str, archive_dir: Path) -> list[Path]:
 def archive_check(ctx: Context, archive_dir: ResolvedPath) -> None:
     """Check each release tarball's layout: one top folder with `crook`, `plugin/` and `mod/` (0019).
 
-    Also checks each `.sha256` file, when present, against its tarball.
+    Each tarball needs a `.sha256` file that matches it, and no member may be a link or a stray file.
 
     Args:
         archive_dir: Directory holding the `*.tar.gz` release archives.
@@ -965,10 +1041,10 @@ def archive_check(ctx: Context, archive_dir: ResolvedPath) -> None:
     for tarball in tarballs:
         errors += check_archive(tarball)
         sidecar = tarball.with_name(f"{tarball.name}.sha256")
-        if sidecar.is_file():
-            expected = f"{_sha256(tarball)}  {tarball.name}"
-            if sidecar.read_text(encoding="utf-8").strip() != expected:
-                errors.append(f"{sidecar.name}: does not match {tarball.name}")
+        if not sidecar.is_file():
+            errors.append(f"{sidecar.name}: is missing")
+        elif sidecar.read_text(encoding="utf-8").strip() != f"{_sha256(tarball)}  {tarball.name}":
+            errors.append(f"{sidecar.name}: does not match {tarball.name}")
     for error in errors:
         ctx.error(f"archive-check: {error}", markup=False)
     if errors:

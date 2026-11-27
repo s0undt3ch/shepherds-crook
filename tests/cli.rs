@@ -3,14 +3,43 @@
 
 use std::process::{Command, Output};
 
+/// A scratch home for one test: nothing is inherited and every folder crook reads or writes is under
+/// it, so no test can touch the developer's own herdr-app, flocks or config (`setup` and
+/// `doctor --fix` write there).
+struct Scratch {
+    dir: tempfile::TempDir,
+}
+
+impl Scratch {
+    fn new() -> Scratch {
+        Scratch {
+            dir: tempfile::tempdir().expect("tempdir"),
+        }
+    }
+
+    fn root(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    fn crook(&self, args: &[&str]) -> Output {
+        let root = self.root();
+        Command::new(env!("CARGO_BIN_EXE_crook"))
+            .args(args)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", root.join("home"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("HERDR_APP_HOME", root.join("app"))
+            .output()
+            .expect("crook starts")
+    }
+}
+
 fn crook(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_crook"))
-        .args(args)
-        // A developer's own hc terminal must never be reached from a test.
-        .env_remove("HC_TERMINAL_ID")
-        .env_remove("HC_TERMINAL_SOCKET")
-        .output()
-        .expect("crook starts")
+    Scratch::new().crook(args)
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -55,37 +84,52 @@ fn help_lists_exactly_the_planned_commands() {
     assert_eq!(listed, expected, "help was:\n{help}");
 }
 
-/// Every form of the commands not built yet, each of which parses and then reports "not implemented".
-/// The lifecycle commands are tested in `tests/lifecycle.rs`, `status` in its own unit tests and the
-/// hooks in `tests/hook.rs`.
-const COMMANDS: &[&[&str]] = &[
-    &["setup"],
-    &["doctor"],
-    &["doctor", "--fix"],
-    &["doctor", "--json"],
-    &["doctor", "--fix", "--json"],
-    &["completion", "print", "bash"],
-    &["completion", "print", "zsh"],
-    &["completion", "print", "fish"],
-];
+#[test]
+fn setup_writes_only_inside_the_scratch_home() {
+    let scratch = Scratch::new();
+    let out = scratch.crook(&["setup"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    // Where it wrote is the point: the marker is under HERDR_APP_HOME, and the default home was not used.
+    assert!(
+        scratch
+            .root()
+            .join("app/mods/crook/.crook-version")
+            .is_file()
+    );
+    assert!(scratch.root().join("data/crook/flocks").is_dir());
+    assert!(!scratch.root().join("home").exists());
+    let said = text(&out.stdout);
+    assert!(
+        said.contains(&scratch.root().display().to_string()),
+        "{said}"
+    );
+    assert!(
+        !said.contains("/.config/herdr-app"),
+        "setup named a default herdr-app home: {said}"
+    );
+}
 
 #[test]
-fn every_command_parses_and_is_not_implemented() {
-    for args in COMMANDS {
-        let out = crook(args);
-        assert_eq!(
-            out.status.code(),
-            Some(1),
-            "{args:?}: {}",
-            text(&out.stderr)
-        );
-        assert!(out.stdout.is_empty(), "{args:?} wrote to stdout");
-        assert!(
-            text(&out.stderr).contains("not implemented"),
-            "{args:?}: {}",
-            text(&out.stderr)
-        );
+fn doctor_and_completion_parse_and_run_in_a_scratch_home() {
+    let scratch = Scratch::new();
+    for shell in ["bash", "zsh", "fish"] {
+        let out = scratch.crook(&["completion", "print", shell]);
+        assert_eq!(out.status.code(), Some(0), "{shell}");
+        assert!(text(&out.stdout).contains("crook"));
     }
+    // No hc on this PATH, so doctor fails, and still prints its report on stdout.
+    let out = scratch.crook(&["doctor", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json report");
+    assert_eq!(doc["ok"], false);
+    let out = scratch.crook(&["doctor", "--fix"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        scratch
+            .root()
+            .join("app/mods/crook/.crook-version")
+            .is_file()
+    );
 }
 
 #[test]

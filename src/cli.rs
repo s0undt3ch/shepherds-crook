@@ -93,6 +93,14 @@ pub enum Completion {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// What the completion scripts offer for a kind of word, one per line (not in `--help`, Q35)
+    #[command(hide = true)]
+    List {
+        #[arg(value_enum)]
+        kind: crate::cmd::completion::Kind,
+        #[arg(long)]
+        flock: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -103,6 +111,12 @@ pub enum Shell {
 }
 
 impl Command {
+    /// Whether `main` points the `current` link at this install before the command runs. `doctor`
+    /// reports the link and only `doctor --fix` moves it; `setup` moves it as part of its own work (D83).
+    pub fn refreshes_link(&self) -> bool {
+        !matches!(self, Command::Doctor { .. } | Command::Setup)
+    }
+
     /// The name used in "not implemented" messages.
     pub fn name(&self) -> &'static str {
         match self {

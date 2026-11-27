@@ -68,4 +68,6 @@ pub enum Error {
     },
     #[error("{0}")]
     Preflight(String),
+    #[error("doctor: {0} check(s) failed")]
+    Checks(usize),
 }

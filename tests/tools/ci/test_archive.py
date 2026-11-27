@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -12,11 +14,16 @@ from toolr.types import ResolvedPath
 
 from tools.ci import archive_check
 from tools.ci import check_archive
+from tools.ci import pack_archive
 from tools.ci import stage_archive
 from tools.ci import stage_archive_folder
 
 TRIPLE = "x86_64-unknown-linux-musl"
 BASE = f"crook-0.0.0-ci-{TRIPLE}"
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)  # noqa: S603, S607
 
 
 @pytest.fixture
@@ -26,12 +33,19 @@ def repo(tmp_path: Path) -> Path:
     (root / "plugin/.claude-plugin/plugin.json").write_text("{}")
     (root / "plugin/skills").mkdir()
     (root / "plugin/skills/a.md").write_text("a")
-    (root / "plugin/skills/.DS_Store").write_text("junk")
     (root / "mod").mkdir()
     (root / "mod/mod.json").write_text("{}")
     (root / "mod/lib.js").write_text("")
     (root / "LICENSE").write_text("license")
     (root / "README.md").write_text("readme")
+    _git(root, "init", "-q")
+    _git(root, "add", "plugin", "mod")
+    # What a working tree collects and git does not track.
+    (root / "plugin/skills/.DS_Store").write_text("junk")
+    (root / "mod/gpui-kit.d.ts").write_text("types")
+    (root / "mod/jsconfig.json").write_text("{}")
+    (root / "mod/main.js~").write_text("backup")
+    (root / "mod/leak").symlink_to("/etc/passwd")
     return root
 
 
@@ -51,6 +65,44 @@ def test_stage_lays_out_the_archive(repo: Path, binary: Path, tmp_path: Path) ->
     assert (folder / "plugin/.claude-plugin/plugin.json").is_file()
     assert (folder / "mod/lib.js").is_file()
     assert not (folder / "plugin/skills/.DS_Store").exists()
+
+
+def test_stage_ships_only_what_git_tracks(repo: Path, binary: Path, tmp_path: Path) -> None:
+    folder = stage_archive_folder(repo, binary, tmp_path / "out", version="0.0.0-ci", triple=TRIPLE)
+    shipped = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if not p.is_dir())
+    assert shipped == [
+        "LICENSE",
+        "README.md",
+        "crook",
+        "mod/lib.js",
+        "mod/mod.json",
+        "plugin/.claude-plugin/plugin.json",
+        "plugin/skills/a.md",
+    ]
+
+
+def test_stage_refuses_a_tracked_symlink(repo: Path, binary: Path, tmp_path: Path) -> None:
+    _git(repo, "add", "-f", "mod/leak")
+    with pytest.raises(ValueError, match="symbolic link"):
+        stage_archive_folder(repo, binary, tmp_path / "out", version="0.0.0-ci", triple=TRIPLE)
+
+
+def test_stage_refuses_outside_a_git_repository(repo: Path, binary: Path, tmp_path: Path) -> None:
+    standalone = tmp_path / "plain"
+    shutil.copytree(repo, standalone, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+    with pytest.raises(ValueError, match="cannot list"):
+        stage_archive_folder(standalone, binary, tmp_path / "out", version="0.0.0-ci", triple=TRIPLE)
+
+
+def test_packing_is_reproducible(repo: Path, binary: Path, tmp_path: Path) -> None:
+    folder = stage_archive_folder(repo, binary, tmp_path / "out", version="0.0.0-ci", triple=TRIPLE)
+    first = pack_archive(folder, tmp_path / "a", mtime=1_700_000_000).read_bytes()
+    for path in folder.rglob("*"):
+        path.touch()
+    second = pack_archive(folder, tmp_path / "b", mtime=1_700_000_000).read_bytes()
+    assert first == second
+    with tarfile.open(fileobj=io.BytesIO(first)) as tf:
+        assert {m.mtime for m in tf.getmembers()} == {1_700_000_000}
 
 
 def test_stage_adds_the_changelog_when_present(repo: Path, binary: Path, tmp_path: Path) -> None:
@@ -218,6 +270,41 @@ def test_command_reports_every_bad_tarball(tmp_path: Path) -> None:
     assert exc.value.code == 1
     assert "aarch64-apple-darwin" in ctx.stderr
     assert "mod/mod.json is missing" in ctx.stderr
+
+
+def test_a_symlink_or_hardlink_member_fails(tmp_path: Path) -> None:
+    for kind in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+        path = tmp_path / f"{BASE}-{kind.decode()}.tar.gz"
+        with tarfile.open(path, "w:gz") as tf:
+            for name, mode in GOOD.items():
+                info = tarfile.TarInfo(name)
+                info.mode = mode or 0o755
+                if mode is None:
+                    info.type = tarfile.DIRTYPE
+                    tf.addfile(info)
+                else:
+                    tf.addfile(info, io.BytesIO(b"x"))
+            link = tarfile.TarInfo(f"{BASE}/mod/leak")
+            link.type = kind
+            link.linkname = "/etc/passwd" if kind == tarfile.SYMTYPE else f"{BASE}/crook"
+            tf.addfile(link)
+        assert any("link or a special file" in e for e in check_archive(path))
+
+
+@pytest.mark.parametrize("name", ["mod/gpui-kit.d.ts", "mod/jsconfig.json", "plugin/.DS_Store", "mod/main.js~"])
+def test_a_stray_file_fails(tmp_path: Path, name: str) -> None:
+    errors = check_archive(_tar(tmp_path / f"{BASE}.tar.gz", {**GOOD, f"{BASE}/{name}": 0o644}))
+    assert any("stray file" in e for e in errors)
+
+
+def test_command_requires_the_sha256_file(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    _tar(out / f"{BASE}.tar.gz", GOOD)
+    ctx = make_context(tmp_path)
+    with pytest.raises(SystemExit):
+        archive_check(ctx, ResolvedPath(out))
+    assert f"{BASE}.tar.gz.sha256: is missing" in ctx.stderr
 
 
 def test_command_checks_the_sha256_file(tmp_path: Path) -> None:

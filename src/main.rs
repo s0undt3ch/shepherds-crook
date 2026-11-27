@@ -38,11 +38,13 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    // Once per run, as the hook does inside its own time budget; a problem is a warning and never stops the command.
-    for warning in install::refresh(&ctx) {
-        eprintln!("{warning}");
-    }
     let cli = cli::Cli::parse_from(&args);
+    // Once per run, as the hook does inside its own time budget; a problem is a warning and never stops the command.
+    if cli.command.refreshes_link() {
+        for warning in install::refresh(&ctx) {
+            eprintln!("{warning}");
+        }
+    }
     match crook::dispatch(&cli.command, &ctx) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

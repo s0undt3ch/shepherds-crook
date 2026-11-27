@@ -60,6 +60,9 @@ pub struct Router {
     herdr: RefCell<Vec<Cmd>>,
     herdr_failures: Cell<usize>,
     herdr_missing: Cell<bool>,
+    programs: RefCell<Vec<String>>,
+    /// The fixture's environment, which a script run for real gets when the call names none.
+    vars: Option<Rc<RefCell<HashMap<String, String>>>>,
 }
 
 impl Router {
@@ -75,12 +78,32 @@ impl Router {
     pub fn remove_herdr(&self) {
         self.herdr_missing.set(true);
     }
+
+    /// Every program asked for, in order.
+    pub fn programs(&self) -> Vec<String> {
+        self.programs.borrow().clone()
+    }
 }
 
 impl Runner for Router {
     fn run(&self, cmd: Cmd, timeout: Duration) -> Result<Output, Error> {
+        self.programs.borrow_mut().push(cmd.program.clone());
         match cmd.program.as_str() {
             "git" => RealRunner.run(cmd, timeout),
+            // A test's own script, such as a stand-in login shell.
+            program if program.starts_with('/') => {
+                let mut cmd = cmd;
+                if cmd.env.is_none() {
+                    let vars = self.vars.as_ref().map(|v| v.borrow().clone());
+                    cmd.env = Some(
+                        vars.unwrap_or_default()
+                            .into_iter()
+                            .map(|(k, v)| (k.into(), v.into()))
+                            .collect(),
+                    );
+                }
+                RealRunner.run(cmd, timeout)
+            }
             "herdr-app" => {
                 self.herdr.borrow_mut().push(cmd);
                 if self.herdr_missing.get() {
@@ -156,8 +179,11 @@ impl Fixture {
         let counter = Cell::new(0u32);
         Fixture {
             dir,
-            vars,
-            runner: Router::default(),
+            vars: Rc::clone(&vars),
+            runner: Router {
+                vars: Some(Rc::clone(&vars)),
+                ..Router::default()
+            },
             clock: FixedClock,
             env: Box::new(move |k| for_env.borrow().get(k).cloned()),
             all_vars: Box::new(move || {
@@ -441,4 +467,33 @@ pub const SESSION: &str = "11111111-aaaa-4bbb-8ccc-222222222222";
 pub fn hook_input(session: &str) -> String {
     serde_json::json!({"session_id": session, "hook_event_name": "x", "source": "startup", "cwd": "/x"})
         .to_string()
+}
+
+/// An install folder as a release archive lays it out: `plugin/` with a version and a `mod/` that
+/// holds files setup must install and files it must leave out.
+#[allow(clippy::expect_used)]
+pub fn fake_install(fx: &Fixture, version: &str) -> crate::install::Install {
+    let root = fx.root().join("install");
+    let plugin = root.join("plugin/.claude-plugin");
+    std::fs::create_dir_all(&plugin).expect("mkdir");
+    std::fs::write(
+        plugin.join("plugin.json"),
+        format!("{{\"name\": \"crook\", \"version\": \"{version}\"}}"),
+    )
+    .expect("plugin.json");
+    let m = root.join("mod");
+    std::fs::create_dir_all(&m).expect("mkdir");
+    for (name, text) in [
+        ("mod.json", "{}"),
+        ("main.js", "main"),
+        ("lib.js", "lib"),
+        ("RECIPE.md", "recipe"),
+        ("preview.png", "png"),
+        ("jsconfig.json", "{}"),
+        ("gpui-kit.d.ts", "types"),
+        (".hidden", "dot"),
+    ] {
+        std::fs::write(m.join(name), text).expect("write");
+    }
+    crate::install::Install::at(root)
 }

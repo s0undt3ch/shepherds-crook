@@ -36,6 +36,7 @@ that decisions cite lives in [`research/`](research/).
 | [0016](decisions/0016-hc-preflight.md) | Preflight checks before using hc | Accepted |
 | [0017](decisions/0017-resume-children-from-a-roster.md) | Resume children from a roster after a restart | Accepted |
 | [0018](decisions/0018-coordinator-runs-claude-directly.md) | The coordinator terminal runs `claude` directly | Accepted |
+| [0019](decisions/0019-one-repo-plugin-and-herdr-mod.md) | Ship crook from one repo: a Claude Code plugin and a herdr mod | Proposed |
 
 ## Open questions
 
@@ -44,7 +45,7 @@ that decisions cite lives in [`research/`](research/).
 - **Read-only vault for children.** `--add-dir` grants read and write; parked by [0006](decisions/0006-no-child-restrictions-initially.md).
 - **herdr-app with the window closed.** Do labelled terminals show up when the app opens later? See
   [research](research/2026-11-26-hc-herdr-app-spikes.md).
-- **Packaging.** How the Claude Code plugin and the herdr-app mod ship together.
+- **Packaging.** Proposed in [0019](decisions/0019-one-repo-plugin-and-herdr-mod.md); needs a spike.
 
 ## Writing a new ADR
 

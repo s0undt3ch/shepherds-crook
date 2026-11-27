@@ -234,8 +234,29 @@ Other findings:
 - Names of finished terminals can be used again after a core restart (`hc run --name coord` and
   `--name donekid` both succeeded). The spike resumed children as `asker-r` and `steps-r`, which made the
   name-keyed roster hook write duplicate entries. Resume under the original name.
-- `hc run … claude --resume <id> "<prompt>"` with `claude` as the program: the prompt never reached Claude
-  (`first_message` was null, nothing typed). The same prompt inside `sh -c "claude … --resume <id> '<prompt>'"`
-  did reach the children. Cause not checked; `hc send` after start worked.
+- The coordinator's prompts never reached Claude, on first start or on resume. Cause, found in spike 16: the
+  prompt came right after `--allowedTools "Bash Read"`, which takes several values and swallowed it.
 
 Not covered: what hc and herdr-app restore when the maintainer logs in after a real reboot.
+
+## 16. Roles as Claude Code agents from crook's plugin (2026-11-27)
+
+hc reads templates only from `~/.config/herdr-core/templates` (`hc templates --help`); `hc run --help` has
+no option to change it. This spike tests the alternative: a throwaway plugin with
+`agents/tester.md` (`model: haiku`, body "Begin every reply with the exact token ROLE-OK"), launched as:
+
+```sh
+hc run --bg --name <n> --cwd <dir> \
+  claude --plugin-dir <plugin> --agent tester --session-id <uuid> "Reply with the word PINEAPPLE."
+```
+
+| Case | Result |
+| --- | --- |
+| `--agent tester`, trusted folder | Haiku; replied `ROLE-OK PINEAPPLE`; `<uuid>.jsonl` exists |
+| `--agent crookspk:tester` (plugin-qualified name) | Same |
+| Control: `--plugin-dir` but no `--agent` | Opus (the default); replied `PINEAPPLE`, no token |
+| `--agent tester --resume <uuid> "What word did you reply with before? Then say BANANA."` | `ROLE-OK My previous reply was PINEAPPLE. BANANA`, on Haiku |
+| `--agent tester`, folder never trusted | Blocked on the trust dialog; after it was answered, the prompt ran: `ROLE-OK PINEAPPLE` |
+| `claude --model haiku --allowedTools "Bash Read" "Reply with the word PINEAPPLE."` | Prompt never ran; Claude sat idle |
+
+`first_message` is null for plain launches: hc does not track a prompt passed on Claude's command line.

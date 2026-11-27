@@ -27,17 +27,16 @@ How it works:
 
 - The roster lives in the effort's default location
   ([0012](0012-split-child-traffic-from-curated-notes.md)). One entry per child: name, session id, folder,
-  template, brief path, state (`active`, `done`).
-- Session ids come from a SessionStart hook in crook's settings, which every template command loads. It
-  records the session id against `$HC_TERMINAL_ID`, on start and on resume. Passing `--session-id` through
-  a template is not possible: hc drops extra arguments.
+  role, brief path, state (`active`, `done`).
+- The coordinator picks each child's session id and writes its roster entry before launching it with
+  `--session-id` ([0007](0007-launch-children-with-hc-run.md)).
 - The coordinator itself also has a fixed session id, so it can be resumed the same way.
 - Children are resumed under their original hc name, so the roster keeps one entry per child. hc allows the
   name again once the old terminal has finished (spike 15).
-- On start, for every `active` child that has no live terminal, the coordinator runs the template's command
-  with `--resume <id>` appended (hc runs template commands through `sh -c`), in the child's folder, as its own
-  child, with a resume prompt: check what is
-  already done on disk, then finish without redoing completed work.
+- On start, for every `active` child that has no live terminal, the coordinator runs
+  `claude --plugin-dir <crook> --agent <role> --resume <id> "<resume prompt>"` in the child's folder, as its
+  own child. The resume prompt: check what is already done on disk, then finish without redoing completed
+  work.
 - Each brief asks the child to keep a progress checklist in its results file. That is the state a resumed
   child reads, and the same checklist addresses the weak spot recorded in
   [0009](0009-child-stop-hook-reports-completion.md).
@@ -52,7 +51,7 @@ How it works:
 
 ### Confirmation
 
-Spikes 8, 11, 13 and 15 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md). Spike 15
+Spikes 8, 11, 13, 15 and 16 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md). Spike 15
 stopped the whole core and had the coordinator resume its children from the roster. Not tested: what hc
 and herdr-app restore at login after a real reboot.
 

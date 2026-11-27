@@ -24,7 +24,7 @@ that decisions cite lives in [`research/`](research/).
 | [0004](decisions/0004-effort-storage-location.md) | Effort storage: a default location, an optional notes root | Accepted |
 | [0005](decisions/0005-markdown-for-herdr-md.md) | Write plain GitHub Markdown for herdr-md | Accepted |
 | [0006](decisions/0006-no-child-restrictions-initially.md) | No access restrictions for children, initially | Accepted |
-| [0007](decisions/0007-launch-children-with-hc-run.md) | Launch children with `hc run`, templates and brief files | Proposed |
+| [0007](decisions/0007-launch-children-with-hc-run.md) | Launch children with `hc run`, crook's agents and brief files | Accepted |
 | [0008](decisions/0008-messages-over-hc-send-results-folder-inbox.md) | Messages over `hc send`; the results folder is the inbox | Accepted |
 | [0009](decisions/0009-child-stop-hook-reports-completion.md) | A child Stop hook reports completion | Accepted |
 | [0010](decisions/0010-human-input-through-hc-blocked.md) | Human input goes through hc's `blocked` status | Proposed |
@@ -44,7 +44,7 @@ that decisions cite lives in [`research/`](research/).
 - **Read-only vault for children.** `--add-dir` grants read and write; parked by [0006](decisions/0006-no-child-restrictions-initially.md).
 - **herdr-app with the window closed.** Do labelled terminals show up when the app opens later? See
   [research](research/2026-11-26-hc-herdr-app-spikes.md).
-- **Packaging.** How the Claude Code plugin, the hc templates and the herdr-app mod ship together.
+- **Packaging.** How the Claude Code plugin and the herdr-app mod ship together.
 
 ## Writing a new ADR
 

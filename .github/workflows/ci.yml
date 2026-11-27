@@ -98,15 +98,17 @@ jobs:
         run: toolr ci plugin-check --since-last-release
 
       # The Claude Code CLI needs Node 22 or newer. Installed from the committed lock file; its
-      # native binary arrives by the package's postinstall, so no `--ignore-scripts`.
+      # native binary arrives by the package's postinstall, which `allowScripts` in
+      # .github/claude-code/package.json allows and `--strict-allow-scripts` insists on.
       # `claude plugin validate` needs no login (checked with an empty HOME).
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          # Exact: an LTS bump changes the bundled npm, which decides how install scripts are handled.
+          node-version: "24.22.3"
 
       - name: Install the Claude Code CLI
-        run: npm ci --no-audit --no-fund --prefix .github/claude-code
+        run: npm ci --no-audit --no-fund --strict-allow-scripts --prefix .github/claude-code
 
       - name: Validate the plugin with Claude Code
         run: .github/claude-code/node_modules/.bin/claude plugin validate --strict plugin/

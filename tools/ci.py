@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from pathlib import PurePosixPath
 
 from toolr import Context
 from toolr import command_group
@@ -25,6 +26,13 @@ EXPECTED_HOOKS = {
 }
 
 PLUGIN_NAME = "crook"
+# The manifest carries metadata only: the folder layout is the one source of the plugin's agents, skills
+# and hooks, so any key that points at components (`agents`, `skills`, `hooks`, `commands`, `mcpServers`,
+# `outputStyles`, `lspServers`, ...) is refused by allow-listing instead of by a list that could go stale.
+MANIFEST_KEYS = {"$schema", "name", "version", "description", "author", "license", "homepage", "repository", "keywords"}
+
+# A release tag: `v` and a semantic version (https://semver.org), pre-release allowed.
+RELEASE_TAG = re.compile(r"^v(?P<core>\d+\.\d+\.\d+)(?:-(?P<pre>[0-9A-Za-z.-]+))?$")
 # Names that never change (plugin plan, "Names that never change"; 0019).
 PERMANENT_SKILLS = {"coordinator": "crook-coordinator", "child": "crook-child"}
 
@@ -50,7 +58,8 @@ def _frontmatter(text: str) -> tuple[dict[str, str], str] | None:
         return None
     keys: dict[str, str] = {}
     for line in match["body"].splitlines():
-        if key := _KEY.match(line):
+        # The first occurrence wins, as in the binary's result parser.
+        if (key := _KEY.match(line)) and key["key"] not in keys:
             keys[key["key"]] = key["value"].strip()
     return keys, match["rest"]
 
@@ -73,6 +82,9 @@ def _check_manifest(plugin: Path, errors: list[str]) -> None:
     if not isinstance(manifest, dict):
         errors.append(f"{path}: must be a JSON object")
         return
+    extra = sorted(set(manifest) - MANIFEST_KEYS)
+    if extra:
+        errors.append(f"{path}: keys {extra} are not allowed; the folder layout is the only source of components")
     if manifest.get("name") != PLUGIN_NAME:
         errors.append(f"{path}: name must be {PLUGIN_NAME!r}, got {manifest.get('name')!r}")
     if not isinstance(manifest.get("version"), str) or not manifest["version"]:
@@ -96,11 +108,17 @@ def _check_hooks(plugin: Path, errors: list[str]) -> None:
             if event in events:
                 errors.append(f"{path}: {event} must hold exactly one matcher group")
             continue
-        entries = groups[0].get("hooks") if isinstance(groups[0], dict) else None
+        # No `matcher`: SessionStart must also fire on resume, clear and compact.
+        if not isinstance(groups[0], dict) or set(groups[0]) != {"hooks"}:
+            errors.append(f"{path}: {event} group keys must be exactly ['hooks'] (no matcher)")
+            continue
+        entries = groups[0].get("hooks")
         if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
             errors.append(f"{path}: {event} must hold exactly one hook")
             continue
         hook = entries[0]
+        if set(hook) != {"type", "command", "timeout"}:
+            errors.append(f"{path}: {event} hook keys must be exactly ['command', 'timeout', 'type'], got {sorted(hook)}")
         if hook.get("type") != "command":
             errors.append(f"{path}: {event} hook type must be 'command'")
         expected = f"{SHIM} hook {argument}"
@@ -178,12 +196,19 @@ def _check_templates(plugin: Path, errors: list[str]) -> None:
     if not result.is_file():
         errors.append(f"{result}: missing")
         return
+    # Its frontmatter status is checked by the binary's own parser in tests/plugin_templates.rs.
     text = result.read_text(encoding="utf-8")
-    parsed = _frontmatter(text)
-    if parsed is None or parsed[0].get("status") != "working":
-        errors.append(f"{result}: frontmatter must parse and give status: working (0024)")
     if _headings(text) != RESULT_HEADINGS:
         errors.append(f"{result}: headings must be {RESULT_HEADINGS} in order (0024), got {_headings(text)}")
+
+
+def _check_shim_text(plugin: Path, errors: list[str]) -> None:
+    """Every mention of the shim path in the agents and skills must be the exact expression (D22)."""
+    for path in sorted([*(plugin / "agents").glob("*.md"), *(plugin / "skills").rglob("*.md")]):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            rest = line.replace(SHIM, "")
+            if "MISE_DATA_DIR" in rest or "shims/crook" in rest:
+                errors.append(f"{path}:{number}: shim path is not the exact expression {SHIM}")
 
 
 def check_plugin(plugin: Path) -> list[str]:
@@ -196,84 +221,158 @@ def check_plugin(plugin: Path) -> list[str]:
     skills = _check_skills(plugin, errors)
     _check_agents(plugin, skills, errors)
     _check_templates(plugin, errors)
+    _check_shim_text(plugin, errors)
     return errors
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603
+class GitError(Exception):
+    """A git call failed, so the compatibility check cannot say anything and must fail."""
+
+
+def _git(repo: Path, *args: str) -> str:
+    ret = subprocess.run(  # noqa: S603
         ["git", "-C", str(repo), *args],  # noqa: S607
         capture_output=True,
         text=True,
         check=False,
     )
+    if ret.returncode != 0:
+        raise GitError(f"git {' '.join(args)} failed: {ret.stderr.strip() or ret.returncode}")
+    return ret.stdout
+
+
+def _precedence(tag: str) -> tuple:
+    """Sort key by semver precedence: a pre-release is below its release; numeric identifiers sort below text."""
+    match = RELEASE_TAG.match(tag)
+    assert match is not None
+    core = tuple(int(n) for n in match["core"].split("."))
+    if match["pre"] is None:
+        return core, (1,)
+    ids = tuple((0, int(i), "") if i.isdigit() else (1, 0, i) for i in match["pre"].split("."))
+    return core, (0, ids)
+
+
+def release_tags(repo: Path) -> list[str]:
+    """Release tags that are ancestors of HEAD and do not point at it, newest first by semver precedence.
+
+    A tag on HEAD is the release being built, and comparing it with itself proves nothing.
+    """
+    out = _git(repo, "tag", "--list", "v*", "--merged", "HEAD", "--no-contains", "HEAD")
+    return sorted((t for t in out.split() if RELEASE_TAG.match(t)), key=_precedence, reverse=True)
 
 
 def newest_release_tag(repo: Path) -> str | None:
-    """The newest `v*` tag by version order, with pre-releases below their release (`-` suffix sorts first)."""
-    ret = _git(repo, "-c", "versionsort.suffix=-", "tag", "--list", "v*", "--sort=-version:refname")
-    tags = ret.stdout.split() if ret.returncode == 0 else []
+    tags = release_tags(repo)
     return tags[0] if tags else None
 
 
-def check_compatibility(repo: Path, plugin_rel: str, tag: str) -> list[str]:
-    """Names the tag's plugin used must still exist now (0019, plugin plan P4.3).
+_TOKEN = re.compile(r"[\w./-]+")
 
-    Covers agent files, skill folders and the supporting files a tagged `SKILL.md` names.
+
+def _named_files(text: str, skill_dir: str, candidates: set[str]) -> set[str]:
+    """The candidate files (skill-relative paths) that `text` names as a whole file name or path.
+
+    Whole tokens only, so `my-models.md` does not name `models.md`.
+    """
+    named: set[str] = set()
+    for raw in _TOKEN.findall(text):
+        token = raw.removeprefix("./").rstrip(".")
+        for rel in candidates:
+            if token in (rel, PurePosixPath(rel).name) or token.endswith(f"skills/{skill_dir}/{rel}"):
+                named.add(rel)
+    return named
+
+
+def check_compatibility(repo: Path, plugin_rel: str, tags: list[str]) -> list[str]:
+    """Names any earlier release used must still exist now (0019, plugin plan P4.3).
+
+    Covers agent files, skill folders, and the supporting files a tagged `SKILL.md` names, directly or
+    through another supporting file. The union over every tag in `tags`: a live conversation can still
+    carry the text of any earlier release.
     """
     errors: list[str] = []
-    listing = _git(repo, "ls-tree", "-r", "--name-only", tag, "--", plugin_rel)
-    if listing.returncode != 0:
-        return [f"git ls-tree {tag} failed: {listing.stderr.strip()}"]
-    old_files = [f for f in listing.stdout.splitlines() if f]
     prefix = f"{plugin_rel.rstrip('/')}/"
 
-    def gone(old: str, what: str) -> None:
+    def gone(old: str, tag: str, what: str) -> None:
         if not (repo / old).is_file():
             errors.append(f"{old}: {what} existed at {tag} and is gone; a version never removes or renames it (0019)")
 
-    for old in old_files:
-        rel = old.removeprefix(prefix)
-        if re.fullmatch(r"agents/[^/]+\.md", rel):
-            gone(old, "agent file")
-        elif re.fullmatch(r"skills/[^/]+/SKILL\.md", rel):
-            gone(old, "skill")
-            skill_dir = rel.rpartition("/")[0]
-            text = _git(repo, "show", f"{tag}:{old}").stdout
-            for other in old_files:
-                other_rel = other.removeprefix(prefix)
-                support = other_rel.removeprefix(f"{skill_dir}/")
-                if other_rel.startswith(f"{skill_dir}/") and support != "SKILL.md" and support in text:
-                    gone(other, "supporting file named by SKILL.md")
-    return errors
+    for tag in tags:
+        old_files = [f for f in _git(repo, "ls-tree", "-r", "--name-only", tag, "--", plugin_rel).splitlines() if f]
+        rels = {f.removeprefix(prefix) for f in old_files}
+        for rel in sorted(rels):
+            if re.fullmatch(r"agents/[^/]+\.md", rel):
+                gone(prefix + rel, tag, "agent file")
+            elif re.fullmatch(r"skills/[^/]+/SKILL\.md", rel):
+                gone(prefix + rel, tag, "skill")
+                skill_dir = rel.split("/")[1]
+                base = f"skills/{skill_dir}/"
+                support = {r.removeprefix(base) for r in rels if r.startswith(base) and r != rel}
+                reached: set[str] = set()
+                queue = [rel]
+                while queue:
+                    current = queue.pop()
+                    try:
+                        text = _git(repo, "show", f"{tag}:{prefix}{current}")
+                    except GitError:
+                        continue
+                    for found in sorted(_named_files(text, skill_dir, support) - reached):
+                        reached.add(found)
+                        queue.append(base + found)
+                for found in sorted(reached):
+                    gone(f"{prefix}{base}{found}", tag, "supporting file named by a skill")
+    return list(dict.fromkeys(errors))
+
+
+def _plugin_rel(root: Path, plugin_dir: str) -> str | None:
+    """The plugin folder as a clean repository-relative path (`./plugin` is `plugin`), or None outside it."""
+    try:
+        return (root / plugin_dir).resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def _compatibility(root: Path, plugin_rel: str | None) -> tuple[list[str], str]:
+    """The compatibility errors and a one-line status. Fails closed when git cannot answer."""
+    if plugin_rel is None:
+        return ["--plugin-dir is outside the repository, so it cannot be compared with a release tag"], ""
+    try:
+        if _git(root, "rev-parse", "--is-shallow-repository").strip() != "false":
+            return ["the repository is a shallow clone: fetch the full history and tags (fetch-depth: 0)"], ""
+        tags = release_tags(root)
+        if not tags:
+            return [], "no earlier v* release tag, skipping the compatibility check"
+        return check_compatibility(root, plugin_rel, tags), f"compared with {', '.join(tags)}"
+    except GitError as exc:
+        return [f"cannot read release tags: {exc}"], ""
 
 
 @group.command
 def plugin_check(ctx: Context, *, plugin_dir: str = "plugin", since_last_release: bool = False) -> None:
     """Check the plugin's files without Claude: JSON, frontmatter, hooks, skill names and templates.
 
-    Checks that `plugin.json` and `hooks/hooks.json` parse; that the hooks are exactly the three events with
-    the shim command form and the timeouts 120, 30 and 30; that each agent file has a name, names exactly one
-    existing `crook-<role>` skill and stays under a line cap; that each `SKILL.md` has a name and a
-    description; and that the brief and result templates keep their 0024 headings.
+    Checks that `plugin.json` holds only metadata keys and `hooks/hooks.json` parses; that the hooks are
+    exactly the three events, each one group of `hooks` (no matcher) with one `type`, `command` and
+    `timeout`, the shim command form and the timeouts 120, 30 and 30; that each agent file has a name,
+    names exactly one existing `crook-<role>` skill and stays under a line cap; that each `SKILL.md` has a
+    name and a description; that every shim path in the agent and skill text is the exact expression; and
+    that the brief and result templates keep their 0024 headings.
 
-    With `--since-last-release`, also fails when an agent file, a skill or a supporting file that a skill
-    names at the newest `v*` tag is gone now. The compatibility check is skipped with a notice when no tag
-    exists.
+    With `--since-last-release`, also fails when an agent file, a skill, or a supporting file that a skill
+    names was in any earlier release tag (`v*`, reachable from HEAD, not on HEAD) and is gone now. It skips
+    with a notice when no such tag exists, and fails when git cannot answer or the clone is shallow.
 
     Args:
         plugin_dir: The plugin folder, relative to the repository root.
-        since_last_release: Compare with the plugin at the newest `v*` tag.
+        since_last_release: Compare with the plugin at the earlier release tags.
     """
     root = Path(ctx.repo_root)
-    plugin = root / plugin_dir
-    errors = check_plugin(plugin)
+    errors = check_plugin(root / plugin_dir)
     if since_last_release:
-        tag = newest_release_tag(root)
-        if tag is None:
-            ctx.info("plugin-check: no v* tag yet, skipping the compatibility check")
-        else:
-            errors += check_compatibility(root, plugin_dir, tag)
-            ctx.info(f"plugin-check: compared with {tag}")
+        more, status = _compatibility(root, _plugin_rel(root, plugin_dir))
+        errors += more
+        if status:
+            ctx.info(f"plugin-check: {status}")
     for error in errors:
         ctx.error(f"plugin-check: {error}", markup=False)
     if errors:

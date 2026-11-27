@@ -4,5 +4,8 @@
   "description": "The Claude Code CLI that the plugin-check job runs `claude plugin validate --strict` with. Renovate bumps it.",
   "devDependencies": {
     "@anthropic-ai/claude-code": "2.1.332"
+  },
+  "allowScripts": {
+    "@anthropic-ai/claude-code": true
   }
 }

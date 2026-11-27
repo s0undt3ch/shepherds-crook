@@ -51,9 +51,6 @@ MOD_OVERLAY_FIELDS = {"kind": str, "width": int, "height": int}
 MOD_PALETTE_FIELDS = {"title": str, "command": str, "args": dict, "words": str}
 # Element ids the first view must render, read from `herdr-app check --print-spec`.
 MOD_SPEC_IDS = ("crook-root", "crook-new")
-# Calls of a bare `exec(` (a regular expression's `.exec(` does not count).
-_EXEC_CALL = re.compile(r"(?<![\w.$])exec\s*\(")
-
 _FRONTMATTER = re.compile(r"\A---\n(?P<body>.*?)\n---\n(?P<rest>.*)\Z", re.DOTALL)
 _KEY = re.compile(r"^(?P<key>[A-Za-z_][\w-]*):[ \t]*(?P<value>.*)$")
 _SKILL_REF = re.compile(r"`(crook-[a-z][a-z0-9-]*)`")
@@ -427,9 +424,14 @@ def _check_mod_json(mod: Path, errors: list[str]) -> None:
                 errors.append(f"{path}: palette[{index}] must be an object")
 
 
+def _mod_scripts(mod: Path) -> list[Path]:
+    """Every `.js` and `.mjs` file under the mod folder."""
+    return sorted(p for pattern in ("*.js", "*.mjs") for p in mod.rglob(pattern) if "node_modules" not in p.parts)
+
+
 def _check_mod_syntax(mod: Path, errors: list[str]) -> None:
     """`node --check` on every script, read as an ES module whatever the nearest package.json says."""
-    scripts = sorted(mod.glob("*.js"))
+    scripts = _mod_scripts(mod)
     if not scripts:
         errors.append(f"{mod}: no .js files")
     if not scripts or shutil.which("node") is None:
@@ -450,23 +452,222 @@ def _check_mod_syntax(mod: Path, errors: list[str]) -> None:
             errors.append(f"{script}: node --check failed: {' | '.join(detail)}")
 
 
-def _strip_comment(line: str) -> str:
-    """A line without a `//` comment. Good enough here: the mod has no `//` inside a string on a call line."""
-    return re.sub(r"(^|\s)//.*", "", line)
+Token = tuple[str, str, int]  # kind (ident, str, tpl, num, punct), text, line
+
+# After these a `/` starts a regular expression; after any other identifier, number, `)`, `]` or `}` it divides.
+_REGEX_AFTER_WORDS = {"return", "typeof", "case", "of", "in", "instanceof", "delete", "void", "throw", "new", "else", "do"}
+_IDENT_START = re.compile(r"[A-Za-z_$\u0080-\uffff]")
+_IDENT = re.compile(r"[\w$\u0080-\uffff]+")
+
+
+class _Tokenizer:
+    """Just enough JavaScript lexing to find calls: comments are dropped; strings, template literals and
+    regular expressions are single tokens, so a `//` or a quote inside one hides nothing and a call inside
+    a comment or a string is not seen. Calls inside a template's `${}` are tokenised as code."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.tokens: list[Token] = []
+        self.line = 1
+        self._scan(0, nested=False)
+
+    def _regex_allowed(self) -> bool:
+        if not self.tokens:
+            return True
+        kind, text, _ = self.tokens[-1]
+        if kind == "punct":
+            return text not in ")]}"
+        return kind == "ident" and text in _REGEX_AFTER_WORDS
+
+    def _quoted(self, i: int, quote: str) -> int:
+        start, j = i, i + 1
+        while j < len(self.text) and self.text[j] != quote:
+            if self.text[j] == "\\":
+                j += 1
+            if j < len(self.text) and self.text[j] == "\n":
+                self.line += 1
+            j += 1
+        self.tokens.append(("str", self.text[start : j + 1], self.line))
+        return j + 1
+
+    def _template(self, i: int) -> int:
+        j = i + 1
+        self.tokens.append(("tpl", "`", self.line))
+        while j < len(self.text) and self.text[j] != "`":
+            if self.text[j] == "\\":
+                j += 1
+            elif self.text.startswith("${", j):
+                j = self._scan(j + 2, nested=True)
+                continue
+            if j < len(self.text) and self.text[j] == "\n":
+                self.line += 1
+            j += 1
+        return j + 1
+
+    def _regex(self, i: int) -> int:
+        j, in_class = i + 1, False
+        while j < len(self.text) and self.text[j] != "\n":
+            c = self.text[j]
+            if c == "\\":
+                j += 1
+            elif c == "[":
+                in_class = True
+            elif c == "]":
+                in_class = False
+            elif c == "/" and not in_class:
+                break
+            j += 1
+        j += 1
+        while j < len(self.text) and self.text[j].isalpha():
+            j += 1
+        self.tokens.append(("str", "/regex/", self.line))
+        return j
+
+    def _scan(self, i: int, *, nested: bool) -> int:
+        text, depth = self.text, 0
+        while i < len(text):
+            c = text[i]
+            if c == "\n":
+                self.line += 1
+                i += 1
+            elif c.isspace():
+                i += 1
+            elif text.startswith("//", i):
+                while i < len(text) and text[i] != "\n":
+                    i += 1
+            elif text.startswith("/*", i):
+                end = text.find("*/", i + 2)
+                end = len(text) if end < 0 else end + 2
+                self.line += text.count("\n", i, end)
+                i = end
+            elif c in "\"'":
+                i = self._quoted(i, c)
+            elif c == "`":
+                i = self._template(i)
+            elif _IDENT_START.match(c):
+                m = _IDENT.match(text, i)
+                self.tokens.append(("ident", m.group(), self.line))
+                i = m.end()
+            elif c.isdigit():
+                m = re.compile(r"[\w.]+").match(text, i)
+                self.tokens.append(("num", m.group(), self.line))
+                i = m.end()
+            elif c == "/" and self._regex_allowed():
+                i = self._regex(i)
+            else:
+                if nested and c == "}" and depth == 0:
+                    return i + 1
+                depth += (c == "{") - (c == "}")
+                if text.startswith("?.", i) and not text[i + 2 : i + 3].isdigit():
+                    self.tokens.append(("punct", "?.", self.line))
+                    i += 2
+                else:
+                    self.tokens.append(("punct", c, self.line))
+                    i += 1
+        return i
+
+
+def _string_value(token: str) -> str:
+    """The value of a quoted string token, with the common escapes decoded."""
+    return re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), token[1:-1])
+
+
+def _herdr_names(tokens: list[Token]) -> tuple[set[str], set[str], set[int]]:
+    """Local names bound to `exec` by an import from "herdr", the namespace names, and the import's token indices."""
+    funcs, spaces, in_import = {"exec"}, set(), set()
+    for i, (kind, text, _) in enumerate(tokens):
+        if kind != "ident" or text != "import":
+            continue
+        end = i + 1
+        while end < len(tokens) and not (tokens[end][0] == "ident" and tokens[end][1] == "from"):
+            if tokens[end][1] == ";" or tokens[end][1] == "import":
+                break
+            end += 1
+        if end + 1 >= len(tokens) or tokens[end][1] != "from" or tokens[end + 1][0] != "str":
+            continue
+        if _string_value(tokens[end + 1][1]) != "herdr":
+            continue
+        in_import.update(range(i, end + 2))
+        clause = [t[1] for t in tokens[i + 1 : end]]
+        for j, word in enumerate(clause):
+            if word == "as" and j + 1 < len(clause):
+                (funcs if j > 0 and clause[j - 1] == "exec" else spaces if clause[j - 1] == "*" else set()).add(clause[j + 1])
+        if clause and clause[0] not in {"{", "*"}:
+            spaces.add(clause[0])  # a default import: `h.exec(...)`
+    return funcs, spaces, in_import
+
+
+def _exec_problems(path: Path, text: str) -> list[str]:
+    """Every use of herdr's `exec` in a script that is not `exec("sh", crookArgv(...))`."""
+    tokens = _Tokenizer(text).tokens
+    funcs, spaces, in_import = _herdr_names(tokens)
+    problems: list[str] = []
+
+    def at(i: int) -> Token:
+        return tokens[i] if i < len(tokens) else ("", "", 0)
+
+    for i, (kind, word, line) in enumerate(tokens):
+        if kind != "ident" or i in in_import:
+            continue
+        after_dot = at(i - 1)[1] in {".", "?."} if i else False
+        j = None  # index of the token after the callee
+        if word in funcs and not after_dot:
+            j = i + 1
+        elif word in spaces and not after_dot and at(i + 1)[1] in {".", "?."} and at(i + 2)[1] == "exec":
+            j = i + 3
+        elif word in spaces and not after_dot and at(i + 1)[1] == "[":
+            problems.append(f"{path}:{line}: `{word}[...]` hides which function is called")
+            continue
+        if j is None:
+            continue
+        if at(j)[1] == "?.":
+            j += 1
+        if at(j)[1] != "(":
+            if at(j)[1] != ":":  # `{ exec: 1 }` is a property name, not a use
+                problems.append(f"{path}:{line}: `{word}` is used without being called directly as exec(...)")
+            continue
+        first, comma, second, paren = at(j + 1), at(j + 2), at(j + 3), at(j + 4)
+        if not (
+            first[0] == "str"
+            and first[1][0] in "\"'"
+            and _string_value(first[1]) == "sh"
+            and comma[1] == ","
+            and second[1] == "crookArgv"
+            and paren[1] == "("
+        ):
+            problems.append(f'{path}:{line}: exec must run "sh" with crookArgv(...), the shim script')
+    return problems
+
+
+def _shim_script_problems(lib: Path) -> list[str]:
+    """`SHIM_SCRIPT` in lib.js is assigned exactly the shim expression (string pieces joined by `+`)."""
+    tokens = _Tokenizer(lib.read_text(encoding="utf-8")).tokens
+    expected = f'exec {SHIM} "$@"'
+    for i, (kind, text, _) in enumerate(tokens):
+        if kind == "ident" and text == "SHIM_SCRIPT" and tokens[i + 1][1:2] == ("=",):
+            j, value = i + 2, ""
+            while j < len(tokens) and tokens[j][0] == "str" and tokens[j][1][0] in "\"'":
+                value += _string_value(tokens[j][1])
+                j += 1
+                if tokens[j][1] == "+":
+                    j += 1
+                else:
+                    break
+            if value == expected and tokens[j][1] in {";", ""}:
+                return []
+            return [f"{lib}: SHIM_SCRIPT is not assigned exactly `{expected}`"]
+    return [f"{lib}: SHIM_SCRIPT is not defined"]
 
 
 def _check_mod_exec(mod: Path, errors: list[str]) -> None:
-    """Every `exec(` in the mod runs `sh` with `crookArgv(...)`, and the script in lib.js is the exact shim."""
-    for script in sorted(mod.glob("*.js")):
-        lines = [_strip_comment(line) for line in script.read_text(encoding="utf-8").splitlines()]
-        for number, line in enumerate(lines, start=1):
-            for match in _EXEC_CALL.finditer(line):
-                call = line[match.end() :]
-                if not re.match(r"""\s*(["'])sh\1\s*,\s*crookArgv\(""", call):
-                    errors.append(f'{script}:{number}: exec must run `sh` with crookArgv(...), the shim script: {line.strip()}')
+    """Every use of `exec` runs `sh` with `crookArgv(...)`, and the script in lib.js is the exact shim."""
+    for script in _mod_scripts(mod):
+        errors.extend(_exec_problems(script, script.read_text(encoding="utf-8")))
     lib = mod / "lib.js"
-    if lib.is_file() and f'exec {SHIM} "$@"' not in lib.read_text(encoding="utf-8"):
-        errors.append(f"{lib}: SHIM_SCRIPT is not `exec {SHIM} \"$@\"`")
+    if lib.is_file():
+        errors.extend(_shim_script_problems(lib))
+    else:
+        errors.append(f"{lib}: missing, so the shim script cannot be checked")
 
 
 def check_mod(mod: Path) -> list[str]:
@@ -507,18 +708,28 @@ def herdr_app_check(mod: Path, herdr_app: str) -> list[str]:
         copy = Path(tmp) / "mod"
         shutil.copytree(mod, copy, ignore=shutil.ignore_patterns("gpui-kit.d.ts", "jsconfig.json"))
         # A throwaway app home, so the check never reads or writes the real one.
-        env = {**os.environ, "HERDR_APP_HOME": str(Path(tmp) / "home")}
+        # herdr-app also keeps per-folder state under the home and XDG folders, so all of them move.
+        home = Path(tmp) / "home"
+        env = {
+            **os.environ,
+            "HERDR_APP_HOME": str(home / "app"),
+            "HOME": str(home),
+            "XDG_DATA_HOME": str(home / "data"),
+            "XDG_CONFIG_HOME": str(home / "config"),
+            "XDG_CACHE_HOME": str(home / "cache"),
+        }
+        home.mkdir()
         for args in (["check", str(copy)], ["check", str(copy), "--print-spec"]):
             try:
                 result = subprocess.run(  # noqa: S603
-                    [herdr_app, *args], capture_output=True, text=True, check=False, env=env, timeout=120
+                    [herdr_app, *args], capture_output=True, text=True, check=False, env=env, timeout=30
                 )
             except subprocess.TimeoutExpired:
                 return [f"herdr-app {args[0]} timed out"]
             if result.returncode != 0:
                 tail = (result.stdout + result.stderr).strip()
                 return [f"herdr-app {args[0]} failed ({result.returncode}): {tail}"]
-        missing = [i for i in MOD_SPEC_IDS if f'"{i}"' not in result.stdout]
+        missing = [i for i in MOD_SPEC_IDS if re.search(rf':id\[Str\("{re.escape(i)}"\)\]', result.stdout) is None]
         errors += [f"--print-spec does not show the element id {i}" for i in missing]
     return errors
 

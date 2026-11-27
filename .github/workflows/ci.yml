@@ -159,8 +159,9 @@ jobs:
       - name: Check the mod files
         run: toolr ci mod-check
 
+      # Coverage covers lib.js only: main.js imports `herdr`, which only the app provides, so no test loads it.
       # The status schema tests inside it skip until `schema/status.schema.json` exists.
-      # Node 24 reads a bare folder argument as a file, so pass a glob (Node expands it).
+      # Node 24 reads a bare folder argument as a file; a glob works on every version.
       - name: Run the mod tests with coverage
         run: |
           mkdir -p coverage

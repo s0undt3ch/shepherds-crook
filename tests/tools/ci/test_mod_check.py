@@ -154,11 +154,55 @@ def _append(mod: Path, text: str) -> None:
         'await exec("sh", ["-c", "crook status"]);',
         "await exec(program, args);",
         'await exec(\n  "crook", []);',
+        'await exec\n("crook", []);',
+        'await exec/**/("crook", []);',
+        'await exec?.("crook", []);',
+        'await exec("sh", ["-c", "x"]);',
+        'const s = "// not a comment"; await exec("crook", []);',
+        'const s = `${await exec("crook", [])}`;',
+        'await exec(`sh`, crookArgv([]));',
     ],
 )
 def test_an_exec_that_skips_the_shim_fails(mod: Path, line: str) -> None:
     _append(mod, f"\nasync function bad() {{ {line} }}\n")
-    assert _problems(mod, "exec must run `sh` with crookArgv")
+    assert _problems(mod, 'exec must run "sh"')
+
+
+def test_exec_used_without_a_direct_call_fails(mod: Path) -> None:
+    _append(mod, '\nconst run = exec;\n')
+    assert _problems(mod, "without being called directly")
+
+
+def test_an_aliased_import_of_exec_is_checked(mod: Path) -> None:
+    _append(mod, 'import { exec as ex } from "herdr";\nasync function bad() { await ex("crook", []); }\n')
+    assert _problems(mod, 'exec must run "sh"')
+
+
+@pytest.mark.parametrize("call", ['h.exec("crook", [])', 'h?.exec("crook", [])', 'h\n.exec("crook", [])'])
+def test_a_namespace_import_of_exec_is_checked(mod: Path, call: str) -> None:
+    _append(mod, f'import * as h from "herdr";\nasync function bad() {{ await {call}; }}\n')
+    assert _problems(mod, 'exec must run "sh"')
+
+
+def test_a_namespace_index_is_refused(mod: Path) -> None:
+    _append(mod, 'import * as h from "herdr";\nasync function bad() { await h["exec"]("crook"); }\n')
+    assert _problems(mod, "hides which function")
+
+
+def test_an_aliased_exec_through_the_shim_passes(mod: Path) -> None:
+    _append(mod, 'import { exec as ex } from "herdr";\nasync function good() { await ex("sh", crookArgv([])); }\n')
+    assert not _problems(mod, "exec must run")
+
+
+def test_a_multi_line_exec_through_the_shim_passes(mod: Path) -> None:
+    _append(mod, '\nasync function good() {\n  await exec(\n    "sh",\n    crookArgv(["status"]),\n    {},\n  );\n}\n')
+    assert not _problems(mod, "exec must")
+
+
+def test_a_script_in_a_subfolder_is_checked(mod: Path) -> None:
+    (mod / "sub").mkdir()
+    (mod / "sub" / "x.mjs").write_text('await exec("crook", []);\n', encoding="utf-8")
+    assert _problems(mod, "x.mjs")
 
 
 def test_an_exec_through_the_shim_passes(mod: Path) -> None:
@@ -167,14 +211,38 @@ def test_an_exec_through_the_shim_passes(mod: Path) -> None:
 
 
 def test_a_regex_exec_and_a_comment_are_not_calls(mod: Path) -> None:
-    _append(mod, '\nconst m = /x/.exec("x");\n// exec("crook", [])\nconst n = 1; // exec("crook")\n')
+    _append(
+        mod,
+        '\nconst m = /x\'"/.exec("x");\n// exec("crook", [])\nconst n = 1; // exec("crook")\n'
+        '/* exec("crook") */ const t = `exec("crook")`; const q = "exec(\\"crook\\")"; const d = 4 / 2 / 1;\n',
+    )
     assert not _problems(mod, "exec must run")
+
+
+def test_old_shim_text_in_a_comment_does_not_pass(mod: Path) -> None:
+    lib = mod / "lib.js"
+    text = lib.read_text(encoding="utf-8")
+    lib.write_text(
+        text.replace("SHIM_SCRIPT =", f'// exec {SHIM} "$@"\nexport const SHIM_SCRIPT = "other"; const OLD =', 1), encoding="utf-8"
+    )
+    assert _problems(mod, "SHIM_SCRIPT is not assigned exactly")
+
+
+def test_a_missing_shim_script_fails(mod: Path) -> None:
+    lib = mod / "lib.js"
+    lib.write_text(lib.read_text(encoding="utf-8").replace("SHIM_SCRIPT", "SOMETHING_ELSE"), encoding="utf-8")
+    assert _problems(mod, "SHIM_SCRIPT is not defined")
+
+
+def test_a_missing_lib_fails(mod: Path) -> None:
+    (mod / "lib.js").unlink()
+    assert _problems(mod, "cannot be checked")
 
 
 def test_a_changed_shim_script_fails(mod: Path) -> None:
     lib = mod / "lib.js"
     lib.write_text(lib.read_text(encoding="utf-8").replace("CROOK_BIN", "CROOK_BINARY"), encoding="utf-8")
-    assert _problems(mod, "SHIM_SCRIPT is not")
+    assert _problems(mod, "SHIM_SCRIPT is not assigned exactly")
 
 
 def test_the_shim_constant_matches_the_script_in_lib() -> None:
@@ -208,6 +276,7 @@ def test_the_command_fails_and_names_the_problem(mod: Path) -> None:
 # herdr-app: a fake that logs where it was called and prints what a real one printed for the real mod.
 FAKE_HERDR_APP = """#!/bin/sh
 echo "$1 $2 $HERDR_APP_HOME" >> "$FAKE_LOG"
+[ -n "$FAKE_ENV_LOG" ] && printf '%s\\n%s\\n%s\\n%s\\n' "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" >> "$FAKE_ENV_LOG"
 if [ "$FAKE_FAIL" = 1 ]; then echo "mod is broken" >&2; exit 1; fi
 echo 'v_flex :id[Str("crook-root")]'
 echo "$FAKE_IDS"
@@ -256,6 +325,20 @@ def test_herdr_app_check_fails_when_an_element_id_is_missing(
     mod: Path, fake_herdr_app: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FAKE_IDS", "")
+    assert herdr_app_check(mod, "herdr-app") == ["--print-spec does not show the element id crook-new"]
+
+
+def test_herdr_app_check_moves_home_and_xdg_folders(mod: Path, fake_herdr_app: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = fake_herdr_app.parent / "env"
+    monkeypatch.setenv("FAKE_ENV_LOG", str(seen))
+    herdr_app_check(mod, "herdr-app")
+    lines = seen.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 8
+    assert all("crook-mod-check-" in line for line in lines)
+
+
+def test_an_element_id_must_be_an_id_not_text(mod: Path, fake_herdr_app: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_IDS", 'text "crook-new"')
     assert herdr_app_check(mod, "herdr-app") == ["--print-spec does not show the element id crook-new"]
 
 

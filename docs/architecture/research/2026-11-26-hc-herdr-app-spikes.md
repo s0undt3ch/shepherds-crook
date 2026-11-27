@@ -479,3 +479,21 @@ Seen with `herdr-app shot` and `herdr-app ls`:
 - The trust dialog in each child reached the coordinator as `<hc>t17 crookt-kid1 is blocked (permission)…</hc>`.
 
 `space.close` ended all three; they were then removed with `hc rm`.
+
+## 25. Renaming an effort's space and coordinator tab in the real herdr-app (2026-11-27)
+
+One Haiku session in the real core with `herdr.space=crook-renametest` and `herdr.tab=crook-renametest-coord`.
+
+| Step | `herdr-app ls` and the window |
+| --- | --- |
+| Start | Space `coord` (the folder's name), tab `1` |
+| `herdr-app do space.rename '{"id":"crook-renametest","name":"rename test effort"}'` | `{"ok": true}`; space renamed |
+| `herdr-app do tab.rename '{"id":"crook-renametest-coord","name":"coordinator"}'` | `{"ok": true}`; the tab bar showed `coordinator`, not the session's title |
+| Another turn (`hc send`) | Both names kept; the Agents row read "rename test effort · coordinator" |
+| `hc kill` the only terminal | The space went away |
+| A new terminal with the same two labels | Space `coord`, tab `1` again |
+
+So a rename lasts while the space has a terminal. An effort's space goes when its coordinator ends, and every
+start must rename again.
+
+The space was closed with `space.close` and the terminal removed with `hc rm`.

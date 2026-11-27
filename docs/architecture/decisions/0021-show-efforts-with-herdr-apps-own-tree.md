@@ -27,8 +27,8 @@ starts every child with `--parent` set to the coordinator ([0020](0020-mechanica
 Chosen option: herdr-app's own sidebars, children without tabs until kept.
 
 - **Effort.** One space, from the coordinator's `herdr.space` label ([0015](0015-spaces-from-herdr-labels.md)).
-  `crook new` and `crook open` rename the space to the effort's name with `space.rename`; herdr-app otherwise
-  names it after the coordinator's folder.
+  `crook open` (and so `crook new`) renames the space to the effort's name with `space.rename` on every start:
+  the space goes when its coordinator ends, and comes back named after the coordinator's folder (spike 25).
 - **Coordinator.** The space's first tab, from its `herdr.tab` label. crook renames that tab with
   `tab.rename`; herdr-app otherwise names it from the session's title.
 - **Children.** No `herdr.space` or `herdr.tab` label. This amends 0015, where children carried labels too.
@@ -53,8 +53,11 @@ terminal, each child's role, links to its brief and result) is left to a later d
 
 Spike 24 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md): in the maintainer's real
 herdr-app, a coordinator with two children showed as a tree in the Agents sidebar, with and without a tab for
-the child. Peek and keep gave the tab-less child its own tab. Not yet tested: `space.rename` and `tab.rename`
-from crook.
+the child. Peek and keep gave the tab-less child its own tab.
+
+Spike 25: `space.rename` and `tab.rename` by label id renamed the space and the coordinator's tab, and both
+names held across turns. When the coordinator ended, the space went away; a new terminal with the same labels
+came back with the default names. So `crook open` renames on every start, not only `crook new`.
 
 ## Pros and cons of the options
 

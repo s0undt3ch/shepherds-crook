@@ -195,3 +195,47 @@ Results:
 | Child turn that changes nothing | Nothing sent |
 | Child appends `answer: 43` while the coordinator is blocked on a question | Send refused; mark not updated |
 | New coordinator prompt after that | The rescan hook's output reached the coordinator, which replied `last line: answer: 43`; mark updated |
+
+## 15. Core stop, then the coordinator resumes its children from the roster (2026-11-27)
+
+Stands in for a reboot: everything hc runs is lost at once. Scratch core, Haiku throughout.
+
+Setup:
+
+- A template `worker` whose settings add a SessionStart hook. The hook writes `roster/<hc name>.json` with
+  the name, session id, folder, template and state (`active` unless already set).
+- A coordinator with a fixed session id, told the codename MARMALADE.
+- Three children under it: `steps` (a shell loop writing `step 1` to `step 10`, six seconds apart),
+  `asker` (wrote `apple.txt`, then blocked on an AskUserQuestion), and `donekid` (replied and went `done`;
+  its roster entry was then set to `done` by hand).
+
+Then `hc server stop`, with `steps` at step 4:
+
+- Every terminal ended at once. `hc ls --all` on the next core lists all four as `finished`,
+  `reason: server_stop`, `signal: 9`.
+- `steps.txt` stopped at step 4 and never moved. Unlike `hc kill` (spike 11), nothing ran on afterwards.
+- No spike process was left (`pgrep` on the session ids and settings path found none).
+
+Then the coordinator was resumed with `claude --resume <id>` and told to follow a resume file: read the
+roster, check `hc ls`, and for each `active` entry with no live terminal run the template command plus
+`--resume <session id>` through `sh -c`, as its own child.
+
+- It remembered MARMALADE.
+- It resumed `steps` and `asker`, and skipped `donekid` because its state was `done`.
+- `steps` saw its command as "Interrupted", found steps 1 to 4 on disk, appended 5 to 10 and replied
+  `STEPS DONE`. The file ended with exactly ten lines.
+- `asker` saw `apple.txt`, did not rewrite it, and asked its question again.
+- The new coordinator got `<hc>t6 asker-r is blocked (question). See: hc read t6</hc>`: parent notes work
+  from resumed children.
+- No trust prompts on resume: the folders had been trusted on the first start.
+
+Other findings:
+
+- Names of finished terminals can be used again after a core restart (`hc run --name coord` and
+  `--name donekid` both succeeded). The spike resumed children as `asker-r` and `steps-r`, which made the
+  name-keyed roster hook write duplicate entries. Resume under the original name.
+- `hc run … claude --resume <id> "<prompt>"` with `claude` as the program: the prompt never reached Claude
+  (`first_message` was null, nothing typed). The same prompt inside `sh -c "claude … --resume <id> '<prompt>'"`
+  did reach the children. Cause not checked; `hc send` after start worked.
+
+Not covered: what hc and herdr-app restore when the maintainer logs in after a real reboot.

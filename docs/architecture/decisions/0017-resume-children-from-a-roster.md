@@ -32,6 +32,8 @@ How it works:
   records the session id against `$HC_TERMINAL_ID`, on start and on resume. Passing `--session-id` through
   a template is not possible: hc drops extra arguments.
 - The coordinator itself also has a fixed session id, so it can be resumed the same way.
+- Children are resumed under their original hc name, so the roster keeps one entry per child. hc allows the
+  name again once the old terminal has finished (spike 15).
 - On start, for every `active` child that has no live terminal, the coordinator runs the template's command
   with `--resume <id>` appended (hc runs template commands through `sh -c`), in the child's folder, as its own
   child, with a resume prompt: check what is
@@ -50,8 +52,9 @@ How it works:
 
 ### Confirmation
 
-Spikes 8, 11, 12 and 13 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md). Not tested:
-a real reboot.
+Spikes 8, 11, 13 and 15 in the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md). Spike 15
+stopped the whole core and had the coordinator resume its children from the roster. Not tested: what hc
+and herdr-app restore at login after a real reboot.
 
 ## Pros and cons of the options
 

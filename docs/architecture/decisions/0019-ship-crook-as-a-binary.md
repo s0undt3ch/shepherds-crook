@@ -59,9 +59,10 @@ Upgrades in live sessions:
   new skills and hooks (spike 19).
 - So each role's agent file stays thin and stable: who the session is, and "use the `crook-<role>` skill".
   Behaviour lives in skills and hooks.
-- A crook hook in every session records the plugin version at start. When `current` points at a newer
-  version, the hook runs `hc send "$HC_TERMINAL_ID" "/reload-plugins"`; the reload runs when the turn ends.
-  The coordinator does not have to tell its children: each session reloads itself.
+- A crook hook in every session records the plugin version at SessionStart. Its Stop hook reads the version
+  again through `current`; when it changed, it runs `hc send "$HC_TERMINAL_ID" "/reload-plugins"`, and the
+  reload runs as the turn ends (spike 20). The coordinator does not have to tell its children: each session
+  reloads itself. The turn running during the upgrade finishes on the old skills.
 - A version never removes or renames a skill that the previous version's agent files name.
 
 `crook setup`:
@@ -101,13 +102,12 @@ on that machine. crook does not copy itself across machines.
 
 ### Confirmation
 
-Spikes 17, 18 and 19 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
+Spikes 17 to 20 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
 
 Not tested:
 
 - `exec("crook", …)` from a mod in the real herdr-app;
 - the binary finding its own install folder when started through a mise shim.
-- the reload sent from a hook rather than by the model;
 - what a mid-turn reload does to a long tool run.
 
 ## Pros and cons of the options

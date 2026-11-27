@@ -342,3 +342,26 @@ So `/reload-plugins` brings in new skills and hooks, and a session can trigger i
 role text (`--agent`) is fixed for the session's whole life, resumes included.
 
 `/reload-plugins` also reported "1 error during load"; not looked into, the spike plugin loaded.
+
+## 20. A hook reloads its own session after an upgrade (2026-11-27)
+
+Same fake layout, versions 2.0.0 and 2.1.0, with `latest` as the link. Each plugin has a `crookver` skill and
+one hook script, `${CLAUDE_PLUGIN_ROOT}/hooks/version.sh`:
+
+- on SessionStart it saves the plugin's version for the session id;
+- on Stop it reads the version again through `${CLAUDE_PLUGIN_ROOT}`; if it differs, it runs
+  `hc send "$HC_TERMINAL_ID" "/reload-plugins"` and, if that succeeds, saves the new version.
+
+Hook log and screen:
+
+| Time | Event |
+| --- | --- |
+| 10:18:40 | `start 2.0.0`; the skill answered `VERSION 2.0.0` |
+| (then) | `latest` moved to 2.1.0, 2.0.0 deleted, prompt "Reply with the word TWO." |
+| 10:18:52 | `check had=2.0.0 now=2.1.0`, `sent rc=0 {"started":true,"status":"working","turn":1}` |
+| (then) | `/reload-plugins` ran in the session: `Reloaded: … 49 hooks …` |
+| 10:19:12 | Next turn: the skill answered `VERSION 2.1.0`; `check had=2.1.0 now=2.1.0`, nothing sent |
+
+The model was not involved. The send from inside the Stop hook did not block the hook. `/reload-plugins` did
+not fire SessionStart again. The turn running when the upgrade lands still uses the old skills; the reload
+applies from the next turn.

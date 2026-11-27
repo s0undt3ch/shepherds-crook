@@ -3,7 +3,7 @@ mode = "ng"
 no_edit = true
 
 [templates]
-custom = "docs/architecture/decisions/adr-template.md"
+custom = "docs/architecture/decisions/.adr-template.md"
 
 [generate]
 

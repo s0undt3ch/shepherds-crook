@@ -62,6 +62,6 @@ that decisions cite lives in [`research/`](research/).
 ## Writing a new ADR
 
 Run `adrs new "<title>"` from the repository root. It takes the next free number and fills in
-[`decisions/adr-template.md`](decisions/adr-template.md) (configured in `.adrs.toml`). Fill it in and add a row
+[`decisions/.adr-template.md`](decisions/.adr-template.md) (configured in `.adrs.toml`). Fill it in and add a row
 above. Use `adrs link <new> Amends <old>` or `adrs link <new> Supersedes <old>` to record links in both ADRs'
 frontmatter, and `adrs doctor` to check the folder (it also runs as a pre-commit hook).

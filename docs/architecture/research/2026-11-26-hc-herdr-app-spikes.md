@@ -323,3 +323,22 @@ has a `tester` agent ("Begin every reply with ROLE-<version>") and a Stop hook s
 
 So a session must load the plugin through a path that survives a version being removed. A live session
 can run an old agent text next to a newer version's hooks.
+
+## 19. Picking up a new plugin version in a live session (2026-11-27)
+
+Claude Code 2.1.332. The fake mise layout from spike 18, with `latest` moved to a new version and the old
+folder deleted while a session runs. Each version also has a `crookver` skill that says "The crook version
+is <version>".
+
+| Case | Result |
+| --- | --- |
+| `/reload-plugins` typed into a live session (`hc send <t> "/reload-plugins"`) | `Reloaded: 22 plugins · 185 skills · 32 agents · 48 hooks …` |
+| Prompt after the reload, told to use the token its current instructions give | Still `ROLE-1.2.0`: the `--agent` role text did not change |
+| Kill, then `--resume` with `--plugin-dir` pointing at the new version | Still `ROLE-1.3.0`. The transcript holds only the old role text (`agentSetting: crookspk:tester`); resume reuses it |
+| The session runs `hc send "$HC_TERMINAL_ID" "/reload-plugins"` itself | Accepted while it was working; `/reload-plugins` ran as soon as its turn ended |
+| The `crookver` skill after that reload | `VERSION 1.5.0`; the old version's skill text was 1.4.0 |
+
+So `/reload-plugins` brings in new skills and hooks, and a session can trigger it on itself. A session's
+role text (`--agent`) is fixed for the session's whole life, resumes included.
+
+`/reload-plugins` also reported "1 error during load"; not looked into, the spike plugin loaded.

@@ -53,6 +53,17 @@ Finding its files:
   on a versioned path that is later removed gets `Stop hook failed` (spike 18).
 - The terminal gets the label `crook.version=<version>`.
 
+Upgrades in live sessions:
+
+- A session's role text (`--agent`) is fixed for its whole life, resumes included. `/reload-plugins` brings in
+  new skills and hooks (spike 19).
+- So each role's agent file stays thin and stable: who the session is, and "use the `crook-<role>` skill".
+  Behaviour lives in skills and hooks.
+- A crook hook in every session records the plugin version at start. When `current` points at a newer
+  version, the hook runs `hc send "$HC_TERMINAL_ID" "/reload-plugins"`; the reload runs when the turn ends.
+  The coordinator does not have to tell its children: each session reloads itself.
+- A version never removes or renames a skill that the previous version's agent files name.
+
 `crook setup`:
 
 - installs `mod/` into `<appHome>/mods/crook/` with a `.crook-version` marker;
@@ -81,21 +92,23 @@ on that machine. crook does not copy itself across machines.
 - Good, because mise handles download, verification, versions and cleanup.
 - Good, because crook owns `mods/crook/` and never needs herdr's rename on a clash.
 - Good, because the mod needs no paths.
-- Bad, because a live session reads its agent text at start but its hooks through `current`, so after an
-  upgrade it runs an old role text with new hooks (spike 18). Hooks must stay compatible with the previous
-  version's agents and skills.
+- Bad, because a live session keeps its old role text after an upgrade, next to new skills and hooks
+  (spikes 18 and 19). Agent files must stay thin, and skills must stay compatible with the previous
+  version's agent files.
 - Bad, because installing from herdr.dev/mods by copying the folder is no longer enough; the mod's
   `RECIPE.md` points to mise instead.
 - Bad, because the binary must be built and released per platform.
 
 ### Confirmation
 
-Spikes 17 and 18 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
+Spikes 17, 18 and 19 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
 
 Not tested:
 
 - `exec("crook", …)` from a mod in the real herdr-app;
 - the binary finding its own install folder when started through a mise shim.
+- the reload sent from a hook rather than by the model;
+- what a mid-turn reload does to a long tool run.
 
 ## Pros and cons of the options
 

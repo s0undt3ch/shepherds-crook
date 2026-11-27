@@ -8,3 +8,6 @@ coverage/
 .coverage
 .coverage.*
 node_modules/
+# `herdr-app check` writes these into the folder it checks.
+mod/gpui-kit.d.ts
+mod/jsconfig.json

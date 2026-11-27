@@ -1,0 +1,13 @@
+{
+  "place": "none",
+  "title": "Flocks",
+  "overlay": { "kind": "dialog", "width": 560, "height": 460 },
+  "palette": [
+    {
+      "title": "Flocks",
+      "command": "mod.open",
+      "args": { "name": "crook" },
+      "words": "crook flock new open close coordinator"
+    }
+  ]
+}

@@ -32,7 +32,8 @@ Chosen option: a Stop hook in each child. On each turn end it:
 1. Does nothing unless `results/<child>.md` is new or changed since the last report.
 2. Runs `hc get <coordinator>` and sends only if the status app is `claude-code`
    (see [0018](0018-coordinator-runs-claude-directly.md)).
-3. Runs `hc send <coordinator> "<result path>"`. On failure it leaves the file for the rescan
+3. Runs `hc send <coordinator> "Result updated: <result path>"`. The text never starts with `/`, which Claude
+   Code could read as a slash command (D69 in [`docs/plans/build-log.md`](../../plans/build-log.md)). On failure it leaves the file for the rescan
    ([0008](0008-messages-over-hc-send-results-folder-inbox.md)).
 
 ### Consequences

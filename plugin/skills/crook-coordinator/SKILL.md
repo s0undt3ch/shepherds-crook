@@ -100,8 +100,8 @@ crook spawn child <child> <absolute path of the brief> --model <model> [--repo <
 
 ## Messages you receive
 
-- A path to a result file, typed in by a child's Stop hook, or a line `Undelivered child result: <path>` that
-  your hook adds when a send failed.
+- A line `Result updated: <path to a result file>`, typed in by a child's Stop hook, or a line
+  `Undelivered child result: <path>` that your hook adds when a send failed.
 - An hc note about a child, such as `<hc>t4 demo.auth is blocked (question)…</hc>`, `… is blocked (permission)…`
   or `… exited (exit 1)…`.
 - A message from a child or the maintainer typed with `hc send`, tagged like `<hc from="t7 …">…</hc>`.

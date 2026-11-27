@@ -718,9 +718,10 @@ prove the task; write them first.
 #### 8.4 `crook hook stop`
 
 - What: in a child: read `results/<child>.md`; if missing, or its hash equals its mark, stop here (0009 step 1);
-  `hc get <parent>` and go on only if its status app is `claude-code` (0009 step 2, 0018); `hc send <parent>
-  "<absolute result path>"` (0009 step 3); on `Sent`, write the mark under the lock. Any other outcome leaves
-  the mark old for the rescan (0008). Then, in every session, the self-reload (8.2). A failure in the first
+  `hc get <parent>` and go on only if its status app is `claude-code` (0009 step 2, 0018);
+  `hc send <parent> "Result updated: <absolute result path>"` (0009 step 3, D69); on `Sent`, write the mark under
+  the lock. Any other outcome leaves the mark old for the rescan (0008). Then, in every session, the self-reload
+  (8.2). A failure in the first
   part does not skip the second.
 - Files: `src/hook/stop.rs`.
 - ADR: 0008, 0009, 0018, 0019, 0020.
@@ -843,7 +844,7 @@ Area 2, the plugin:
   coordinator agent has no `model` (0025).
 - `.claude-plugin/plugin.json` carries `version`: `0.0.0-dev` in the repository, stamped by the release (Q17).
 - The coordinator skill uses `crook spawn`, `stop`, `resume` and `status --json`, always through the shim form and
-  never a bare `crook` (Q20), and runs `close` only when the maintainer asks (Q6); it expects the result path as
+  never a bare `crook` (Q20), and runs `close` only when the maintainer asks (Q6); it expects `Result updated: <path>` as
   the message text and the rescan line wording (8.3, 8.4); it carries the brief template (0024).
 - `plugin/` sits at the repository root (debug fallback, 3.1).
 

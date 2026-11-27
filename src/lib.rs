@@ -5,6 +5,8 @@ pub mod error;
 pub mod files;
 pub mod flock;
 pub mod git;
+pub mod hc;
+pub mod install;
 pub mod names;
 pub mod paths;
 pub mod run;

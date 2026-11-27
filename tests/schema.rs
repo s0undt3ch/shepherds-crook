@@ -231,7 +231,17 @@ fn the_loader_and_the_schema_agree_on_bad_rosters() {
         ("flock double dash", mutated(|v| v["flock"] = json!("a--b"))),
         (
             "flock too long",
-            mutated(|v| v["flock"] = json!("a".repeat(41))),
+            mutated(|v| v["flock"] = json!("a".repeat(17))),
+        ),
+        (
+            "flock address-shaped",
+            mutated(|v| v["flock"] = json!("t7")),
+        ),
+        ("flock t1x", mutated(|v| v["flock"] = json!("t1x"))),
+        ("flock t1-x", mutated(|v| v["flock"] = json!("t1-x"))),
+        (
+            "child name too long",
+            mutated(|v| v["children"][0]["name"] = json!("a".repeat(16))),
         ),
         (
             "child name slash",

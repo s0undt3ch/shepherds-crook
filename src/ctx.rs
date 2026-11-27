@@ -2,6 +2,7 @@
 //! clock. `main.rs` builds the real one and tests build fakes, so no other module touches the
 //! process environment (ADR 0020).
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -22,6 +23,9 @@ impl Clock for SystemClock {
 
 pub struct Ctx<'a> {
     pub env: Env<'a>,
+    /// The whole process environment, for the one call that passes it on (`hc server start`,
+    /// ADR 0020). Everything else asks `env` for a name.
+    pub vars: &'a dyn Fn() -> Vec<(OsString, OsString)>,
     pub runner: &'a dyn Runner,
     pub clock: &'a dyn Clock,
     /// The running executable, which the install paths are derived from (ADR 0019). A lookup

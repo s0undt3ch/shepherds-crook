@@ -48,7 +48,7 @@ Every command depends on the rules in this section. Where an ADR is silent, the 
 ### Names and ids
 
 - A slug and a child name match `^[a-z0-9]+(-[a-z0-9]+)*$` (Q45). A slug is at most 16 characters and not
-  address-shaped (`^t[0-9]+$` is refused); a child name is at most 15 (D27). hc names are at most 32 characters
+  address-shaped (`^t[0-9]` is refused, D36); a child name is at most 15 (D27). hc names are at most 32 characters
   and a child's is `<slug>.<child>`. So they start and end with a letter or digit and have no double dash. They
   end up in paths, branch names, hc names and labels.
 - The flock id is the slug (Q2). The folder is `<yyyy-mm-dd>-<slug>` (0004). Slugs are unique across dates and
@@ -211,8 +211,9 @@ Key interfaces (signatures only):
 Runtime: `clap` (derive), `clap_complete`, `serde`, `serde_json`, `toml`, `uuid` (v4), `sha2`, `thiserror`.
 Dev: `tempfile` and a JSON Schema validator such as `jsonschema` (Q5; not checked, pin the version when added).
 No YAML crate: crook reads one frontmatter line (0024). No date crate: the folder date comes
-from `date +%F` with a UTC fallback computed by hand. No semver crate: versions compare as three numbers, and
-anything else compares as unknown and leaves the link alone. No locking crate: std `File::lock`.
+from `date +%F` with a UTC fallback computed by hand. No semver crate: versions compare by semantic
+versioning precedence (D28), and anything that is not a semantic version compares as unknown and leaves the link
+alone. No locking crate: std `File::lock`.
 
 ## Milestones
 
@@ -285,7 +286,7 @@ prove the task; write them first.
 - Files: `src/names.rs`.
 - ADR: 0015, 0021, 0023; the hc name rule is Q3, the length cap Q12, the character rule Q45.
 - Tests: valid and invalid names (empty, upper case, `/`, `..`, leading `-`, trailing `-`, `--`; a slug of 17
-  characters and a child name of 16 are refused, 16 and 15 are valid; `t7` is refused as a slug), for slugs and
+  characters and a child name of 16 are refused, 16 and 15 are valid; `t7` and `t1x` are refused as slugs), for slugs and
   child names; every derived name for one example.
 - Done when: no other module formats one of these strings.
 
@@ -383,18 +384,21 @@ prove the task; write them first.
 
 - What: read the plugin version of a folder from `<folder>/plugin/.claude-plugin/plugin.json`, field
   `version`. The release stamps it; in the repository, and so in debug builds, it reads `0.0.0-dev` (Q17).
-  Compare versions as three numbers.
+  Compare versions by semantic versioning precedence (D28): `MAJOR.MINOR.PATCH[-PRE][+BUILD]`, build metadata
+  ignored, a release above its pre-releases, pre-release identifiers dot by dot.
 - Files: `src/install.rs`.
 - ADR: 0019.
-- Tests: parse and compare `0.2.0 < 0.10.0`; `0.0.0-dev`, a pre-release or a junk version compares as unknown.
+- Tests: parse and compare `0.2.0 < 0.10.0` and `0.1.0-rc.1 < 0.1.0-rc.2 < 0.1.0-rc.10 < 0.1.0 < 0.1.1-rc.1`; a
+  junk version compares as unknown.
 - Done when: the link and the hooks use this to read versions.
 
 #### 3.3 Forward-only `current` link
 
 - What: on every run, before the command, point `<data home>/crook/current` at the install folder, so
   `current/plugin` and `current/mod` resolve (Q16). Move it only when the link is
-  missing, dangling, or points at a lower version. Swap atomically: make a temp link and rename it over.
-  A debug build never moves it (0019, Q16). Failures warn on stderr and never stop the command.
+  missing, dangling, or points at a lower version. Swap atomically: make a temp link and rename it over, holding
+  a lock on `current.lock` for the read, compare and rename. A debug build never moves it (0019, Q16). Failures
+  warn on stderr and never stop the command.
 - Files: `src/install.rs`, `src/main.rs`.
 - ADR: 0019, spike 18.
 - Tests: missing link; dangling link; older target moves; newer target stays; equal stays; unknown version
@@ -461,18 +465,20 @@ prove the task; write them first.
 
 #### 4.5 Preflight
 
-- What: check `hc --version` is at least 0.1.22 and `hc schema` has `terminal.run` with `labels` (0016). If no
-  core is running, start one with `hc server start` and the scrubbed environment (4.4), then poll until it
-  answers, with a deadline. Every command that touches hc runs this first (0020). Hooks follow the reduced
-  rule in [Never break the session](#never-break-the-session). 0020 amends 0016: crook scrubs and starts, it
-  does not refuse when `CLAUDECODE` is set.
-- Files: `src/hc/preflight.rs`, `tests/preflight.rs` (binary-level, fake `hc` script that logs its
-  environment).
+- What: check `hc --version` is at least 0.1.22, which starts no core. Then always run `hc server start` with the
+  scrubbed environment (4.4): every other hc call starts a core with the caller's environment when none runs, and
+  `server start` on a running core only reports it (D29). Then check `hc schema` has `terminal.run` with
+  `labels` (0016), polling with a deadline and repeating `server start` before each retry. Every command that
+  touches hc runs this first (0020). Hooks follow the reduced rule in
+  [Never break the session](#never-break-the-session). 0020 amends 0016: crook scrubs and starts, it does not
+  refuse when `CLAUDECODE` is set.
+- Files: `src/hc/preflight.rs`, `tests/preflight.rs` (library-level, fake `hc` script that logs its calls and
+  saves the environment its core started with).
 - ADR: 0016, 0020, spike 23.
-- Tests: old version refused with the floor in the message; schema without `labels` refused; core running
-  means no start; core not running means `server_start` is the first hc call and later calls follow; a core
-  that never comes up times out with a clear message; the fake `hc` script shows `server start` got the
-  scrubbed environment.
+- Tests: old version refused with the floor in the message; schema without `labels` refused; `server_start`
+  is the first hc call after `--version`, whether or not a core runs, and precedes every `schema` retry; a core
+  that never comes up times out with a clear message; the fake `hc` script shows the core only ever started from
+  the scrubbed environment, even when it stops between two `schema` calls.
 - Done when: the floor is one constant with a comment pointing at 0016.
 
 ### Milestone 5: flock lifecycle

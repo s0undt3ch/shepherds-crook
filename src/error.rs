@@ -57,4 +57,15 @@ pub enum Error {
     Env(String),
     #[error("git {args}: {message}")]
     Git { args: String, message: String },
+    #[error("{0}")]
+    Install(String),
+    /// `kind` is hc's own error kind (`not_found`, `name_taken` and so on) when it printed one.
+    #[error("hc {args}: {message}")]
+    Hc {
+        args: String,
+        kind: Option<String>,
+        message: String,
+    },
+    #[error("{0}")]
+    Preflight(String),
 }

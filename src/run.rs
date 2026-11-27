@@ -1,6 +1,7 @@
 //! Subprocesses with captured output and a deadline. Every call to `hc`, `git` or `claude` goes
 //! through a [`Runner`], so hooks cannot hang (ADR 0020) and tests can script the answers.
 
+use std::ffi::OsString;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -24,7 +25,7 @@ pub struct Cmd {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
-    pub env: Option<Vec<(String, String)>>,
+    pub env: Option<Vec<(OsString, OsString)>>,
 }
 
 impl Cmd {
@@ -51,8 +52,11 @@ impl Cmd {
         self
     }
 
-    pub fn env(mut self, env: impl IntoIterator<Item = (String, String)>) -> Self {
-        self.env = Some(env.into_iter().collect());
+    pub fn env<K: Into<OsString>, V: Into<OsString>>(
+        mut self,
+        env: impl IntoIterator<Item = (K, V)>,
+    ) -> Self {
+        self.env = Some(env.into_iter().map(|(k, v)| (k.into(), v.into())).collect());
         self
     }
 }

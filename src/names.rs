@@ -6,9 +6,17 @@ use crate::Error;
 #[cfg(test)]
 mod tests;
 
-pub const MAX_NAME_LEN: usize = 40;
+/// hc names are at most 32 characters (checked against hc 0.1.22), and a child is `<slug>.<child>`:
+/// 16 + 1 + 15.
+pub const MAX_SLUG_LEN: usize = 16;
+pub const MAX_CHILD_LEN: usize = 15;
 
-fn validate(kind: &'static str, name: &str) -> Result<(), Error> {
+fn validate(
+    kind: &'static str,
+    name: &str,
+    max: usize,
+    too_long: &'static str,
+) -> Result<(), Error> {
     let bad = |reason| {
         Err(Error::InvalidName {
             kind,
@@ -19,8 +27,8 @@ fn validate(kind: &'static str, name: &str) -> Result<(), Error> {
     if name.is_empty() {
         return bad("it is empty");
     }
-    if name.len() > MAX_NAME_LEN {
-        return bad("it is longer than 40 characters");
+    if name.len() > max {
+        return bad(too_long);
     }
     if !name
         .bytes()
@@ -37,14 +45,35 @@ fn validate(kind: &'static str, name: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 40 characters (Q12, Q45).
+/// `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 16 characters, and not starting with `t` and a digit, which hc reads as an address (`t7`, `t1x`)
+/// (Q12, Q45, D27). The slug is the coordinator's hc name, which hc limits to 32 characters and
+/// refuses when it looks like an address.
 pub fn validate_slug(slug: &str) -> Result<(), Error> {
-    validate("slug", slug)
+    validate(
+        "slug",
+        slug,
+        MAX_SLUG_LEN,
+        "it is longer than 16 characters (hc names are at most 32, and a child's is <slug>.<child>)",
+    )?;
+    if slug.starts_with('t') && slug.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
+        return Err(Error::InvalidName {
+            kind: "slug",
+            name: slug.to_string(),
+            reason: "hc refuses names shaped like an address, so a slug may not start with `t` and a digit (`t7`, `t1x`)",
+        });
+    }
+    Ok(())
 }
 
-/// The same rule as a slug (Q45).
+/// The same pattern as a slug, at most 15 characters (Q45, D27): `<slug>.<child>` is an hc name,
+/// and hc names are at most 32 characters.
 pub fn validate_child(child: &str) -> Result<(), Error> {
-    validate("child name", child)
+    validate(
+        "child name",
+        child,
+        MAX_CHILD_LEN,
+        "it is longer than 15 characters (hc names are at most 32, and a child's is <slug>.<child>)",
+    )
 }
 
 /// The flock's folder name, `<yyyy-mm-dd>-<slug>` (ADR 0004). The date is not checked here.

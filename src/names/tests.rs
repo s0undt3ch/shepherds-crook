@@ -9,7 +9,7 @@ fn invalid() -> Vec<String> {
     .iter()
     .map(|s| (*s).to_string())
     .collect();
-    v.push("a".repeat(41));
+    v.push("a".repeat(17));
     v
 }
 
@@ -22,11 +22,37 @@ fn valid_slugs_and_child_names() {
 }
 
 #[test]
-fn forty_characters_is_valid_and_forty_one_is_not() {
-    assert!(validate_slug(&"a".repeat(40)).is_ok());
-    assert!(validate_child(&"a".repeat(40)).is_ok());
-    assert!(validate_slug(&"a".repeat(41)).is_err());
-    assert!(validate_child(&"a".repeat(41)).is_err());
+fn the_limits_keep_the_hc_name_within_32_characters() {
+    assert!(validate_slug(&"a".repeat(16)).is_ok());
+    assert!(validate_slug(&"a".repeat(17)).is_err());
+    assert!(validate_child(&"a".repeat(15)).is_ok());
+    assert!(validate_child(&"a".repeat(16)).is_err());
+    let longest = hc_child(&"a".repeat(MAX_SLUG_LEN), &"b".repeat(MAX_CHILD_LEN));
+    assert_eq!(longest.len(), 32);
+}
+
+#[test]
+fn a_slug_shaped_like_an_hc_address_is_refused_but_a_child_name_may_be() {
+    for bad in ["t0", "t7", "t123", "t1x", "t1-x", "t7a"] {
+        let msg = validate_slug(bad).expect_err(bad).to_string();
+        assert!(msg.contains("address"), "{msg}");
+        assert!(validate_child(bad).is_ok(), "{bad}");
+    }
+    for ok in ["t", "tt7", "t-7", "ta7", "a7", "7t"] {
+        validate_slug(ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
+    }
+}
+
+#[test]
+fn the_length_error_says_the_limit_and_why() {
+    let msg = validate_slug(&"a".repeat(17))
+        .expect_err("fails")
+        .to_string();
+    assert!(msg.contains("16") && msg.contains("32"), "{msg}");
+    let msg = validate_child(&"a".repeat(16))
+        .expect_err("fails")
+        .to_string();
+    assert!(msg.contains("15") && msg.contains("32"), "{msg}");
 }
 
 #[test]

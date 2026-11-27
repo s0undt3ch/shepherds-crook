@@ -29,6 +29,8 @@ reviewed and reversed.
 | D19 | Coverage uploads fail the job on error and use the same pinned Codecov CLI (v11.3.2) as `codecov-notify`. | Review: a dropped coverage report left CI green while statuses were computed from partial data. |
 | D20 | Codecov components list each module's root file (`src/files.rs` and so on) next to its folder; `main.rs` and `lib.rs` belong to `cli`; `src/testutil.rs` is ignored like tests. | Review: root files fell in no component, so coverage drops there could not fail a status. |
 | D21 | The test jobs still install all of `mise.toml`. | Trimming saves minutes on a cold cache only; revisit if CI time hurts. |
+| D22 | The mise shim is `${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook`, in code, ADR 0019 and every plan. | Review: mise puts its shims under `MISE_DATA_DIR` or `XDG_DATA_HOME` when set (`XDG_DATA_HOME=/tmp/x mise doctor` showed `/tmp/x/mise/shims`); the fixed `~/.local/share` path would miss them. |
+| D23 | Worktree removal keeps the worktree when it holds any ignored file, naming up to three. | Review: `git worktree remove` deletes ignored files such as `.env`; ADR 0023 says cleanup never loses work, which wins over tidiness. |
 
 ## Milestones
 

@@ -56,14 +56,16 @@ Finding its files:
   the install is broken.
 - On every run it points `${XDG_DATA_HOME:-~/.local/share}/crook/current` at its own install folder, but only
   forward: a binary older than the version `current` points at leaves it alone. A debug build never moves it.
-- Everything crook starts calls the binary through mise's shim, `~/.local/share/mise/shims/crook`, never a
+- Everything crook starts calls the binary through mise's shim, in mise's data folder (`$MISE_DATA_DIR`, else
+  `$XDG_DATA_HOME/mise`, else `~/.local/share/mise`) under `shims/crook`, never a
   versioned path and never a bare `crook` looked up on the `PATH`: the plugin's hook commands and the mod's
   `exec`. The shim always runs the version mise has active now. A bare `crook` in a terminal of a running hc
   core would find the old version's folder ahead of the shims for up to 24 hours after an upgrade (spike 22).
   The maintainer's dotfiles already run mempalace and qdrant services through their shims for the same reason.
 - `CROOK_BIN` overrides the shim, for development. The hook commands read
-  `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}"`, and the mod does the same. A debug build is started
-  with `CROOK_BIN` set to itself. A terminal gets the environment of the call that started its hc core, not
+  `"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}"`,
+  and the mod does the same. A debug build is started with `CROOK_BIN` set to itself. A terminal gets the environment
+  of the call that started its hc core, not
   of the caller of `hc run`, and `hc run` has no option to set one variable, so `crook spawn` and
   `crook resume` pass it on as `env CROOK_BIN=<path> claude …` when it is set (spike 23). `mise link` does not
   cover this: it registers a local build, but mise makes no shim for a linked packslip version (spike 23).

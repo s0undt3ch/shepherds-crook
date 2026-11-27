@@ -73,7 +73,7 @@ Every command depends on the rules in this section. Where an ADR is silent, the 
 | Session version records | `${XDG_STATE_HOME:-~/.local/state}/crook/sessions/<session id>` | Q17 |
 | herdr-app home | `${HERDR_APP_HOME:-~/.config/herdr-app}` | spike 17 |
 | Mod install | `<herdr-app home>/mods/crook/` with `.crook-version` | 0019 |
-| mise shim | `~/.local/share/mise/shims/crook` | 0019 |
+| mise shim | `${MISE_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/mise}/shims/crook` | 0019 |
 
 An empty variable counts as unset, as in the XDG spec. Paths are built by hand, not with a platform crate
 (0026). A missing `HOME` resolves under `/`, so writes fail loudly, as v1's `src/paths.rs` did.
@@ -823,8 +823,10 @@ prove the task; write them first.
 
 Area 2, the plugin:
 
-- `hooks.json` calls `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}" hook <event>` for `session-start`, `stop` and
-  `user-prompt-submit`, with timeouts of 120 seconds for `session-start` and 30 for the others (Q25), each above crook's
+- `hooks.json` calls
+  `"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}" hook <event>`
+  for `session-start`, `stop` and `user-prompt-submit`, with timeouts of 120 seconds for `session-start` and 30 for
+  the others (Q25), each above crook's
   budget (8.1).
 - Agents named `coordinator` and `child`, passed as `crook:coordinator` and `crook:child` (Q15); the
   coordinator agent has no `model` (0025).

@@ -36,8 +36,9 @@ rewritten `crook-e2e` skill that run crook against a scratch hc core, never the 
   are not supported (0019).
 - Release builds never fall back to the repository's `plugin/` and `mod/`; they stop and say the install is
   broken (0019).
-- Hooks and the mod call `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}"`; `CROOK_BIN` overrides it for
-  development (0019).
+- Hooks and the mod call
+  `"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}"`;
+  `CROOK_BIN` overrides it for development (0019).
 - `crook hook` exits 0 on any failure (0020).
 - When crook starts a core, it removes Claude's session variables and `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET` and
   `HC_SCOPE` from that call (0020, spike 23).
@@ -164,7 +165,7 @@ Needs the plugin plan's first `plugin/` tree. None of these needs Claude.
 | Task | Files | ADRs | Check | Done when |
 | --- | --- | --- | --- | --- |
 | M2.1 JSON and frontmatter shape | `tools/ci.py` (`plugin-check`), `tests/tools/ci/test_plugin_check.py` | 0007, 0019, 0025 | Unit tests with good and bad fixture plugins | `plugin.json` and `hooks/hooks.json` parse; each `agents/<role>.md` has frontmatter with a name; each `skills/*/SKILL.md` has `name` and `description` |
-| M2.2 Hook commands call the shim | same | 0019, 0020 | Fixture with a bare `crook` in a hook fails | Every hook command is `"${CROOK_BIN:-$HOME/.local/share/mise/shims/crook}" hook <event>` |
+| M2.2 Hook commands call the shim | same | 0019, 0020 | Fixture with a bare `crook` in a hook fails | Every hook command is `"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}" hook <event>` |
 | M2.3 Roles stay thin and name existing skills | same | 0019, 0025 | Fixture with an agent file naming a missing skill fails | Each agent file names a `crook-<role>` skill that exists in `plugin/skills/` |
 | M2.4 No skill removed since the last release | same | 0019 | Fixture git repo with a tag whose agent files name a skill that was then removed | `plugin-check --since-last-release` reads agent files at the newest `v*` tag; skipped with a notice when no tag exists |
 | M2.5 Markdown | existing `rumdl` and `typos` hooks | 0005 | `prek run --all-files` | Covers `plugin/**/*.md` |
@@ -256,9 +257,9 @@ is fixed (0019), so the smoke must test that exact path, not a custom mise folde
 default is not checked here; the first step below checks it.
 
 - `mise use -g packslip:github.com/s0undt3ch/shepherds-crook@<version>` succeeds.
-- `$HOME/.local/share/mise/shims/crook` exists. Spike 23 saw no shim for a linked packslip version; this checks a
-  real install does get one, at the path the hooks call.
-- `$HOME/.local/share/mise/shims/crook --version` prints `crook <version>`.
+- `${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook` exists. Spike 23 saw no shim for a linked
+  packslip version; this checks a real install does get one, at the path the hooks call.
+- `${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook --version` prints `crook <version>`.
 - `$(mise where packslip:github.com/s0undt3ch/shepherds-crook)` holds `crook`, `plugin/.claude-plugin/plugin.json`
   and `mod/mod.json`.
 - `crook setup`, run through the shim on scratch homes, points `current` at the mise install folder. This

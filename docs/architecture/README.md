@@ -45,8 +45,8 @@ that decisions cite lives in [`research/`](research/).
   investigation); "project" and "space" are taken by Claude Code and herdr-app.
 - **herdr-app with the window closed.** Do labelled terminals show up when the app opens later? See
   [research](research/2026-11-26-hc-herdr-app-spikes.md).
-- **Packaging.** Settled by [0019](decisions/0019-ship-crook-as-a-binary.md). Untested until the first
-  release: the binary finding its own folder when started through a mise shim.
+- **Packaging.** Settled by [0019](decisions/0019-ship-crook-as-a-binary.md). A mise shim hands over to the
+  install folder, checked with another tool; the first release confirms it for crook.
 
 ## Writing a new ADR
 

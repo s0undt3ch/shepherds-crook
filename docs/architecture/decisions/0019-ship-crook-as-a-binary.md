@@ -47,6 +47,10 @@ The release:
 Finding its files:
 
 - The binary finds `plugin/` and `mod/` next to its own executable, in its mise install folder.
+- A debug build (`cargo build`, `cargo run`) has nothing next to it in `target/`. When `plugin/` is not next
+  to the executable, a debug build uses the repository's own `plugin/` and `mod/`, whose path is fixed at
+  compile time. Skill edits then show up without a rebuild. Release builds never fall back; they stop and say
+  the install is broken.
 - On every run it points `~/.local/share/crook/current` at its own `plugin/`.
 - Every crook session starts with `--plugin-dir ~/.local/share/crook/current/plugin`, never the versioned
   folder. When mise prunes the old version, the next crook run has already moved the link. A session started
@@ -104,9 +108,10 @@ on that machine. crook does not copy itself across machines.
 
 Spikes 17 to 21 of the [spike report](../research/2026-11-26-hc-herdr-app-spikes.md).
 
-Not tested:
-
-- the binary finding its own install folder when started through a mise shim.
+Started through a mise shim, a tool runs from its install folder: `python3` started as
+`~/.local/share/mise/shims/python3` showed `~/.local/share/mise/installs/python/3.15.2/bin/python3` in `ps`
+and its executable in `lsof` (2026-11-27). The shim hands over with `exec`, so crook's own executable path is
+its install folder too. Not yet seen with crook itself; the first release confirms it.
 
 ## Pros and cons of the options
 

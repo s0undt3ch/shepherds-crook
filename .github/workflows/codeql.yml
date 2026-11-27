@@ -27,7 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         # Each one builds nothing: CodeQL reads the source as it is.
-        language: [actions, python, rust]
+        language: [actions, javascript-typescript, python, rust]
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4

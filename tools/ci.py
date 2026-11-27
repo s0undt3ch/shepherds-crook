@@ -5,8 +5,11 @@ CI checks for the repository.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -41,6 +44,15 @@ AGENT_BODY_MAX_LINES = 30
 
 BRIEF_HEADINGS = ["Goal", "Why", "Scope", "References", "Done when"]
 RESULT_HEADINGS = ["Progress", "Summary", "Links"]
+
+# The mod (mod plan M1.3, Q34). `mod.json` fields the mod plan names; `overlay` is a dialog with a size.
+MOD_FIELDS = {"place": str, "title": str, "overlay": dict, "palette": list}
+MOD_OVERLAY_FIELDS = {"kind": str, "width": int, "height": int}
+MOD_PALETTE_FIELDS = {"title": str, "command": str, "args": dict, "words": str}
+# Element ids the first view must render, read from `herdr-app check --print-spec`.
+MOD_SPEC_IDS = ("crook-root", "crook-new")
+# Calls of a bare `exec(` (a regular expression's `.exec(` does not count).
+_EXEC_CALL = re.compile(r"(?<![\w.$])exec\s*\(")
 
 _FRONTMATTER = re.compile(r"\A---\n(?P<body>.*?)\n---\n(?P<rest>.*)\Z", re.DOTALL)
 _KEY = re.compile(r"^(?P<key>[A-Za-z_][\w-]*):[ \t]*(?P<value>.*)$")
@@ -378,3 +390,157 @@ def plugin_check(ctx: Context, *, plugin_dir: str = "plugin", since_last_release
     if errors:
         ctx.exit(1)
     ctx.info("plugin-check: ok")
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _check_mod_json(mod: Path, errors: list[str]) -> None:
+    """`mod.json` parses and carries the fields the mod plan names, with the right types."""
+    path = mod / "mod.json"
+    data = _load_json(path, errors)
+    if data is None:
+        return
+    if not isinstance(data, dict):
+        errors.append(f"{path}: must be a JSON object")
+        return
+
+    def fields(where: str, obj: dict, spec: dict[str, type]) -> None:
+        for key, kind in spec.items():
+            if key not in obj:
+                errors.append(f"{path}: {where} is missing `{key}`")
+            elif kind is int and not _is_number(obj[key]) or kind is not int and not isinstance(obj[key], kind):
+                errors.append(f"{path}: {where}.{key} must be a {kind.__name__}")
+
+    fields("the file", data, MOD_FIELDS)
+    if isinstance(data.get("overlay"), dict):
+        fields("overlay", data["overlay"], MOD_OVERLAY_FIELDS)
+    palette = data.get("palette")
+    if isinstance(palette, list):
+        if not palette:
+            errors.append(f"{path}: palette must not be empty")
+        for index, entry in enumerate(palette):
+            if isinstance(entry, dict):
+                fields(f"palette[{index}]", entry, MOD_PALETTE_FIELDS)
+            else:
+                errors.append(f"{path}: palette[{index}] must be an object")
+
+
+def _check_mod_syntax(mod: Path, errors: list[str]) -> None:
+    """`node --check` on every script, read as an ES module whatever the nearest package.json says."""
+    scripts = sorted(mod.glob("*.js"))
+    if not scripts:
+        errors.append(f"{mod}: no .js files")
+    if not scripts or shutil.which("node") is None:
+        if scripts:
+            errors.append("node is not on PATH, so the scripts cannot be syntax-checked")
+        return
+    for script in scripts:
+        # `--check` reads the file as CommonJS or ESM by its syntax; stdin with `--input-type` makes it ESM.
+        result = subprocess.run(  # noqa: S603
+            ["node", "--input-type=module", "--check"],  # noqa: S607
+            input=script.read_text(encoding="utf-8"),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr.strip().splitlines() or ["syntax error"])[0:4]
+            errors.append(f"{script}: node --check failed: {' | '.join(detail)}")
+
+
+def _strip_comment(line: str) -> str:
+    """A line without a `//` comment. Good enough here: the mod has no `//` inside a string on a call line."""
+    return re.sub(r"(^|\s)//.*", "", line)
+
+
+def _check_mod_exec(mod: Path, errors: list[str]) -> None:
+    """Every `exec(` in the mod runs `sh` with `crookArgv(...)`, and the script in lib.js is the exact shim."""
+    for script in sorted(mod.glob("*.js")):
+        lines = [_strip_comment(line) for line in script.read_text(encoding="utf-8").splitlines()]
+        for number, line in enumerate(lines, start=1):
+            for match in _EXEC_CALL.finditer(line):
+                call = line[match.end() :]
+                if not re.match(r"""\s*(["'])sh\1\s*,\s*crookArgv\(""", call):
+                    errors.append(f'{script}:{number}: exec must run `sh` with crookArgv(...), the shim script: {line.strip()}')
+    lib = mod / "lib.js"
+    if lib.is_file() and f'exec {SHIM} "$@"' not in lib.read_text(encoding="utf-8"):
+        errors.append(f"{lib}: SHIM_SCRIPT is not `exec {SHIM} \"$@\"`")
+
+
+def check_mod(mod: Path) -> list[str]:
+    """Run the static checks on a mod folder and return the problems found."""
+    errors: list[str] = []
+    if not mod.is_dir():
+        return [f"{mod}: not a folder"]
+    _check_mod_json(mod, errors)
+    _check_mod_syntax(mod, errors)
+    _check_mod_exec(mod, errors)
+    return errors
+
+
+@group.command
+def mod_check(ctx: Context, *, mod_dir: str = "mod") -> None:
+    """Check the herdr mod's files without herdr-app: syntax, `mod.json` shape and the crook shim.
+
+    Runs `node --check` on each `.js` file; checks that `mod.json` holds `place`, `title`, an `overlay`
+    with `kind`, `width` and `height`, and a non-empty `palette` whose entries hold `title`, `command`,
+    `args` and `words`; and that every `exec(` in the mod runs `sh` with `crookArgv(...)`, whose script
+    in `lib.js` is the exact shim expression (so `CROOK_BIN` and the shim path are the only ways in).
+
+    Args:
+        mod_dir: The mod folder, relative to the repository root.
+    """
+    errors = check_mod(Path(ctx.repo_root) / mod_dir)
+    for error in errors:
+        ctx.error(f"mod-check: {error}", markup=False)
+    if errors:
+        ctx.exit(1)
+    ctx.info("mod-check: ok")
+
+
+def herdr_app_check(mod: Path, herdr_app: str) -> list[str]:
+    """Run `herdr-app check` on a temporary copy of the mod and look for the required element ids."""
+    errors: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="crook-mod-check-") as tmp:
+        copy = Path(tmp) / "mod"
+        shutil.copytree(mod, copy, ignore=shutil.ignore_patterns("gpui-kit.d.ts", "jsconfig.json"))
+        # A throwaway app home, so the check never reads or writes the real one.
+        env = {**os.environ, "HERDR_APP_HOME": str(Path(tmp) / "home")}
+        for args in (["check", str(copy)], ["check", str(copy), "--print-spec"]):
+            try:
+                result = subprocess.run(  # noqa: S603
+                    [herdr_app, *args], capture_output=True, text=True, check=False, env=env, timeout=120
+                )
+            except subprocess.TimeoutExpired:
+                return [f"herdr-app {args[0]} timed out"]
+            if result.returncode != 0:
+                tail = (result.stdout + result.stderr).strip()
+                return [f"herdr-app {args[0]} failed ({result.returncode}): {tail}"]
+        missing = [i for i in MOD_SPEC_IDS if f'"{i}"' not in result.stdout]
+        errors += [f"--print-spec does not show the element id {i}" for i in missing]
+    return errors
+
+
+@group.command
+def mod_herdr_check(ctx: Context, *, mod_dir: str = "mod") -> None:
+    """Load the mod once with `herdr-app check`, on a temporary copy, and look for its element ids.
+
+    `herdr-app check` writes `gpui-kit.d.ts` and `jsconfig.json` into the folder it checks, so the copy is
+    checked and `mod/` itself is never touched. Skips with a message, and exit 0, when `herdr-app` is not on
+    `PATH` (CI, which cannot install it: Q34).
+
+    Args:
+        mod_dir: The mod folder, relative to the repository root.
+    """
+    herdr_app = shutil.which("herdr-app")
+    if herdr_app is None:
+        ctx.info("mod-herdr-check: herdr-app is not installed, skipping")
+        return
+    errors = herdr_app_check(Path(ctx.repo_root) / mod_dir, herdr_app)
+    for error in errors:
+        ctx.error(f"mod-herdr-check: {error}", markup=False)
+    if errors:
+        ctx.exit(1)
+    ctx.info("mod-herdr-check: ok")

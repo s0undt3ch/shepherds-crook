@@ -88,6 +88,16 @@ repos:
         pass_filenames: false
         files: ^(plugin/|tools/ci\.py$)
 
+      # Loads the mod once in herdr-app, on a temporary copy (the check writes into the folder it checks). It
+      # skips with a message when `herdr-app` is not installed; CI also sets SKIP for it (Q34). The checks
+      # that need no app (`toolr ci mod-check`) run in CI's `mod-check` job.
+      - id: mod-herdr-check
+        name: herdr-app check of the mod
+        entry: toolr ci mod-herdr-check
+        language: system
+        pass_filenames: false
+        files: ^(mod/|tools/ci\.py$)
+
       # Unit tests live in a `tests.rs` file next to their module (binary plan, "Crate and module layout").
       - id: no-inline-test-modules
         name: Keep test modules in their own files

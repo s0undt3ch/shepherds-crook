@@ -89,6 +89,10 @@ component_management:
       name: "tools"
       paths:
         - "tools/**"
+    - component_id: mod
+      name: "mod"
+      paths:
+        - "mod/**"
 
 # Files we never measure. Listing them keeps the displayed coverage focused on
 # production code.
@@ -109,5 +113,5 @@ comment:
   behavior: default
   # Post even when there's no coverage delta: one permanent surface for the numbers.
   require_changes: false
-  # One Rust report per OS (2) and the tools.
-  after_n_builds: 3
+  # One Rust report per OS (2), the tools and the mod.
+  after_n_builds: 4

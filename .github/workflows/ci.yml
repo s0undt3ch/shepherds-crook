@@ -62,6 +62,10 @@ jobs:
           # The `pin-github-actions` hook resolves each pinned action's tag via `gh api`;
           # a token raises the rate limit from 60/hr (unauthenticated) to 5000/hr.
           GH_TOKEN: ${{ github.token }}
+          # `herdr-app check` needs the desktop app, which CI does not have (Q34): the hook skips
+          # itself when `herdr-app` is missing, and this says so in the log. `mod-check` below runs
+          # the checks that need no app.
+          SKIP: mod-herdr-check
         run: |
           prek run --all-files --show-diff-on-failure
 
@@ -112,6 +116,63 @@ jobs:
 
       - name: Validate the plugin with Claude Code
         run: .github/claude-code/node_modules/.bin/claude plugin validate --strict plugin/
+
+  mod-check:
+    name: Mod checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      - name: Setup ToolR
+        id: setup-toolr
+        uses: ./.github/actions/setup-toolr
+        with:
+          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|mod-check
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Exact, as in the plugin-check job.
+          node-version: "24.22.3"
+
+      # Syntax of each script, the `mod.json` shape and the crook shim. herdr-app is not installed here.
+      - name: Check the mod files
+        run: toolr ci mod-check
+
+      # The status schema tests inside it skip until `schema/status.schema.json` exists.
+      - name: Run the mod tests with coverage
+        run: |
+          mkdir -p coverage
+          node --test --experimental-test-coverage --test-coverage-include='mod/**' \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination=coverage/mod.lcov \
+            tests/mod
+
+      - name: Upload mod coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          # A rejected upload must fail the job, as test-results uploads do.
+          fail_ci_if_error: true
+          # Same CLI as codecov-notify, not whatever `latest` is today.
+          version: v11.3.2
+          files: coverage/mod.lcov
+          disable_search: true
+          flags: mod
 
   test-linux:
     name: Test (Linux)
@@ -313,6 +374,13 @@ jobs:
         with:
           cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|test-tools
 
+      # The mod-check tests run `node --check`.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Exact, as in the plugin-check job.
+          node-version: "24.22.3"
+
       # `--no-sync`: the action already synced the venv, so a missing or stale one fails fast.
       - name: Run the tools tests with coverage
         run: toolr project venv run --no-sync -- coverage run -m pytest tests/tools
@@ -340,6 +408,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
+      - mod-check
       - test-linux
       - test-macos
       - test-tools
@@ -386,6 +455,7 @@ jobs:
     timeout-minutes: 5
     needs:
       - codecov-notify
+      - mod-check
       - plugin-check
       - pre-commit
       - test-linux

@@ -94,7 +94,7 @@ jobs:
           cache: true
           cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|test|${{ runner.os }}|${{ runner.arch }}
 
-      # The shared `~/.rustup` cache may have been saved by a job that never added this component.
+      # rustup is outside mise's cached folders, so the component may be missing on any run.
       - name: Add the llvm-tools component
         run: rustup component add llvm-tools-preview
 
@@ -124,6 +124,10 @@ jobs:
         with:
           # Use OpenID Connect for secure authentication (no token needed)
           use_oidc: true
+          # A rejected upload must fail the job, as test-results uploads do.
+          fail_ci_if_error: true
+          # Same CLI as codecov-notify, not whatever `latest` is today.
+          version: v11.3.2
           # Without an explicit file the CLI's search also uploads `.d` files, cargo
           # fingerprints and any source file with "coverage" in its name.
           files: target/coverage/cobertura.xml
@@ -176,7 +180,7 @@ jobs:
           cache: true
           cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|test|${{ runner.os }}|${{ runner.arch }}
 
-      # The shared `~/.rustup` cache may have been saved by a job that never added this component.
+      # rustup is outside mise's cached folders, so the component may be missing on any run.
       - name: Add the llvm-tools component
         run: rustup component add llvm-tools-preview
 
@@ -206,6 +210,10 @@ jobs:
         with:
           # Use OpenID Connect for secure authentication (no token needed)
           use_oidc: true
+          # A rejected upload must fail the job, as test-results uploads do.
+          fail_ci_if_error: true
+          # Same CLI as codecov-notify, not whatever `latest` is today.
+          version: v11.3.2
           # Without an explicit file the CLI's search also uploads `.d` files, cargo
           # fingerprints and any source file with "coverage" in its name.
           files: target/coverage/cobertura.xml
@@ -268,6 +276,10 @@ jobs:
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
+          # A rejected upload must fail the job, as test-results uploads do.
+          fail_ci_if_error: true
+          # Same CLI as codecov-notify, not whatever `latest` is today.
+          version: v11.3.2
           files: coverage/tools.xml
           disable_search: true
           flags: tools

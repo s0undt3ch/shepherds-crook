@@ -26,9 +26,13 @@ reviewed and reversed.
 | D16 | No separate schema job: `tests/schema.rs` runs inside the normal test jobs once binary tasks 2.6 and 7.2 add it. | M1.6 asks for schema checks on both OSes, which the test jobs already give. |
 | D17 | Archive, smoke, packslip and mod jobs stay out of `ci.yml` until release M2 to M4. | Their subjects do not exist yet. |
 | D18 | Codecov uploads use OIDC, as v1 did; the repository has no secrets. | `gh secret list` is empty, and v1 never needed a token. |
+| D19 | Coverage uploads fail the job on error and use the same pinned Codecov CLI (v11.3.2) as `codecov-notify`. | Review: a dropped coverage report left CI green while statuses were computed from partial data. |
+| D20 | Codecov components list each module's root file (`src/files.rs` and so on) next to its folder; `main.rs` and `lib.rs` belong to `cli`; `src/testutil.rs` is ignored like tests. | Review: root files fell in no component, so coverage drops there could not fail a status. |
+| D21 | The test jobs still install all of `mise.toml`. | Trimming saves minutes on a cold cache only; revisit if CI time hurts. |
 
 ## Milestones
 
 | Milestone | Status | Commit | Review findings |
 | --- | --- | --- | --- |
 | Foundation: release M0, binary 0 | done | `bb87293` | 1 blocker (runner drain could hang), 3 should-fix (grandchildren survive timeout, bypassable env guard, hook exit codes), 4 nits; all fixed |
+| Release M1: CI | done except M1.6 | `d43a2db`, fixes in the next commit | 0 blockers, 2 should-fix (fail-open coverage uploads, component globs), 4 nits (3 fixed); M1.6 waits for the schema tests (D16) |

@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 21
+title: Show a flock with herdr-app's own space, tab and agent tree
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 15
+  kind: amends
 ---
 
 # Show a flock with herdr-app's own space, tab and agent tree

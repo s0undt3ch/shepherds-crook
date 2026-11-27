@@ -37,6 +37,13 @@ repos:
 
       - id: rumdl
 
+      - id: system-tool
+        alias: adrs-doctor
+        name: adrs doctor
+        args: [adrs, doctor]
+        files: ^(docs/architecture/decisions/|\.adrs\.toml$)
+        pass_filenames: false
+
   - repo: local
     hooks:
       # Hooks backed by toolr commands in tools/. They need the `toolr` binary

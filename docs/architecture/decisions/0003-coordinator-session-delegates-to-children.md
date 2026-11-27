@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 3
+title: "A coordinator session delegates to child sessions"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # A coordinator session delegates to child sessions

@@ -1,7 +1,13 @@
 ---
-status: Rejected
+number: 11
+title: Host the coordinator in a shell
+status: rejected
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 18
+  kind: supersededby
 ---
 
 # Host the coordinator in a shell

@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 23
+title: "crook creates and removes child worktrees"
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # crook creates and removes child worktrees

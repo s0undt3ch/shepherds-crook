@@ -1,10 +1,13 @@
 ---
-status: Proposed
-date: YYYY-MM-DD
-decision-makers: maintainer
+number: {{ number }}
+title: "{{ title }}"
+status: proposed
+date: {{ date }}
+decision-makers:
+- maintainer
 ---
 
-# Short title of the decision
+# {{ title }}
 
 ## Context and problem statement
 

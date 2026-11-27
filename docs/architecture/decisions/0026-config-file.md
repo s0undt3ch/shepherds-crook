@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 26
+title: "crook's settings live in an XDG config file"
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # crook's settings live in an XDG config file

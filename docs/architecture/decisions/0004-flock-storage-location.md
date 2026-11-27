@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 4
+title: "Flock storage: a default location, an optional notes root"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Flock storage: a default location, an optional notes root

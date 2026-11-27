@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 18
+title: The coordinator terminal runs `claude` directly
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 11
+  kind: supersedes
 ---
 
 # The coordinator terminal runs `claude` directly

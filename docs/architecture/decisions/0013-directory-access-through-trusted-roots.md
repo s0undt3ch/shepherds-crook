@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 13
+title: "Directory access through trusted stable roots"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Directory access through trusted stable roots

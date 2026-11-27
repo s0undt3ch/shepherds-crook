@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 16
+title: Preflight checks before using hc
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 20
+  kind: amendedby
 ---
 
 # Preflight checks before using hc

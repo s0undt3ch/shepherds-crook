@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 14
+title: "State in files and hc labels, no database"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # State in files and hc labels, no database

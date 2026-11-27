@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 8
+title: Messages over `hc send`; the results folder is the inbox
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 20
+  kind: amendedby
 ---
 
 # Messages over `hc send`; the results folder is the inbox

@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 25
+title: "Two roles; the coordinator picks each child's model"
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Two roles; the coordinator picks each child's model

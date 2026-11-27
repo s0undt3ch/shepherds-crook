@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 9
+title: A child Stop hook reports completion
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 20
+  kind: amendedby
 ---
 
 # A child Stop hook reports completion

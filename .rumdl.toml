@@ -25,3 +25,7 @@ siblings_only = true
 
 [MD029]
 style = "ordered"
+
+[MD025]
+# ADRs carry `title` in their frontmatter and repeat it as the H1.
+front-matter-title = ""

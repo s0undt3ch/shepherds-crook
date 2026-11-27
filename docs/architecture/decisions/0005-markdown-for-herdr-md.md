@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 5
+title: "Write plain GitHub Markdown for herdr-md"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Write plain GitHub Markdown for herdr-md

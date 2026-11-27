@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 19
+title: "Ship crook as a binary, installed by mise, that installs its herdr mod"
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Ship crook as a binary, installed by mise, that installs its herdr mod

@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 2
+title: "Build on herdr-core and herdr-app"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Build on herdr-core and herdr-app

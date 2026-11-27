@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 10
+title: "Human input goes through hc's `blocked` status"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Human input goes through hc's `blocked` status

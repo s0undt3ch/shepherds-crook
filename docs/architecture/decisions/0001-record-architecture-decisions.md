@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 1
+title: "Record architecture decisions with MADR"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Record architecture decisions with MADR

@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 24
+title: "File formats for the roster, briefs, results and delivery marks"
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # File formats for the roster, briefs, results and delivery marks

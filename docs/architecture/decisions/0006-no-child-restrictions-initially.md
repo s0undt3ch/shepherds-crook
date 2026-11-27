@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 6
+title: "No access restrictions for children, initially"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # No access restrictions for children, initially

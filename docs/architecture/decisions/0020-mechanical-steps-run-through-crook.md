@@ -1,7 +1,21 @@
 ---
-status: Accepted
+number: 20
+title: Mechanical steps run through `crook` subcommands
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 7
+  kind: amends
+- target: 8
+  kind: amends
+- target: 9
+  kind: amends
+- target: 16
+  kind: amends
+- target: 17
+  kind: amends
 ---
 
 # Mechanical steps run through `crook` subcommands

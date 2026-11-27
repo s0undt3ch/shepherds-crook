@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 12
+title: "Keep child traffic out of the notes root"
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Keep child traffic out of the notes root

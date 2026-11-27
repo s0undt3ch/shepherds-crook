@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 7
+title: Launch children with `hc run`, crook's agents and brief files
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 20
+  kind: amendedby
 ---
 
 # Launch children with `hc run`, crook's agents and brief files

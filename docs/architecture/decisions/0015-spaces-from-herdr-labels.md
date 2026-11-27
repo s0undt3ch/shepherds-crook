@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 15
+title: Create herdr-app spaces with `herdr.space` labels
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 21
+  kind: amendedby
 ---
 
 # Create herdr-app spaces with `herdr.space` labels

@@ -1,7 +1,13 @@
 ---
-status: Accepted
+number: 17
+title: Resume children from a roster after a restart
+status: accepted
 date: 2026-11-26
-decision-makers: maintainer
+decision-makers:
+- maintainer
+links:
+- target: 20
+  kind: amendedby
 ---
 
 # Resume children from a roster after a restart

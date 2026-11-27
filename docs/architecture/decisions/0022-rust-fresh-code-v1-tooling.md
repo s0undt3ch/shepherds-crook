@@ -1,7 +1,10 @@
 ---
-status: Accepted
+number: 22
+title: "Rust, fresh code on main, v1's tooling reused"
+status: accepted
 date: 2026-11-27
-decision-makers: maintainer
+decision-makers:
+- maintainer
 ---
 
 # Rust, fresh code on main, v1's tooling reused

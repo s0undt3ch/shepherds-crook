@@ -72,9 +72,9 @@ already has are marked.
 
 | v1 path | Verdict | What changes |
 | --- | --- | --- |
-| `.github/packslip.toml` | Keep | Already matches 0020's manifest. Keep the header comment that names `toolr ci packslip-check` |
+| `.github/packslip.toml` | Adapt | Restore it from `backup_crook_v1` (M0.6). Set the bin to `crook` and add the completion `exec` resource (0020). Keep the header comment that names `toolr ci packslip-check` |
 | `.github/env` | Keep (on `main`) | None. It names `tests/tools/precommit/test_toolr_pins.py`, which `main` lacks; M0 brings it back |
-| `.github/workflows/release.yml` | Adapt | Do not rename it: the packslip identity pins `release.yml@refs/heads/main`. The release commit also owns the plugin and mod version files (see "Versioning"). `ARCHIVE_PATTERNS` follows the target list |
+| `.github/workflows/release.yml` | Adapt | Do not rename it: the packslip identity pins `release.yml@refs/heads/main`. The release commit also owns the plugin's `plugin.json` (see "Versioning"). `ARCHIVE_PATTERNS` follows the target list |
 | `.github/workflows/_build-binary-archive.yml` | Adapt | Do not rename it: provenance names it. Drop the rusqlite `CC_<triple>=musl-gcc` export. Replace the inline staging with `toolr ci stage-archive`, which adds `plugin/` and `mod/` next to `crook` |
 | `.github/workflows/_smoke-binary-archive.yml` | Adapt | Drop the `hook PreToolUse` → `ask` check. Add the 0019 and 0020 checks listed in M4 |
 | `.github/workflows/install-smoke.yml` | Adapt | `mise use -g` with a scratch mise home, run through the shim, check `plugin/` and `mod/` in the install folder, run `crook setup` on scratch homes |
@@ -90,7 +90,7 @@ already has are marked.
 | `.config/nextest.toml` | Adapt | Keep the `ci` JUnit profile. Drop the `release-timing` group: its filters name v1 tests |
 | `cliff.toml` | Keep | The first release, `0.1.0-rc.1`, uses a commit range that starts after `714568f`; later releases rely on tags (Q33) |
 | `tools/ci.py` | Adapt | Keep `targets` and `packslip-check`. Add `stage-archive`, `archive-check` and `plugin-check` |
-| `tools/release.py` | Adapt | `bump` also writes the plugin and mod version files |
+| `tools/release.py` | Adapt | `bump` also writes `plugin.json`'s `version`. The mod has no version file |
 | `tools/precommit/*` | Keep (on `main`) | None |
 | `tools/pyproject.toml`, `tools/uv.lock` | Adapt (on `main`) | Add back `coverage`, `packaging` and `pytest`; relock |
 | `tests/conftest.py`, `tests/tools/ci/*`, `tests/tools/release/*`, `tests/tools/precommit/*` | Adapt | Update the packslip and bump tests for the new checks |
@@ -116,11 +116,12 @@ herdr-app's. Drop it.
 ## Versioning
 
 - Versions are `X.Y.Z` or `X.Y.Z-rc.N`, as v1's `toolr release bump` enforces (`tools/release.py`).
-- One version must reach the binary, `plugin/` and `mod/`. The session hooks compare plugin versions (0019) and
-  `crook setup` writes `.crook-version` (0019). Where each part stores it is for the binary and plugin plans.
-- `toolr release bump` writes every file that holds the version. The release commit may change only those files
-  plus `CHANGELOG.md`; v1's `release.yml` enforces that list, so the list grows.
-- A test in `tests/tools/release/` fails when the versions in those files differ.
+- The release bumps two things: the binary's version (`Cargo.toml`, as in v1) and `version` in `plugin.json`. The
+  mod has no version file. Its `.crook-version` marker is written by `crook setup` from the binary's version
+  (0019), so the mod follows the binary with no stamp.
+- `toolr release bump` writes every file that holds a version. The release commit may change only those files
+  plus `CHANGELOG.md`; v1's `release.yml` enforces that list, so the list grows by `plugin.json`.
+- A test in `tests/tools/release/` fails when the binary's version and `plugin.json`'s `version` differ.
 - The release stamps `version` in `plugin.json`; debug builds use `0.0.0-dev` (Q17). `toolr release bump` writes
   the stamp.
 - The first release is `0.1.0-rc.1`. Its changelog starts after `714568f`, v1's last commit, through an explicit
@@ -141,6 +142,7 @@ Must land before any other plan's first milestone can be checked in CI.
 | M0.3 Restore the tools venv and its tests | `tools/pyproject.toml`, `tools/uv.lock`, `tests/conftest.py`, `tests/tools/precommit/*`, `.coveragerc` | 0022 | `toolr project venv run -- coverage run -m pytest tests/tools` | Passes; `test_toolr_pins.py` exists again, as `.github/env` claims |
 | M0.4 Restore Rust hooks | `.pre-commit-config.yaml`, `.rustfmt.toml`, `.github/actions/setup-pre-commit/action.yml` | 0022 | `prek run --all-files` | rustfmt, clippy, cargo-lock and no-inline-test-modules run; they pass on an empty crate |
 | M0.5 Renovate | `renovate.json5` | 0022 | Renovate's config validator, or the Renovate dashboard after merge | Rust, cargo and packslip rules back |
+| M0.6 Restore the packslip manifest | `.github/packslip.toml` | 0020, 0022 | Copy from `backup_crook_v1`; `toolr ci packslip-check` once M4.4 exists, and until then the TOML parses | The file is on `main` with `bin = ["crook"]` and the completion `exec` resource, and no `skill` resources |
 
 ### M1. CI for the binary
 
@@ -222,7 +224,7 @@ Needs the binary plan's `crook new`, `open`, `spawn` and `hook`. The design is i
 
 | Task | Files | ADRs | Check | Done when |
 | --- | --- | --- | --- | --- |
-| M5.1 Run layout and guards | `scripts/e2e/lib.sh`, `scripts/e2e/setup.sh` | 0016, 0020 | `tests/tools/test_e2e_scripts.py` with stub `hc`, `claude` and `crook` | `setup.sh` makes a run under `$TMPDIR/crook-e2e-run.*` and a socket folder under `/tmp/crook-e2e-rt.*`, and writes `config/crook/config.toml` with a cheap `coordinator_model` (Q32); `load_run` refuses an env file that points elsewhere |
+| M5.1 Run layout and guards | `scripts/e2e/lib.sh`, `scripts/e2e/setup.sh` | 0016, 0020, 0026 | `tests/tools/test_e2e_scripts.py` with stub `hc`, `claude` and `crook` | `setup.sh` makes a run under `$TMPDIR/crook-e2e-run.*` and a socket folder under `/tmp/crook-e2e-rt.*`, and writes `config/crook/config.toml` with a cheap `coordinator_model` (Q32); `load_run` refuses an env file that points elsewhere |
 | M5.2 Scrubbed wrappers | `scripts/e2e/hc.sh`, `scripts/e2e/crook.sh` | 0016, 0019, 0020 | Stub test logs each wrapped call's environment | Every call has the run's `HC_SESSION`, `XDG_*` and `HERDR_APP_HOME`; none has a variable from 0020's list; the wrapper refuses when `HC_SESSION` is not the run's |
 | M5.3 Staged install and fake shim | `scripts/e2e/install.sh` | 0019 | Stub test | Unpacks `stage-archive` output to `$RUN/install/<version>/`; writes `$RUN/shims/crook`, which runs the version named in `$RUN/active` |
 | M5.4 Core start check | `scripts/e2e/core_env.sh` | 0020 | Real hc, local | After crook starts the scratch core, a probe terminal running `env` shows none of 0020's variables |
@@ -235,7 +237,7 @@ Needs the binary plan's `crook new`, `open`, `spawn` and `hook`. The design is i
 | Task | Files | ADRs | Check | Done when |
 | --- | --- | --- | --- | --- |
 | M6.1 Rewrite the skill | `.claude/skills/crook-e2e/SKILL.md` | 0022 | A full local run driven by Claude | Limits, setup, steps, checks, mistakes and report sections cover hc, not herdr |
-| M6.2 Scenarios S1 to S10 | the skill, `scripts/e2e/*` | see scenarios | Each scenario's pass check | Every scenario passes, or fails with evidence of a crook bug; S5 records whether hc holds or drops notes while the coordinator is blocked (Q28) |
+| M6.2 Scenarios S1 to S13 | the skill, `scripts/e2e/*` | see scenarios | Each scenario's pass check | Every scenario passes, or fails with evidence of a crook bug; S5 records whether hc holds or drops notes while the coordinator is blocked (Q28); the E1 to E7 mapping is below |
 | M6.3 Rerun spikes 14 and 15 through crook | the skill | 0020 | S4, S5 and S6 | 0020's "after the first build" item is done |
 
 ### M7. Release and install smoke
@@ -338,8 +340,8 @@ Linux runner is not checked; Q34 says CI cannot run it, so T2 stays local.
 | # | Scenario | ADRs, spikes | Tier | Pass when |
 | --- | --- | --- | --- | --- |
 | S1 | Core start with the scrub | 0016, 0020; spike 23 | T2, T3 | No core runs for `HC_SESSION`; `crook new` starts one; a probe terminal's `env` has none of 0020's variables; Claude children show no "Transcript saving is off" line |
-| S2 | New and open | 0015, 0018, 0020, 0021, 0024; Q1, Q2, Q7, Q8, Q18, Q21 | T2, T3 | `crook new <slug>` starts it, and a second `new` with the same slug is refused; `roster.json` matches 0024, validates against its schema and has `started` set after the first launch; the coordinator's argv has `--add-dir <notes root>/<date>-<slug>` and `--settings` before `--agent crook:coordinator`, and the configured `coordinator_model`; `hc ls` shows the coordinator with `crook.flock`, `crook.version`, `herdr.space`, `herdr.tab`; `crook open` succeeds with no herdr-app watching the core, and on a live coordinator only redoes the renames |
-| S3 | Spawn | 0007, 0020, 0021, 0025; Q3, Q11, Q14, Q15 | T2, T3 | Roster entry with name, model, session id, brief; `hc ls` shows the child, named `<slug>.<child>`, under the coordinator with `crook.flock` and no `herdr.*` label; `ps` argv has `--plugin-dir <data>/crook/current/plugin`, `--agent crook:child`, `--model haiku`, `--session-id <id>` and the prompt last, and the prompt names the brief and the result path; `<id>.jsonl` exists; a launch that fails leaves no roster entry |
+| S2 | New and open | 0004, 0015, 0018, 0020, 0021, 0024; Q1, Q2, Q7, Q8, Q18, Q21 | T2, T3 | `crook new <slug>` starts it, and a second `new` with the same slug is refused; `roster.json` matches 0024, validates against its schema and has `started` set after the first launch; the coordinator's argv has `--add-dir <notes root>/<date>-<slug>` and `--settings` before `--agent crook:coordinator`, and the configured `coordinator_model`; `hc ls` shows the coordinator with `crook.flock`, `crook.version`, `herdr.space`, `herdr.tab`; `crook open` succeeds with no herdr-app watching the core, and on a live coordinator only redoes the renames |
+| S3 | Spawn | 0007, 0013, 0020, 0021, 0025; Q3, Q11, Q14, Q15, Q21, Q36; spikes 10, 16 | T2, T3 | Roster entry with name, model, session id, brief; `hc ls` shows the child, named `<slug>.<child>`, under the coordinator with `crook.flock` and no `herdr.*` label; `ps` argv has `--plugin-dir <data>/crook/current/plugin`, `--agent crook:child`, `--model haiku`, `--session-id <id>` and the prompt last, and the prompt names the brief and the result path; `<id>.jsonl` exists; a launch that fails leaves no roster entry; the coordinator's `crook spawn`, called through the shim form, runs with no Bash permission prompt, because `crook open` passed `--settings` (Q21). Low priority: a trust dialog answered with `hc keys <t> down enter` still delivers the first prompt (spike 16, Q36); `--add-dir` on an already trusted root starts with no prompt (spike 10, 0013) |
 | S4 | Stop-hook delivery | 0008, 0009; spike 14 | T3 | The child writes `results/<child>.md`; the coordinator's screen (`hc read`) shows an `<hc from=…>` line with that path; `.delivered.json` holds the SHA-256 of the whole file (Q27); a turn that changes nothing sends nothing |
 | S5 | Blocked coordinator, then rescan | 0008, 0010; spike 14; Q28 | T3 | With the coordinator on an AskUserQuestion, a child's update is sent and the test records whether hc holds or drops it; the mark matches that outcome (held: moves on delivery; dropped: stays old); after the answer, the next prompt's hook output names the result and the mark updates. Until the result is in, the coordinator asks about a model step-up in plain text |
 | S6 | Core stop and resume | 0017, 0018, 0020; spike 15 | T2, T3 | `hc server stop` mid-task; `crook open` resumes the coordinator with `--resume <id>`; its SessionStart hook resumes each `active` child under its original name and skips `done` ones, and starts no core (Q25); `roster.json` has no new entries; the child's checklist continues |
@@ -347,6 +349,24 @@ Linux runner is not checked; Q34 says CI cannot run it, so T2 stays local.
 | S8 | Worktree rules | 0023; spike 26; Q13 | T2, T3 | `spawn --repo` makes `<repo>/.worktrees/<flock>-<child>` on `crook/<flock>/<child>`; `stop` keeps a dirty worktree, keeps an unpushed one, removes a pushed or merged one; the branch always remains; each refusal says why. Pushed means a remote-tracking branch contains the tip; merged means the tip is an ancestor of the main worktree's branch, and a branch with no new commits counts as merged (Q13) |
 | S9 | Model change on resume | 0025; spike 26; Q10 | T2 (argv), T3 (memory) | `crook resume <child> --model sonnet` is refused while the child works; otherwise it ends the child's terminal without marking it done, updates the roster's model and resumes; `ps` argv has `--model sonnet --resume <id>`; the child recalls a word from before |
 | S10 | Stop and close | 0018, 0020, 0023; Q6 | T2, T3 | A stopped child is `done` and is not resumed by S6's path; `crook close` kills the coordinator, marks the roster done, removes clean worktrees and prints a `warning:` line for each worktree it keeps (S8's rules) |
+| S11 | Blocked child | 0010; spike 3 | T3 | A child briefed to ask with AskUserQuestion shows `blocked` in `hc ls`; the coordinator gets hc's blocked note, names the child and the question to the maintainer, and does not answer for them (its transcript has no `hc send` to that child that carries an answer) |
+| S12 | Step-up question | 0025; Q28 | T3 | A child's result shows `status: failed`; the coordinator asks the maintainer in plain text, not with AskUserQuestion, before it runs `crook resume <child> --model`; nothing is resumed on a new model until the maintainer says yes; after a yes, S9's checks hold |
+| S13 | Mod install and upgrade | 0019; Q22; Mod M5.2 | T2 | The six steps in Mod M5.2 pass against a scratch `HERDR_APP_HOME`: fresh setup; refusal on an unmarked `mods/crook/`; replace over an older marker; refusal over a newer marker; other commands leave the mod alone; `herdr-app check` passes (local only, Q34). The steps live in the mod plan, not here |
+
+### Plugin e2e steps to scenarios
+
+The plugin plan's steps E1 to E7 (P6.1) run as these scenarios. The plugin plan keeps each step's own checks, such
+as the README listing; the scenario supplies the run.
+
+| Plugin step | Scenario |
+| --- | --- |
+| E1 Plan and spawn two children, one with `--repo` | S2, S3, S8 |
+| E2 Both children finish | S4 |
+| E3 A child asks with AskUserQuestion | S11 |
+| E4 A failed child, step-up after a yes | S12, S9 |
+| E5 Core stop, then `crook open` | S6 |
+| E6 `crook stop` with uncommitted work, then after a push | S8, S10 |
+| E7 `current` moves mid-session | S7 |
 
 ### Local checks in the real app
 

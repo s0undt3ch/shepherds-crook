@@ -89,3 +89,12 @@ The binary planner settled these itself while folding in batch 1. The maintainer
 | 41 | When are session records over 30 days old pruned (Q17)? | On `setup` and `doctor --fix`. | decided |
 | 42 | How long may each hook run inside its timeout (Q25)? | 100 seconds for session-start, 20 for the others, leaving room before the 120 and 30 second timeouts. | decided |
 | 43 | What is `folder` in `status --json`? | An absolute path; the mod shows its last part. | decided: aligned in the binary and mod plans |
+
+## Batch 3: fixes from the coverage audit (2026-11-27)
+
+The maintainer approved these fixes after an audit of the ADRs against the plans.
+
+| # | Question | Decision | Status |
+| --- | --- | --- | --- |
+| 44 | What do `stop` and `close` do on a child that is already `done`, or a flock already closed? | They retry removing any worktree kept earlier, with the same clean-and-pushed-or-merged rule (0023), and print the same `warning:` line if it is still kept. A second `close` is no longer a no-op. | decided |
+| 45 | What is the slug and child-name rule? | `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 40 characters, for slugs and child names alike. | decided |

@@ -47,8 +47,8 @@ Every command depends on the rules in this section. Where an ADR is silent, the 
 
 ### Names and ids
 
-- A slug and a child name match `[a-z0-9-]+`, start with a letter or digit, and are at most 40 characters
-  (Q12). They end up in paths, branch names, hc names and labels.
+- A slug and a child name match `^[a-z0-9]+(-[a-z0-9]+)*$` and are at most 40 characters (Q12, Q45). So they
+  start and end with a letter or digit and have no double dash. They end up in paths, branch names, hc names and labels.
 - The flock id is the slug (Q2). The folder is `<yyyy-mm-dd>-<slug>` (0004). Slugs are unique across dates and
   across closed flocks: `new` refuses a slug that any folder already uses, and `open` finds the one folder that
   ends in `-<slug>` and whose `roster.json` says `"flock": "<slug>"`.
@@ -281,9 +281,9 @@ prove the task; write them first.
 - What: validate slugs and child names; build hc names, labels, branch and worktree names, and the herdr space
   and tab ids.
 - Files: `src/names.rs`.
-- ADR: 0015, 0021, 0023; the hc name rule is Q3, the length cap Q12.
-- Tests: valid and invalid names (empty, upper case, `/`, `..`, leading `-`, too long); every derived name for
-  one example.
+- ADR: 0015, 0021, 0023; the hc name rule is Q3, the length cap Q12, the character rule Q45.
+- Tests: valid and invalid names (empty, upper case, `/`, `..`, leading `-`, trailing `-`, `--`, 41 characters;
+  40 is valid), for slugs and for child names; every derived name for one example.
 - Done when: no other module formats one of these strings.
 
 ### Milestone 2: flock files and worktrees
@@ -537,12 +537,16 @@ prove the task; write them first.
 - What: live terminals first: end the coordinator with `hc kill`, which ends its children (spike 4, Q6). Then
   mark every child and the coordinator `done` under the lock (0018, 0020). Then remove each child's worktree
   when safe (2.5), and print a `warning:` line for each worktree it keeps, with the reason (Q6). The
-  coordinator skill runs `close` only when the maintainer asks (Q6, area 2).
+  coordinator skill runs `close` only when the maintainer asks (Q6, area 2). On a flock that is already closed,
+  `close` still exits 0 and kills nothing, but it retries removing any worktree kept earlier, with the same
+  rule (clean, and pushed or merged: 0023, 2.5), and prints the same `warning:` line for each one it still
+  keeps (Q44).
 - Files: `src/cmd/close.rs`.
-- ADR: 0018, 0020, 0023; Q6.
+- ADR: 0018, 0020, 0023; Q6, Q44.
 - Tests: roster states after close; worktree removal tried per child; unsafe worktrees kept, each with a
-  `warning:` line;
-  closing twice is a no-op with exit 0.
+  `warning:` line; a second `close` after the worktree was pushed removes it and exits 0; a second `close` with
+  the worktree still dirty prints the `warning:` line again and exits 0; a second `close` with nothing kept
+  prints nothing and exits 0.
 - Done when: a closed flock is skipped by `resume` and refused by `open` and `spawn`.
 
 ### Milestone 6: children
@@ -568,11 +572,15 @@ prove the task; write them first.
 #### 6.2 `crook stop <child>`
 
 - What: mark the child `done` under the lock first, so a racing resume does not bring it back; then `hc kill`
-  its terminal if live; then remove its worktree if safe (2.5), else keep it and say why.
+  its terminal if live; then remove its worktree if safe (2.5), else keep it and print a `warning:` line with
+  the reason, as `close` does (Q6). On a child that is already `done`, `stop` kills nothing but still retries
+  removing a worktree kept earlier, with the same rule (clean, and pushed or merged: 0023), and prints the same
+  `warning:` line if it is still kept (Q44).
 - Files: `src/cmd/stop.rs`.
-- ADR: 0020, 0023.
-- Tests: order of roster write and kill; not-live child still marked done; unsafe worktree kept with a reason
-  on stdout; unknown child refused.
+- ADR: 0020, 0023; Q6, Q44.
+- Tests: order of roster write and kill; not-live child still marked done; unsafe worktree kept with a
+  `warning:` line; unknown child refused; a second `stop` on a `done` child removes a worktree that is now
+  pushed, and prints the `warning:` line again for one that is still dirty.
 - Done when: a stopped child never appears in a later resume.
 
 #### 6.3 `crook resume [<child>] [--model <model>]`
@@ -732,12 +740,13 @@ prove the task; write them first.
   the staged one in, delete the old. No other command refreshes the mod by itself (Q22); `doctor --fix` calls
   this routine. Then move `current` (3.3). Create the flocks root. For the trust step of 0013, print the
   command that trusts each root (the flocks root, and the notes root when set) and run none, so CI can skip
-  it (Q22).
+  it (Q22). Prune the per-session version records older than 30 days under `XDG_STATE_HOME` (8.2; Q17, Q41).
 - Files: `src/cmd/setup.rs`.
-- ADR: 0013, 0019; Q22.
+- ADR: 0013, 0019; Q17, Q22, Q41.
 - Tests: fresh install; reinstall over a marked folder; refusal on an unmarked folder; refusal on a newer
   marker; the staged folder has no marker until the copy ends; the staging folder never appears under `mods/`;
-  `HERDR_APP_HOME` honoured; one trust command printed per root and none run.
+  `HERDR_APP_HOME` honoured; one trust command printed per root and none run; a session record older than 30
+  days is pruned and a newer one kept.
 - Done when: `crook setup` twice in a row leaves one identical `mods/crook/`.
 
 #### 9.2 `crook doctor [--fix]`
@@ -753,11 +762,13 @@ prove the task; write them first.
   - `current` points at this binary's install folder (0019);
   - config path read and any error in it (0026);
   - each repository named in an `active` roster has `.worktrees/` ignored (2.5, 0023).
-- Fix: `--fix` runs `setup`'s mod install and the link move; the rest are report-only.
+- Fix: `--fix` runs `setup`'s mod install and the link move, and prunes session records older than 30 days
+  under `XDG_STATE_HOME` (Q17, Q41); the rest are report-only.
 - Files: `src/cmd/doctor.rs`.
-- ADR: 0016, 0019, 0023, 0026; Q22, Q23.
+- ADR: 0016, 0019, 0023, 0026; Q17, Q22, Q23, Q41.
 - Tests: each check passing and failing with fakes; `--json` carries the three resolved paths; a missing shim
-  warns with `CROOK_BIN` as the fix; `--fix` repairs the mod and the link and nothing else.
+  warns with `CROOK_BIN` as the fix; `--fix` repairs the mod and the link, prunes session records older than 30
+  days (a newer one stays) and changes nothing else.
 - Done when: a broken link and a missing mod both show as fail and are fixed by `--fix`.
 
 ### Milestone 10: completion

@@ -620,11 +620,13 @@ Each task lists what, files, ADRs, how it is checked, and when it is done.
 
 #### P6.1 Plugin steps in the scratch-core e2e
 
-- What: steps E1 to E7, added to area 4's harness.
+- What: steps E1 to E7 run as scenarios S2 to S4 and S6 to S12 of the release plan's M6.2, as its "Plugin e2e steps
+  to scenarios" table maps them: E1 to S2, S3 and S8; E2 to S4; E3 to S11; E4 to S12 and S9; E5 to S6; E6 to S8 and
+  S10; E7 to S7.
 - Files: area 4's e2e skill and scripts.
 - ADRs: 0008 to 0010, 0017 to 0021, 0023, 0025.
 - Check: one full run, pass or fail recorded per step with evidence.
-- Done when: all seven steps pass in one run.
+- Done when: the scenarios in that table pass in one run, so all seven steps pass.
 
 ## Dependencies on the other areas
 

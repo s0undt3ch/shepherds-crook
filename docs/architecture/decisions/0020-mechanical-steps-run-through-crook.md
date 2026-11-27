@@ -49,6 +49,7 @@ Chosen option: `crook` subcommands.
 | `crook resume [<child>]` | The coordinator's SessionStart hook, or the maintainer | Resumes one child, or every `active` child with no live terminal, under its original name (0017) |
 | `crook status --json` | The mod and the coordinator | Merges the roster, `hc ls` labels and result marks |
 | `crook hook <event>` | The plugin's hook config | See below |
+| `crook completion print <shell>` | mise, through the packslip manifest's `completion` resource | Prints tab completion for bash, zsh and fish, so the slugs and child names above complete |
 
 `new` and `open` stay separate so a mistyped slug fails instead of creating an effort.
 
@@ -117,6 +118,6 @@ Looked at in v1 and left out:
 - Typed tools (`$.tool.register`) backed by a JSON verb interface. `crook spawn` takes three plain arguments
   and builds the risky command itself, so a typed tool adds a TypeScript layer and a second interface for
   little gain.
-- `list`, `wipe` and `completion`: not needed for the steps above. Add them when they are.
+- `list` and `wipe`: not needed for the steps above. Add them when they are.
 
 When this is accepted, add "amended by 0020" notes to 0007, 0008, 0009, 0016 and 0017.

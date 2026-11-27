@@ -11,6 +11,9 @@ rust = { version = "1.99.1", profile = "minimal", components = "clippy,rustfmt" 
 "aqua:taiki-e/cargo-llvm-cov" = "0.9.1"
 prek = "0.5.11"
 uv = "0.13.9"
+# The mod and its tests, and the Claude Code CLI that validates the plugin. Exact, because an LTS
+# bump changes the bundled npm, which decides how install scripts are handled.
+node = "24.22.3"
 git-cliff = "2.14.2"
 typos = "1.52.2"
 rumdl = "v0.3.5"

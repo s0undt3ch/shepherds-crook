@@ -67,6 +67,7 @@ reviewed and reversed.
 | D57 | The mod's own tests run in the `mod-check` job with Node's built-in coverage (`--test-coverage-include='mod/**'`, lcov), uploaded under flag `mod`. `.codecov.yml` gains a `mod` component and `after_n_builds` 4. The status schema test skips until `schema/status.schema.json` exists; the job needs no change when it does. The test-tools job also gets Node 24.22.3, because the new tests run `node --check`. | Release M3.4. No type check against a `herdr.d.ts` stub: the mod plan adds none, so the stub is not written (M3's note). |
 | D58 | CodeQL's matrix gains `javascript-typescript`. | Release M3.6. `tests/` is already in `paths-ignore`, so the mod's tests are skipped. Not run on GitHub: the workflow's first run decides. |
 | D59 | Mod tests run as `node --test 'tests/mod/*.test.mjs'`, not `node --test tests/mod`. | Node 24, pinned in CI, reads a bare folder argument as a single file and fails; the local Node 26 hid this. |
+| D60 | Node is pinned in `mise.toml` (24.22.3), and CI's three Node jobs get it from mise instead of `actions/setup-node`. | The maintainer asked for it; a local Node 26 against CI's Node 24 hid a failing test command. |
 
 ## Milestones
 

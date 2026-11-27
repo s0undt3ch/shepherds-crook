@@ -105,11 +105,14 @@ jobs:
       # native binary arrives by the package's postinstall, which `allowScripts` in
       # .github/claude-code/package.json allows and `--strict-allow-scripts` insists on.
       # `claude plugin validate` needs no login (checked with an empty HOME).
+      # Node comes from mise.toml, so CI runs the same version as a local `mise install`.
       - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
-          # Exact: an LTS bump changes the bundled npm, which decides how install scripts are handled.
-          node-version: "24.22.3"
+          version: ${{ env.MISE_VERSION }}
+          install_args: node
+          cache: true
+          cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|node|plugin-check|${{ runner.os }}|${{ runner.arch }}
 
       - name: Install the Claude Code CLI
         run: npm ci --no-audit --no-fund --strict-allow-scripts --prefix .github/claude-code
@@ -143,11 +146,14 @@ jobs:
         with:
           cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|mod-check
 
+      # Node comes from mise.toml, so CI runs the same version as a local `mise install`.
       - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
-          # Exact, as in the plugin-check job.
-          node-version: "24.22.3"
+          version: ${{ env.MISE_VERSION }}
+          install_args: node
+          cache: true
+          cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|node|mod-check|${{ runner.os }}|${{ runner.arch }}
 
       # Syntax of each script, the `mod.json` shape and the crook shim. herdr-app is not installed here.
       - name: Check the mod files
@@ -376,11 +382,14 @@ jobs:
           cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|test-tools
 
       # The mod-check tests run `node --check`.
+      # Node comes from mise.toml, so CI runs the same version as a local `mise install`.
       - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
-          # Exact, as in the plugin-check job.
-          node-version: "24.22.3"
+          version: ${{ env.MISE_VERSION }}
+          install_args: node
+          cache: true
+          cache_key_prefix: ${{ env.CACHE_SEED }}|mise|${{ env.MISE_VERSION }}|node|test-tools|${{ runner.os }}|${{ runner.arch }}
 
       # `--no-sync`: the action already synced the venv, so a missing or stale one fails fast.
       - name: Run the tools tests with coverage

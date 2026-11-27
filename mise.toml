@@ -11,6 +11,7 @@ shellcheck = "0.11.0"
 jactionlint = "v2.6.0"
 gh = "2.105.0"
 "aqua:s0undt3ch/ToolR" = "0.37.0"
+"github:joshrotenberg/adrs" = "0.13.0"
 
 [settings]
 # `mise install` writes and refreshes `mise.lock`; commit it.

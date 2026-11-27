@@ -456,3 +456,26 @@ logged the path it chose. `CROOK_BIN` pointed at a fake dev `crook` that logged 
 
 All three replied with their word. `hc run` has no option for one variable; the API's `terminal.run` takes an
 `env` map (`hc schema`), but the `env` prefix in the argv is enough.
+
+## 24. An effort's tree in the maintainer's real herdr-app (2026-11-27)
+
+Three Haiku sessions in the real core, folders under `$TMPDIR/crook-e2e-tree.*`:
+
+- `crookt-coord`: `--no-parent`, `herdr.space=crook-treetest`, `herdr.tab=crook-treetest-coord`;
+- `crookt-kid1`: `--parent crookt-coord`, no `herdr.*` labels;
+- `crookt-kid2`: `--parent crookt-coord`, `herdr.space=crook-treetest`, `herdr.tab=crook-treetest-kid2`.
+
+Seen with `herdr-app shot` and `herdr-app ls`:
+
+- The Agents sidebar drew `coord` with `crookt-kid1` and `crookt-kid2` under it, with tree lines, whether or
+  not the child had a tab. The tree comes from `parent` alone (`mods/agents/main.js:173-183`).
+- The space was named after the coordinator's folder (`coord`), not the effort; it needs `space.rename`
+  ([0015](../decisions/0015-spaces-from-herdr-labels.md)).
+- Tabs were named from each session's title ("COORD reply request", "KID2 reply request").
+- `crookt-kid2` got its own tab at once. `crookt-kid1` had none.
+- Clicking a sub-agent row with no pane peeks at it (`mods/agents/main.js:202`): an overlay with the session
+  and a "keep" button. `terminal.keep` (the button) gave `crookt-kid1` a tab named `crookt-kid1` in the same
+  space, and hc recorded `herdr.space` and `herdr.tab` labels on it, so the tab stays.
+- The trust dialog in each child reached the coordinator as `<hc>t17 crookt-kid1 is blocked (permission)…</hc>`.
+
+`space.close` ended all three; they were then removed with `hc rm`.

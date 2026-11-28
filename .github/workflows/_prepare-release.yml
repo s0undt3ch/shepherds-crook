@@ -1,6 +1,6 @@
 # Prepares a release on a local commit and hands it on as patch artifacts; nothing is pushed. `release.yml`
 # calls it with the version to release; `ci.yml` calls it with none, so every CI run prepares a release with a
-# dev version (`toolr release dev-version`) and builds on it, as ToolR does (D124).
+# dev version (`toolr release bump` with no version) and builds on it, as ToolR does (D124).
 name: Prepare Release
 
 on:
@@ -10,7 +10,7 @@ on:
         required: false
         type: string
         default: ''
-        description: 'X.Y.Z or X.Y.Z-rc.N; empty prepares a dev version after the latest tag'
+        description: 'X.Y.Z or X.Y.Z-rc.N; empty prepares a dev version from the latest tag, as ToolR does'
       environment:
         required: false
         type: string
@@ -88,21 +88,15 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release-version }}
         run: |
           set -euo pipefail
-          # CI passes no version: it prepares a dev version after the latest tag, with the commit hash on
-          # pull requests, as ToolR does (D124).
-          dev=()
-          if [ -z "$RELEASE_VERSION" ]; then
-            sha=()
-            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              sha=(--sha "$(git rev-parse --short HEAD)")
-            fi
-            RELEASE_VERSION="$(toolr release dev-version "${sha[@]}" | tail -n 1)"
-            dev=(--dev)
+          # CI passes no version: `toolr release bump` then derives a dev version from the latest tag, with the
+          # commit hash on pull requests, as ToolR's `toolr version bump` does (D124).
+          new_version=()
+          if [ -n "$RELEASE_VERSION" ]; then
+            new_version=(--new-version "$RELEASE_VERSION")
           fi
-          # `toolr release bump` refuses anything but X.Y.Z or X.Y.Z-rc.N (or, with --dev, what
-          # dev-version prints), so the value is safe to use below. It writes Cargo.toml, Cargo.lock and
-          # plugin.json's `version`: the files the release commit owns.
-          toolr release bump "${dev[@]}" "$RELEASE_VERSION"
+          # It refuses a given version that is not X.Y.Z or X.Y.Z-rc.N, so the value is safe to use below.
+          # It writes Cargo.toml, Cargo.lock and plugin.json's `version`: the files the release commit owns.
+          RELEASE_VERSION="$(toolr release bump "${new_version[@]}" | tail -n 1)"
           if git ls-remote --exit-code --tags origin "refs/tags/v${RELEASE_VERSION}" >/dev/null; then
             echo "::error::Tag v${RELEASE_VERSION} already exists" >&2
             exit 1

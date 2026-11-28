@@ -4,9 +4,13 @@ Release utilities.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+from datetime import UTC
+from datetime import datetime
 from pathlib import Path
+from typing import Final
 
 from packaging.version import InvalidVersion
 from packaging.version import Version
@@ -30,10 +34,6 @@ group = command_group("release", "Release utilities", docstring=__doc__)
 # `packaging` alone also accepts `1.2`, `v1.2.3` and `1.2.3rc1`; a release names exactly one
 # spelling, which is also the SemVer form Cargo and the `v<version>` tag use.
 _RELEASE_VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-rc\.(0|[1-9]\d*))?")
-# What `dev-version` prints (D124): X.Y.Z-devN or X.Y.Z-rc.K.devN, with +g<sha> on pull requests.
-_DEV_VERSION = re.compile(
-    r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:rc\.(?:0|[1-9]\d*)\.)?dev(?:0|[1-9]\d*)(?:\+g[0-9a-f]{7,40})?"
-)
 # The tags git-cliff counts as releases (cliff.toml `tag_pattern`): final versions only.
 _FINAL_TAG = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 # The `version` line of Cargo.toml's `[package]` table: the first `version =` before the next table header.
@@ -52,6 +52,107 @@ def _valid_release_version(version: str) -> bool:
     except InvalidVersion:
         return False
     return True
+
+
+# CI's dev versions, ported from ToolR's `tools/version.py` (D124).
+# Built-in fallback for when there are no tags (e.g. brand-new repo).
+_NOW: Final[datetime] = datetime.now(UTC)
+TODAY_VERSION: Final[str] = f"{_NOW.year % 100}.{_NOW.month}.0"
+# `git describe --match` glob for release tags. It also matches pre-release
+# tags such as `v1.0.0-rc1`; the matched tag is parsed with `packaging`.
+RELEASE_TAG_GLOB: Final[str] = "v[0-9]*.[0-9]*.[0-9]*"
+# SemVer spellings for PEP 440's pre-release letters.
+_CARGO_PRE_RELEASE: Final[dict[str, str]] = {"a": "alpha", "b": "beta", "rc": "rc"}
+
+
+def _parse_release_version(raw: str) -> Version:
+    """Parse a release tag's version: ``X.Y.Z`` with an optional pre-release, one leading ``v`` allowed.
+
+    Raises:
+        ValueError: Not a version Cargo's ``X.Y.Z[-pre]`` can hold, or not a release.
+    """
+    invalid = f"{raw!r} is not a valid version"
+    stripped = raw.removeprefix("v")
+    if not stripped[:1].isdigit():
+        raise ValueError(invalid)
+    try:
+        version = Version(stripped)
+    except InvalidVersion as exc:
+        raise ValueError(invalid) from exc
+    if (
+        len(version.release) != 3
+        or version.epoch
+        or version.is_postrelease
+        or version.is_devrelease
+        or version.local is not None
+    ):
+        msg = f"{raw!r} is not a release version (expected X.Y.Z or X.Y.Z with a pre-release, e.g. 1.0.0-rc.1)"
+        raise ValueError(msg)
+    return version
+
+
+def _cargo_version(version: Version) -> str:
+    """Render ``version`` in the SemVer form ``Cargo.toml`` needs: ``1.0.0rc2.dev3`` is ``1.0.0-rc.2.dev3``."""
+    rendered = ".".join(str(part) for part in version.release)
+    identifiers: list[str] = []
+    if version.pre is not None:
+        letter, number = version.pre
+        identifiers += [_CARGO_PRE_RELEASE[letter], str(number)]
+    if version.dev is not None:
+        identifiers.append(f"dev{version.dev}")
+    if identifiers:
+        rendered += "-" + ".".join(identifiers)
+    if version.local is not None:
+        rendered += f"+{version.local}"
+    return rendered
+
+
+def _next_dev_version(tag: Version, count: int, sha: str | None = None) -> Version:
+    """Return the dev version ``count`` commits after release ``tag``.
+
+    After a final release ``X.Y.Z`` the dev version is ``X.Y.(Z+1).devN``;
+    after a pre-release ``X.Y.Z{a,b,rc}K`` it is ``X.Y.Z{a,b,rc}(K+1).devN``.
+    Either way it sorts above the tag and below the next release.
+    """
+    if tag.pre is not None:
+        letter, number = tag.pre
+        base = f"{tag.base_version}{letter}{number + 1}"
+    else:
+        major, minor, patch = tag.release
+        base = f"{major}.{minor}.{patch + 1}"
+    local = f"+g{sha}" if sha else ""
+    return Version(f"{base}.dev{count}{local}")
+
+
+def _git_output(repo: Path, *args: str) -> tuple[int, str]:
+    ret = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), *args],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return ret.returncode, ret.stdout.strip()
+
+
+def compute_dev_version(repo: Path) -> str:
+    """Compute the dev version from the latest release tag, in its Cargo form.
+
+    Pull-request builds append the commit SHA as ``+g<sha>`` so concurrent PRs don't collide.
+
+    Raises:
+        ValueError: The latest tag is not a release version.
+    """
+    returncode, tag = _git_output(repo, "describe", "--tags", "--abbrev=0", "--match", RELEASE_TAG_GLOB)
+    if returncode != 0 or not tag:
+        # No matching tag in history — use the fallback base, counting every commit.
+        _, count = _git_output(repo, "rev-list", "--count", "HEAD")
+        return _cargo_version(_next_dev_version(Version(TODAY_VERSION), int(count or "0")))
+    tag_version = _parse_release_version(tag)
+    _, count = _git_output(repo, "rev-list", "--count", f"{tag}..HEAD")
+    sha = None
+    if os.environ.get("GITHUB_EVENT_NAME", "") == "pull_request":
+        _, sha = _git_output(repo, "rev-parse", "--short", "HEAD")
+    return _cargo_version(_next_dev_version(tag_version, int(count), sha))
 
 
 def stamp_cargo_version(manifest: Path, version: str) -> None:
@@ -86,8 +187,7 @@ def stamp_plugin_version(manifest: Path, version: str) -> None:
 @group.command
 def bump(
     ctx: Context,
-    version: str,
-    dev: bool = False,
+    new_version: str | None = None,
     manifest: ResolvedPath | None = None,
     plugin_manifest: ResolvedPath | None = None,
 ) -> None:
@@ -100,17 +200,22 @@ def bump(
     version file: `crook setup` writes its marker from the binary's version (0019).
 
     Args:
-        version: The release version: `X.Y.Z`, or `X.Y.Z-rc.N` for a pre-release.
-        dev: Take a dev version from `dev-version` instead, as CI does (D124). A dispatched release never passes it.
+        new_version: The release version: `X.Y.Z`, or `X.Y.Z-rc.N` for a pre-release. If omitted, a dev
+            version is derived from the latest release tag, as ToolR does (CI, D124).
         manifest: The Cargo.toml to update. Defaults to the one in the repository root.
         plugin_manifest: The plugin.json to stamp. Defaults to `plugin/.claude-plugin/plugin.json`.
     """
-    if dev and not _DEV_VERSION.fullmatch(version):
-        ctx.error(f"{version!r} is not a dev version from `toolr release dev-version`", markup=False)
-        ctx.exit(1)
-    if not dev and not _valid_release_version(version):
+    if new_version is None:
+        try:
+            version = compute_dev_version(REPO_ROOT if manifest is None else Path(manifest).parent)
+        except ValueError as exc:
+            ctx.error(str(exc), markup=False)
+            ctx.exit(1)
+    elif _valid_release_version(new_version):
+        version = new_version
+    else:
         ctx.error(
-            f"{version!r} is not a release version: use X.Y.Z or X.Y.Z-rc.N, with no leading 'v'",
+            f"{new_version!r} is not a release version: use X.Y.Z or X.Y.Z-rc.N, with no leading 'v'",
             markup=False,
         )
         ctx.exit(1)
@@ -162,67 +267,6 @@ def dev_stamp(ctx: Context, plugin_manifest: ResolvedPath | None = None) -> None
         ctx.error(str(exc), markup=False)
         ctx.exit(1)
     ctx.print(DEV_VERSION)
-
-
-def _git(repo: Path, *args: str) -> tuple[int, str]:
-    ret = subprocess.run(  # noqa: S603
-        ["git", "-C", str(repo), *args],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return ret.returncode, ret.stdout.strip()
-
-
-def compute_dev_version(repo: Path, sha: str | None = None) -> str:
-    """The version CI prepares a release as, after the latest release tag (D124), as ToolR does.
-
-    After `vX.Y.Z` it is `X.Y.(Z+1)-devN`, after `vX.Y.Z-rc.K` it is `X.Y.Z-rc.(K+1).devN`, N being the commits since
-    the tag, so it sorts above the tag and below the next release. With no tag the base is `v0.0.0`, below crook's
-    first release, and N counts every commit. `sha` adds `+g<sha>`, which CI does on pull requests, so two PRs with
-    the same count still differ.
-
-    Raises:
-        RuntimeError: git failed, or the latest tag is not a release tag.
-    """
-    code, tag = _git(repo, "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*")
-    if code != 0 or not tag:
-        code, count = _git(repo, "rev-list", "--count", "HEAD")
-        major, minor, patch, rc = 0, 0, 0, None
-    else:
-        m = _RELEASE_VERSION.fullmatch(tag.removeprefix("v"))
-        if not m:
-            raise RuntimeError(f"the latest tag {tag!r} is not a release tag (vX.Y.Z or vX.Y.Z-rc.N)")
-        major, minor, patch = int(m[1]), int(m[2]), int(m[3])
-        rc = int(m[5]) if m[5] is not None else None
-        code, count = _git(repo, "rev-list", "--count", f"{tag}..HEAD")
-    if code != 0 or not count.isdigit():
-        raise RuntimeError(f"git rev-list failed in {repo}")
-    if rc is None:
-        version = f"{major}.{minor}.{patch + 1}-dev{count}"
-    else:
-        version = f"{major}.{minor}.{patch}-rc.{rc + 1}.dev{count}"
-    return f"{version}+g{sha}" if sha else version
-
-
-@group.command
-def dev_version(ctx: Context, sha: str | None = None, repo: ResolvedPath | None = None) -> None:
-    """
-    Print the dev version CI prepares a release as (D124).
-
-    Args:
-        sha: A short commit hash to add as `+g<sha>`. CI passes it on pull requests.
-        repo: The repository to look in. Defaults to this one.
-    """
-    if sha is not None and not re.fullmatch(r"[0-9a-f]{7,40}", sha):
-        ctx.error(f"{sha!r} is not a short commit hash", markup=False)
-        ctx.exit(1)
-    try:
-        version = compute_dev_version(repo or REPO_ROOT, sha)
-    except RuntimeError as exc:
-        ctx.error(str(exc), markup=False)
-        ctx.exit(1)
-    ctx.print(version, markup=False, highlight=False)
 
 
 def final_tags(repo: Path) -> list[str]:

@@ -67,8 +67,8 @@ pub fn dispatch(command: &Command, ctx: &Ctx) -> Result<(), Error> {
 pub fn dispatch_with(command: &Command, ctx: &Ctx, hc: &dyn Hc, io: &mut Io) -> Result<(), Error> {
     match command {
         Command::New { slug, task } => new::run(ctx, hc, io, slug, task.as_deref()),
-        Command::Open { slug } => open::run(ctx, hc, io, slug, None),
-        Command::Close { slug } => close::run(ctx, hc, io, slug),
+        Command::Open { slug } => open::run(ctx, hc, io, &flock::slug_for(ctx.env, slug)?, None),
+        Command::Close { slug } => close::run(ctx, hc, io, &flock::slug_for(ctx.env, slug)?),
         Command::Spawn {
             role,
             child,
@@ -111,7 +111,9 @@ pub fn dispatch_with(command: &Command, ctx: &Ctx, hc: &dyn Hc, io: &mut Io) -> 
             flock.as_deref(),
         ),
         Command::Status { slug, json, flock } => {
-            status::run(ctx, hc, io, slug.as_deref().or(flock.as_deref()), *json)
+            let name = slug.as_deref().or(flock.as_deref());
+            let slug = name.map(|n| flock::slug_for(ctx.env, n)).transpose()?;
+            status::run(ctx, hc, io, slug.as_deref(), *json)
         }
         Command::Completion(what) => completion::run(ctx, io, what),
         Command::Setup => setup::run(ctx, io),
@@ -243,9 +245,10 @@ pub fn resolve_slug(
     if identity.as_ref().is_some_and(|i| i.child.is_some()) {
         return Err(child_terminal_error());
     }
-    if let Some(slug) = flag {
-        names::validate_slug(slug)?;
-        return Ok((slug.to_string(), identity));
+    if let Some(name) = flag {
+        let slug = flock::slug_for(ctx.env, name)?;
+        names::validate_slug(&slug)?;
+        return Ok((slug, identity));
     }
     let Some(identity) = identity else {
         require_context(ctx, None)?;

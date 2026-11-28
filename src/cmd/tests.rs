@@ -36,6 +36,8 @@ fn the_flock_comes_from_the_flag_or_the_terminals_label() {
     let (slug, _) = resolve_slug(&fx.ctx(), &hc, Some("other")).expect("flag wins");
     assert_eq!(slug, "other");
     assert!(resolve_slug(&fx.ctx(), &hc, Some("Bad")).is_err());
+    let (slug, _) = resolve_slug(&fx.ctx(), &hc, Some(&flock.dir_name())).expect("folder name");
+    assert_eq!(slug, "demo");
 }
 
 #[test]

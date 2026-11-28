@@ -175,3 +175,25 @@ fn a_failed_create_does_not_burn_the_slug() {
     assert!(list(&env).expect("lists").is_empty());
     create(&env, &Config::default(), "2026-11-27", "demo").expect("the retry works");
 }
+
+#[test]
+fn a_folder_name_stands_for_its_slug_and_a_real_slug_wins() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = data(dir.path());
+    make(&env, &Config::default(), "2026-11-27", "login-bug");
+    assert_eq!(
+        slug_for(&env, "2026-11-27-login-bug").expect("maps"),
+        "login-bug"
+    );
+    assert_eq!(slug_for(&env, "login-bug").expect("same"), "login-bug");
+    assert_eq!(
+        slug_for(&env, "2026-11-28-login-bug").expect("passes"),
+        "2026-11-28-login-bug"
+    );
+    make(&env, &Config::default(), "2026-11-27", "2026-11-27-ab");
+    make(&env, &Config::default(), "2026-11-28", "ab");
+    assert_eq!(
+        slug_for(&env, "2026-11-27-ab").expect("slug wins"),
+        "2026-11-27-ab"
+    );
+}

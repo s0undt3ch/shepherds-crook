@@ -95,6 +95,19 @@ pub fn list(env: Env) -> Result<Vec<Flock>, Error> {
     Ok(flocks)
 }
 
+/// `name` if a flock has that slug, else the slug of the flock whose folder is named `name`, else `name`.
+/// Coordinators pass the folder name for the slug (spike 29).
+pub fn slug_for(env: Env, name: &str) -> Result<String, Error> {
+    let all = list(env)?;
+    if all.iter().any(|f| f.slug == name) {
+        return Ok(name.to_string());
+    }
+    Ok(all
+        .into_iter()
+        .find(|f| f.dir_name() == name)
+        .map_or_else(|| name.to_string(), |f| f.slug))
+}
+
 fn with_slug(env: Env, slug: &str) -> Result<Vec<Flock>, Error> {
     names::validate_slug(slug)?;
     Ok(list(env)?.into_iter().filter(|f| f.slug == slug).collect())

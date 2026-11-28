@@ -272,3 +272,20 @@ pub fn set_child_started(folder: &Path, name: &str, started: bool) -> Result<(),
         Ok(())
     })
 }
+
+/// Follows a session that `/clear` replaced, so a later `--resume` continues the new conversation
+/// (D114).
+pub fn set_child_session_id(folder: &Path, name: &str, session_id: &str) -> Result<(), Error> {
+    modify(folder, |roster| {
+        child_mut(folder, roster, name)?.session_id = session_id.to_string();
+        Ok(())
+    })
+}
+
+/// The coordinator's side of [`set_child_session_id`].
+pub fn set_coordinator_session_id(folder: &Path, session_id: &str) -> Result<(), Error> {
+    modify(folder, |roster| {
+        roster.coordinator.session_id = session_id.to_string();
+        Ok(())
+    })
+}

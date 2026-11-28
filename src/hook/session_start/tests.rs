@@ -274,3 +274,52 @@ fn clear_and_compact_never_overwrite_but_create_when_missing() {
         assert_eq!(recorded(&r), "1.0.0", "{source}: kept");
     }
 }
+
+const CLEARED: &str = "11111111-2222-4333-8444-555555555555";
+
+fn start_as(r: &Rig, terminal: &str, session: &str, source: &str) {
+    let input = serde_json::json!({"session_id": session, "source": source}).to_string();
+    run_hook(&r.fx, &r.hc, "session-start", Some(terminal), &input);
+}
+
+#[test]
+fn a_clear_moves_only_the_session_id_of_that_child() {
+    let r = rig();
+    add(&r, "a", State::Active, true);
+    add(&r, "bb", State::Active, true);
+    let before = load_roster(&r.flock);
+    let a = live_child(&r, "a");
+    start_as(&r, &a, CLEARED, "clear");
+    let after = load_roster(&r.flock);
+    assert_eq!(after.children[0].session_id, CLEARED);
+    assert_eq!(after.children[1].session_id, before.children[1].session_id);
+    assert_eq!(after.coordinator.session_id, before.coordinator.session_id);
+}
+
+#[test]
+fn a_clear_in_the_coordinator_moves_its_session_id() {
+    let r = rig();
+    start_as(&r, &r.coordinator, CLEARED, "clear");
+    assert_eq!(load_roster(&r.flock).coordinator.session_id, CLEARED);
+}
+
+#[test]
+fn startup_and_resume_never_move_a_session_id() {
+    for source in ["startup", "resume", "something-new"] {
+        let r = rig();
+        add(&r, "a", State::Active, true);
+        let before = load_roster(&r.flock);
+        let a = live_child(&r, "a");
+        start_as(&r, &a, CLEARED, source);
+        start_as(&r, &r.coordinator, CLEARED, source);
+        let after = load_roster(&r.flock);
+        assert_eq!(
+            after.children[0].session_id, before.children[0].session_id,
+            "{source}"
+        );
+        assert_eq!(
+            after.coordinator.session_id, before.coordinator.session_id,
+            "{source}"
+        );
+    }
+}

@@ -39,6 +39,11 @@ pub fn run(ctx: &Ctx, hc: &dyn Hc, io: &mut Io, input: &Input, who: &Who) -> Rep
             "crook hook: could not mark the session started: {e}"
         ));
     }
+    if let Err(e) = follow_new_session(&flock.folder, who, input) {
+        io.warn(format!(
+            "crook hook: could not record the new session id: {e}"
+        ));
+    }
     let mut reply = Reply::default();
     if who.child.is_some() {
         return reply;
@@ -80,6 +85,40 @@ fn mark_started(folder: &std::path::Path, who: &Who) -> Result<(), crate::Error>
         None => {
             if !on_disk.coordinator.started {
                 roster::set_coordinator_started(folder, true)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `/clear` starts a new session id in the same terminal (D102). The roster follows it, so `crook
+/// resume` continues the conversation the maintainer last saw, not the one before the clear (D114).
+/// Only `clear` and `compact` count: a `startup` or `resume` runs the id crook itself passed.
+fn follow_new_session(
+    folder: &std::path::Path,
+    who: &Who,
+    input: &Input,
+) -> Result<(), crate::Error> {
+    let Some(session) = input.session_id.as_deref() else {
+        return Ok(());
+    };
+    if !matches!(input.source.as_deref(), Some("clear" | "compact")) || session.trim().is_empty() {
+        return Ok(());
+    }
+    let on_disk = roster::load(folder)?;
+    match &who.child {
+        Some(name) => {
+            if on_disk
+                .children
+                .iter()
+                .any(|c| &c.name == name && c.session_id != session)
+            {
+                roster::set_child_session_id(folder, name, session)?;
+            }
+        }
+        None => {
+            if on_disk.coordinator.session_id != session {
+                roster::set_coordinator_session_id(folder, session)?;
             }
         }
     }

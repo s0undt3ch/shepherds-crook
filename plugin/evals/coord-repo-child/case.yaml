@@ -1,0 +1,55 @@
+schema_version: "1.1"
+name: coord-repo-child
+description: 'A job on a repository: spawn with --repo and --model, a brief with the five headings and repo-relative paths.'
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 25
+  timeout_seconds: 240
+  allowed_tools: [Read, Glob, Grep, Skill]
+  prompt: |
+    You are the coordinator of the crook flock demo. Its folder is the current working directory and its notes folder is the same. Load the crook-coordinator skill and follow it.
+
+    The maintainer's first task: Delegate this now, no further planning needed: the git repository in the `repo` folder of the current directory has a misspelt word in `src/lib.rs`. Have one child, named `typo`, fix it.
+graders:
+  - name: brief-headings
+    type: 'regex'
+    pattern: '## Goal[\s\S]*## Why[\s\S]*## Scope[\s\S]*## References[\s\S]*## Done when'
+    target: { source: 'file', path: 'briefs/typo.md' }
+  - name: brief-path-is-repo-relative
+    type: 'regex'
+    pattern: '/repo/src/lib\.rs'
+    match: 'not_contains'
+    target: { source: 'file', path: 'briefs/typo.md' }
+  - name: spawn-call-with-repo-and-model
+    type: 'regex'
+    pattern: '^spawn child typo \S*briefs/typo\.md\b(?=.*--repo /\S*/repo(\s|$))(?=.*--model (haiku|sonnet|opus)\b)'
+    flags: 'm'
+    target: { source: 'file', path: '.crook-calls.log' }
+    weight: 20
+  - name: no-bare-crook
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: '("command"\s*:\s*"|[;&|]|\\n)\s*crook\s'
+    min: 0
+    max: 0
+    weight: 20
+  - name: no-forbidden-hc
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'hc\s+(run|kill|rm)\b|--force'
+    min: 0
+    max: 0
+    weight: 20
+  - name: skill-invoked
+    type: 'tool_used'
+    tool: 'Skill'
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?crook-coordinator"'
+    weight: 20
+  - name: uses-shim-form
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'CROOK_BIN:-'
+    min: 1
+    weight: 20

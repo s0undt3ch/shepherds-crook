@@ -1,0 +1,55 @@
+schema_version: "1.1"
+name: child-failed-when-blocked
+description: 'A brief whose input file is missing: the child sets failed, names the file, and invents no output.'
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 15
+  timeout_seconds: 240
+  allowed_tools: [Read, Glob, Grep, Skill]
+  prompt: |
+    You are a child session of a crook flock. A coordinator gave you one brief.
+    Before anything else, invoke the `crook-child` skill and follow it.
+
+    Read briefs/totals.md. Write your result to results/totals.md. Follow the crook-child skill: create the result file first and keep its status and progress up to date, because your Stop hook reports it to the coordinator.
+
+    (The folder you run in is the flock's folder; the two paths are relative to it.)
+graders:
+  - name: status-failed
+    type: 'regex'
+    pattern: '^---\nstatus: failed\n---\n'
+    target: { source: 'file', path: 'results/totals.md' }
+    weight: 20
+  - name: result-sections
+    type: 'regex'
+    pattern: '## Progress[\s\S]*## Summary[\s\S]*## Links'
+    target: { source: 'file', path: 'results/totals.md' }
+  - name: summary-names-the-missing-file
+    type: 'regex'
+    pattern: '## Summary[\s\S]*sales\.csv[\s\S]*## Links'
+    target: { source: 'file', path: 'results/totals.md' }
+  - name: no-invented-total
+    type: 'file_exists'
+    path: 'out/*'
+    exists: False
+    weight: 20
+  - name: skill-invoked
+    type: 'tool_used'
+    tool: 'Skill'
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?crook-child"'
+    weight: 20
+  - name: never-hc-send
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: '\bhc\s+send'
+    min: 0
+    max: 0
+    weight: 20
+  - name: never-git-worktree
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'git\s+worktree'
+    min: 0
+    max: 0
+    weight: 20

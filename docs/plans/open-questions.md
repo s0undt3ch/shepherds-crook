@@ -99,6 +99,12 @@ The maintainer approved these fixes after an audit of the ADRs against the plans
 | 44 | What do `stop` and `close` do on a child that is already `done`, or a flock already closed? | They retry removing any worktree kept earlier, with the same clean-and-pushed-or-merged rule (0023), and print the same `warning:` line if it is still kept. A second `close` is no longer a no-op. | decided |
 | 45 | What is the slug and child-name rule? | `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 40 characters, for slugs and child names alike. | decided |
 
+## Batch 4: found during the build (2026-11-28)
+
+| # | Question | Decision | Status |
+| --- | --- | --- | --- |
+| 46 | Q21's allow rule can never match: Claude Code refuses to match any command that holds a variable (spike 27). How does the coordinator call `crook` with no prompt? | Proposed: `crook open` resolves the shim to a literal path, allows `Bash("<path>" *)`, and names the path in the first prompt and in the coordinator's SessionStart context ([0027](../architecture/decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md)). Not built until the maintainer accepts 0027. | open |
+
 ## Changed during the build
 
 | # | Change | Where recorded |

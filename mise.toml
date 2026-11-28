@@ -27,3 +27,7 @@ gh = "2.105.0"
 [settings]
 # `mise install` writes and refreshes `mise.lock`; commit it.
 lockfile = true
+
+[tasks.plugin-eval]
+description = "Run the plugin's Tier-2 eval suite. Spends model credit; manual only."
+run = "plugin/evals/run.sh"

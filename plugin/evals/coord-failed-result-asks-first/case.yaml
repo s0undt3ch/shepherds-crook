@@ -1,0 +1,63 @@
+schema_version: "1.1"
+name: coord-failed-result-asks-first
+description: 'A child''s result says failed: the coordinator reads it and asks the maintainer, naming the child and a stronger model, before any resume or stop.'
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 15
+  timeout_seconds: 240
+  allowed_tools: [Read, Glob, Grep, Skill]
+  prompt: |
+    You are the coordinator of the crook flock demo. Its folder is the current working directory and its notes folder is the same. Load the crook-coordinator skill and follow it.
+
+    A message arrives:
+
+    <hc from="t2 demo.survey">Result updated: results/survey.md</hc>
+graders:
+  - name: no-resume
+    type: 'regex'
+    pattern: '^(resume|stop)\b'
+    flags: 'm'
+    match: 'not_contains'
+    target: { source: 'file', path: '.crook-calls.log' }
+    weight: 20
+  - name: no-ask-user-question
+    type: 'tool_used'
+    tool: 'AskUserQuestion'
+    min: 0
+    max: 0
+    weight: 20
+  - name: asks-the-maintainer
+    type: 'regex'
+    pattern: '\?'
+    target: 'last_message'
+  - name: names-the-child-and-a-stronger-model
+    type: 'regex'
+    pattern: '(?=[\s\S]*survey)(?=[\s\S]*(sonnet|opus|stronger model))'
+    flags: 'i'
+    target: 'last_message'
+  - name: read-the-result
+    type: 'tool_used'
+    tool: 'Read'
+    input_match: 'results/survey\.md'
+    min: 1
+  - name: no-bare-crook
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: '("command"\s*:\s*"|[;&|]|\\n)\s*crook\s'
+    min: 0
+    max: 0
+    weight: 20
+  - name: no-forbidden-hc
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'hc\s+(run|kill|rm)\b|--force'
+    min: 0
+    max: 0
+    weight: 20
+  - name: skill-invoked
+    type: 'tool_used'
+    tool: 'Skill'
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?crook-coordinator"'
+    weight: 20

@@ -81,6 +81,18 @@ def test_stage_ships_only_what_git_tracks(repo: Path, binary: Path, tmp_path: Pa
     ]
 
 
+def test_stage_leaves_out_the_eval_suite(repo: Path, binary: Path, tmp_path: Path) -> None:
+    (repo / "plugin/evals/child-writes-result/graders").mkdir(parents=True)
+    (repo / "plugin/evals/child-writes-result/prompt.md").write_text("p")
+    (repo / "plugin/evals/child-writes-result/graders/check.md").write_text("g")
+    (repo / "plugin/evals-notes.md").write_text("a sibling whose name only starts the same")
+    _git(repo, "add", "plugin")
+    folder = stage_archive_folder(repo, binary, tmp_path / "out", version="0.0.0-ci", triple=TRIPLE)
+    assert not (folder / "plugin/evals").exists()
+    assert (folder / "plugin/evals-notes.md").is_file()
+    assert (folder / "plugin/skills/a.md").is_file()
+
+
 def test_stage_refuses_a_tracked_symlink(repo: Path, binary: Path, tmp_path: Path) -> None:
     _git(repo, "add", "-f", "mod/leak")
     with pytest.raises(ValueError, match="symbolic link"):
@@ -295,6 +307,12 @@ def test_a_symlink_or_hardlink_member_fails(tmp_path: Path) -> None:
 def test_a_stray_file_fails(tmp_path: Path, name: str) -> None:
     errors = check_archive(_tar(tmp_path / f"{BASE}.tar.gz", {**GOOD, f"{BASE}/{name}": 0o644}))
     assert any("stray file" in e for e in errors)
+
+
+def test_an_eval_suite_in_the_archive_fails(tmp_path: Path) -> None:
+    files = {**GOOD, f"{BASE}/plugin/evals/a/prompt.md": 0o644}
+    errors = check_archive(_tar(tmp_path / f"{BASE}.tar.gz", files))
+    assert any("plugin/evals/a/prompt.md" in e and "never carries" in e for e in errors)
 
 
 def test_command_requires_the_sha256_file(tmp_path: Path) -> None:

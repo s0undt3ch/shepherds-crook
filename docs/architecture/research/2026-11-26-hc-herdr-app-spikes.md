@@ -515,3 +515,26 @@ A scratch core and a scratch git repository under `$TMPDIR/crook-e2e-wt.*`, with
 | `hc kill`, then `claude --agent child --model opus --resume <id> "What word did you reply with before? …"` | Replied on Opus with the earlier word: a resume can move a child to another model and keeps its conversation |
 
 So a worktree inside a trusted repository needs no trust step of its own.
+
+## 27. Which `crook` call forms a Bash allow rule can match (2026-11-28)
+
+`claude -p --model haiku --permission-mode default --setting-sources project` in a scratch folder under
+`$TMPDIR/crook-e2e-q21.*`, Claude Code 2.1.332. `CROOK_BIN` pointed at a stub that logs each call. Each run asked
+the model to run one command verbatim, with or without one `--settings` allow rule. `permission_denials` and the
+stub's log say whether the command ran.
+
+| Command | Allow rule | Result |
+| --- | --- | --- |
+| `"${CROOK_BIN:-${MISE_DATA_DIR:-…}/shims/crook}" status demo --json` | `Bash("${CROOK_BIN:-…}" *)`, the rule `crook open` passes | Refused: "A variable in braces in this command can't be checked before it runs" |
+| The same | None | Refused, same text |
+| `"$CROOK_BIN" status demo --json` | `Bash("$CROOK_BIN" *)` | Refused: "A variable in this command can't be checked before it runs" |
+| `"<absolute stub path>" status demo --json` | `Bash("<absolute stub path>" *)` | Ran |
+| `<absolute stub path> status demo --json` | `Bash(<absolute stub path> *)` | Ran |
+| `<absolute stub path> status demo --json` | None | Refused: "This command requires approval" |
+
+So Claude Code checks a command for variables before it looks at the allow rules. A command that holds any
+variable never matches a rule, and no rule spelling helps. A literal absolute path matches, quoted or not. The
+`--settings` rule that `crook open` passes today can never match the coordinator's calls, so under `default`
+mode every call asks the maintainer. Not checked: an interactive session, where the refusal would be a prompt
+rather than a denial, and `auto` mode, where a classifier decides. The plugin's eval harness hit the same
+refusal with four rule spellings (build log D105).

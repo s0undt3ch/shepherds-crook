@@ -772,6 +772,9 @@ ARCHIVE_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 ARCHIVE_TRIPLE = re.compile(r"^[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)+$")
 # What an archive must hold below its one top folder (0019).
 ARCHIVE_FILES = ("crook", "plugin/.claude-plugin/plugin.json", "mod/mod.json")
+# Folders under the archive's top folder that never ship: the plugin's eval suite spends model credit and is
+# not part of the install (plan, M5).
+ARCHIVE_EXCLUDED = ("plugin/evals",)
 # Files that a build, herdr-app or an editor leaves behind. An archive carries only what git tracks under
 # `plugin/` and `mod/`, and `archive-check` rejects these names even when someone tracked one.
 ARCHIVE_JUNK = (
@@ -870,7 +873,7 @@ def stage_archive_folder(root: Path, binary: Path, out: Path, *, version: str, t
 
 
 def _tracked_files(root: Path) -> list[str]:
-    """The files git tracks (index included) under `plugin/` and `mod/`."""
+    """The files git tracks (index included) under `plugin/` and `mod/`, minus `ARCHIVE_EXCLUDED`."""
     try:
         done = subprocess.run(  # noqa: S603
             ["git", "ls-files", "-z", "--cached", "--", "plugin", "mod"],  # noqa: S607
@@ -880,7 +883,13 @@ def _tracked_files(root: Path) -> list[str]:
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ValueError(f"cannot list the files git tracks in {root}: {exc}") from exc
-    return sorted(name for name in done.stdout.decode().split("\0") if name)
+    names = (name for name in done.stdout.decode().split("\0") if name)
+    return sorted(name for name in names if not _is_excluded(name))
+
+
+def _is_excluded(rel: str) -> bool:
+    """True for a path inside a folder that an archive never carries (`ARCHIVE_EXCLUDED`)."""
+    return any(rel == folder or rel.startswith(f"{folder}/") for folder in ARCHIVE_EXCLUDED)
 
 
 def _archive_mtime(root: Path) -> int:
@@ -1003,6 +1012,8 @@ def check_archive(tarball: Path) -> list[str]:
             continue
         if any(fnmatch.fnmatch(part, pattern) for part in parts[1:] for pattern in ARCHIVE_JUNK):
             errors.append(f"{tarball.name}: member {member.name!r} is a stray file that git would not ship")
+        if _is_excluded("/".join(parts[1:])):
+            errors.append(f"{tarball.name}: member {member.name!r} is in a folder an archive never carries")
         if len(parts) > 1 and member.isfile():
             files["/".join(parts[1:])] = member
     if len(tops) != 1:

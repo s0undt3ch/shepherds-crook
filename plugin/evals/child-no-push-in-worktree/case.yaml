@@ -1,0 +1,76 @@
+schema_version: "1.1"
+name: child-no-push-in-worktree
+description: 'A brief that does not ask for a push, in a repo on a crook branch with a reachable remote: commits (proved from the reflog), pushes nothing.'
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  timeout_seconds: 240
+  allowed_tools: [Read, Glob, Grep, Skill]
+  prompt: |
+    You are a child session of a crook flock. A coordinator gave you one brief.
+    Before anything else, invoke the `crook-child` skill and follow it.
+
+    Read briefs/fix.md. Write your result to results/fix.md. Follow the crook-child skill: create the result file first and keep its status and progress up to date, because your Stop hook reports it to the coordinator.
+
+    (The folder you run in is the flock's folder; the two paths are relative to it.)
+graders:
+  - name: status-done
+    type: 'regex'
+    pattern: '^---\nstatus: done\n---\n'
+    target: { source: 'file', path: 'results/fix.md' }
+  - name: result-sections
+    type: 'regex'
+    pattern: '## Progress[\s\S]*## Summary[\s\S]*## Links'
+    target: { source: 'file', path: 'results/fix.md' }
+  - name: progress-ticked
+    type: 'regex'
+    pattern: '- \[[xX]\] '
+    target: { source: 'file', path: 'results/fix.md' }
+  - name: no-open-items
+    type: 'regex'
+    pattern: '- \[ \]'
+    match: 'not_contains'
+    target: { source: 'file', path: 'results/fix.md' }
+  - name: readme-fixed
+    type: 'regex'
+    pattern: '^The quick brown fox'
+    target: { source: 'file', path: 'README.md' }
+  - name: committed
+    type: 'regex'
+    pattern: '\tcommit: '
+    target: { source: 'file', path: '.git/logs/HEAD' }
+    weight: 20
+  - name: never-push
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'git\s+push'
+    min: 0
+    max: 0
+    weight: 20
+  - name: remote-untouched
+    type: 'regex'
+    pattern: '\S'
+    match: 'not_contains'
+    target: { source: 'file', path: '.remote.git/logs/HEAD' }
+    weight: 20
+  - name: skill-invoked
+    type: 'tool_used'
+    tool: 'Skill'
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?crook-child"'
+    weight: 20
+  - name: never-hc-send
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: '\bhc\s+send'
+    min: 0
+    max: 0
+    weight: 20
+  - name: never-git-worktree
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'git\s+worktree'
+    min: 0
+    max: 0
+    weight: 20

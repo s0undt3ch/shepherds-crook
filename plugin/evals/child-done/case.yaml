@@ -1,0 +1,58 @@
+schema_version: "1.1"
+name: child-done
+description: 'A docs-only brief in the flock folder: a done result with a ticked checklist and the file made; no hc send, no worktree.'
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 15
+  timeout_seconds: 240
+  allowed_tools: [Read, Glob, Grep, Skill]
+  prompt: |
+    You are a child session of a crook flock. A coordinator gave you one brief.
+    Before anything else, invoke the `crook-child` skill and follow it.
+
+    Read briefs/greeting.md. Write your result to results/greeting.md. Follow the crook-child skill: create the result file first and keep its status and progress up to date, because your Stop hook reports it to the coordinator.
+
+    (The folder you run in is the flock's folder; the two paths are relative to it.)
+graders:
+  - name: status-done
+    type: 'regex'
+    pattern: '^---\nstatus: done\n---\n'
+    target: { source: 'file', path: 'results/greeting.md' }
+  - name: result-sections
+    type: 'regex'
+    pattern: '## Progress[\s\S]*## Summary[\s\S]*## Links'
+    target: { source: 'file', path: 'results/greeting.md' }
+  - name: progress-ticked
+    type: 'regex'
+    pattern: '- \[[xX]\] '
+    target: { source: 'file', path: 'results/greeting.md' }
+  - name: no-open-items
+    type: 'regex'
+    pattern: '- \[ \]'
+    match: 'not_contains'
+    target: { source: 'file', path: 'results/greeting.md' }
+  - name: greeting-written
+    type: 'regex'
+    pattern: '^hello from the flock\s*$'
+    target: { source: 'file', path: 'out/greeting.txt' }
+  - name: skill-invoked
+    type: 'tool_used'
+    tool: 'Skill'
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?crook-child"'
+    weight: 20
+  - name: never-hc-send
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: '\bhc\s+send'
+    min: 0
+    max: 0
+    weight: 20
+  - name: never-git-worktree
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'git\s+worktree'
+    min: 0
+    max: 0
+    weight: 20

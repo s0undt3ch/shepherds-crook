@@ -74,7 +74,8 @@ by the maintainer on 2026-11-27.
 | 36 | Can hc answer a trust dialog? | **Settled:** `hc keys <t> down enter` did, in every spike. |
 | 37 | Where is the zsh word-splitting pitfall recorded? | **Settled:** in spike 23. |
 
-To do before the first release: check that the `release` environment and its `GH_APP_*` secrets still exist.
+To do before the first release: check that the `release` environment exists, with `GH_APP_CLIENT_ID` as an
+environment variable and `GH_APP_PRIVATE_KEY` as an environment secret.
 
 ## Batch 2: calls the planners made while applying batch 1 (2026-11-27)
 

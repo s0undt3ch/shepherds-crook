@@ -122,9 +122,10 @@ herdr-app's. Drop it.
   (0019), so the mod follows the binary with no stamp.
 - `toolr release bump` writes every file that holds a version. The release commit may change only those files
   plus `CHANGELOG.md`; v1's `release.yml` enforces that list, so the list grows by `plugin.json`.
-- A test in `tests/tools/release/` fails when the binary's version and `plugin.json`'s `version` differ.
-- The release stamps `version` in `plugin.json`; debug builds use `0.0.0-dev` (Q17). `toolr release bump` writes
-  the stamp.
+- The release is two commits. The first carries the stamps and is the one tagged. The second,
+  `chore(release): Prepare for next development`, puts `plugin.json` back to `0.0.0-dev` (Q17), so `main` and debug
+  builds read the dev stamp. Both are pushed with the tag. Tests in `tests/tools/release/` check that `bump`
+  leaves the binary's and `plugin.json`'s versions equal, and that `plugin.json` on `main` is `0.0.0-dev`.
 - The first release is `0.1.0-rc.1`. Its changelog starts after `714568f`, v1's last commit, through an explicit
   range for that release only. Later releases use tags (Q33).
 
@@ -200,7 +201,7 @@ Needs: the binary prints `crook <version>` for `--version`, has `completion prin
 | Task | Files | ADRs | Check | Done when |
 | --- | --- | --- | --- | --- |
 | M4.1 One staging command | `tools/ci.py` (`stage-archive`), tests | 0019, 0022 | Unit test stages into a temp dir | Writes `crook-<version>-<triple>/` with `crook`, `plugin/`, `mod/`, `LICENSE`, `README.md` and `CHANGELOG.md` when present. CI and the e2e harness both use it |
-| M4.2 Build job uses it | `.github/workflows/_build-binary-archive.yml` | 0019 | Workflow run | Archives for every target in `toolr ci targets`: Linux (musl) and macOS, each on x86_64 and aarch64 (Q31); attested as before |
+| M4.2 Build job uses it | `.github/workflows/_build-binary-archive.yml` | 0019 | Workflow run | Archives for every target in `toolr ci targets`: Linux (musl) and macOS, each on x86_64 and aarch64 (Q31). Not attested here: the release attests in a job that runs no project code (D110) |
 | M4.3 Archive layout check | `tools/ci.py` (`archive-check`), `.github/workflows/ci.yml` | 0019 | Fixture tarballs: one good, one without `mod/` | Each tarball has exactly one top folder holding `crook`, `plugin/.claude-plugin/plugin.json` and `mod/mod.json`. mise strips a lone top folder (spike 18), so these land next to `crook` |
 | M4.4 Packslip check | `tools/ci.py` (`packslip-check`) | 0019, 0020 | Existing tests, updated | One `crook` bin per artifact; Linux is musl; no `skill` resources (they would install user-wide, against 0019); the completion resource lists bash, zsh and fish |
 | M4.5 Smoke the shipped archive | `.github/workflows/_smoke-binary-archive.yml` | 0019, 0020 | Workflow run on each target | See the list below |
@@ -245,7 +246,7 @@ Needs the binary plan's `crook new`, `open`, `spawn` and `hook`. The design is i
 
 | Task | Files | ADRs | Check | Done when |
 | --- | --- | --- | --- | --- |
-| M7.0 Check the release setup | the repository's settings | 0022 | The maintainer reads the settings | The `release` environment and the `GH_APP_CLIENT_ID` and `GH_APP_PRIVATE_KEY` secrets exist; M7.1 does not start before this |
+| M7.0 Check the release setup | the repository's settings | 0022 | The maintainer reads the settings | The `release` environment exists, with `GH_APP_CLIENT_ID` as an environment variable and `GH_APP_PRIVATE_KEY` as an environment secret; M7.1 does not start before this |
 | M7.1 Release workflow | `.github/workflows/release.yml`, `.github/actions/apply-release-patch`, `.github/actions/configure-git`, `tools/release.py`, `cliff.toml` | 0019, 0022 | Dispatch `0.1.0-rc.1` from `main` (Q33) | Tag, GitHub release with archives and `.sha256` files, `packslip.sigstore.json`; the changelog starts after `714568f` |
 | M7.2 Packslip verification | `release.yml` (`publish-packslip`) | 0019 | The job's own `packslip verify` step | Identity is `…/release.yml@refs/heads/main`; version and commit match |
 | M7.3 Install smoke | `.github/workflows/install-smoke.yml` | 0019, 0020 | Dispatched by the release, and nightly | See the list below |
@@ -417,8 +418,9 @@ skill, run only when the maintainer says so, with throwaway labels and `space.cl
   others) (Q25). S4 may then show a timeout, not a delivery.
 - The first install smoke may find that mise makes no shim for a packslip install. 0019 would then need
   revisiting; the plan cannot work around it.
-- `release.yml` needs the `release` environment, `GH_APP_CLIENT_ID` and `GH_APP_PRIVATE_KEY`. Whether they still
-  exist on the repository is not checked; M7.0 checks it before the first release.
+- `release.yml` needs the `release` environment, its variable `GH_APP_CLIENT_ID` and its secret
+  `GH_APP_PRIVATE_KEY`. Whether they still exist on the repository is not checked; M7.0 checks it before the first
+  release.
 
 ## Open questions
 

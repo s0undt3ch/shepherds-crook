@@ -96,11 +96,6 @@ url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-
 url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547404213"
 provenance = "github-attestations"
 
-[[tools."cargo:cargo-edit"]]
-version = "0.13.14"
-backend = "cargo:cargo-edit"
-specifiers = ["0.13.14"]
-
 [[tools."cargo:cargo-nextest"]]
 version = "0.9.152"
 backend = "cargo:cargo-nextest"

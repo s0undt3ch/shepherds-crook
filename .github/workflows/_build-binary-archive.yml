@@ -15,6 +15,11 @@ on:
         required: true
         type: string
         description: 'Version of mise to install: MISE_VERSION from .github/env, passed on by the caller''s prepare job.'
+      release-patch-name:
+        required: false
+        type: string
+        default: ''
+        description: 'Release patch artifact (the version bump and changelog commit) to apply before building. Empty builds the checked-out commit as it is.'
       targets:
         required: true
         type: string
@@ -28,10 +33,10 @@ jobs:
     name: ${{ matrix.target.triple }}
     runs-on: ${{ matrix.target.runner }}
     timeout-minutes: 40
+    # No `id-token`: the build runs the project's dependencies' code, so attestation is a job of its own
+    # in release.yml (`attest-archives`).
     permissions:
-      id-token: write
       contents: read
-      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -52,6 +57,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # A release builds the commit it will tag: the version stamp lives in the release patch, not in
+      # the dispatched commit. `git am` needs an identity, so Configure Git comes first.
+      - name: Configure Git
+        if: ${{ inputs.release-patch-name != '' }}
+        uses: ./.github/actions/configure-git
+
+      - name: Apply Release Patch
+        if: ${{ inputs.release-patch-name != '' }}
+        uses: ./.github/actions/apply-release-patch
+        with:
+          release-patch-name: ${{ inputs.release-patch-name }}
 
       # Only the Rust toolchain: the staging command needs toolr, which the next step installs.
       - name: Set up mise (installs the Rust toolchain pinned in mise.toml)
@@ -92,16 +109,6 @@ jobs:
           TRIPLE: ${{ matrix.target.triple }}
           VERSION: ${{ inputs.release-version }}
         run: toolr ci stage-archive "$TRIPLE" "$VERSION" --dist dist
-
-      # SLSA build provenance, attested for every archive that ships to
-      # users: `gh attestation verify` can prove the archive was produced by
-      # this workflow against this exact commit.
-      - name: Attest archive provenance
-        # A fork's pull request gets no OIDC token, and its archives never ship.
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: dist/crook-*.tar.gz
 
       # ci.yml's smoke-binary and packslip-check, and release.yml, download by this name.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

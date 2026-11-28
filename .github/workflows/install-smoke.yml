@@ -1,0 +1,75 @@
+name: Install Smoke Tests
+run-name: "Install smoke (version: ${{ inputs.version }})"
+
+# Installs a published release the way the maintainer does, through mise's packslip backend (0019),
+# on each platform, and runs what the hooks and the mod depend on. `release.yml` calls it once the
+# packslip is published. There is no `schedule` trigger yet: until a release exists, a nightly run
+# could only fail. Add one once 0.1.0-rc.1 is out, and give it a way to find the newest release.
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: 'Release to smoke-test: X.Y.Z or X.Y.Z-rc.N, with or without a leading v'
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: 'Release to smoke-test: X.Y.Z or X.Y.Z-rc.N, with or without a leading v'
+
+# A run is never cancelled by another: the one a release starts must finish. `github.workflow` names the
+# caller inside a called workflow, so the group says its own name.
+concurrency:
+  group: install-smoke-${{ inputs.version }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  smoke-mise:
+    name: mise packslip (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-15-intel
+          - macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load shared env vars
+        run: sed -n '/^[A-Z]/p' .github/env >> "$GITHUB_ENV"
+
+      # Only mise itself: crook is installed by the script, outside the repository's own pins.
+      - name: Set up mise
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install: false
+          cache: false
+
+      # The script runs mise with its own environment and a scratch HOME, and the version it is
+      # given decides what is installed, so it is not passed through the shell unquoted.
+      - name: Install crook from the packslip and check it
+        env:
+          VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/install-smoke.sh "$VERSION"

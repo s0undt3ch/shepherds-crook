@@ -465,8 +465,6 @@ jobs:
     uses: ./.github/workflows/_build-binary-archive.yml
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     with:
       release-version: 0.0.0-ci
       cache-seed: ${{ needs.prepare-ci.outputs.cache-seed }}

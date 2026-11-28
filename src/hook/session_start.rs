@@ -20,7 +20,7 @@ pub fn run(ctx: &Ctx, hc: &dyn Hc, io: &mut Io, input: &Input, who: &Who) -> Rep
             // overwriting would hide that from the Stop hook's reload.
             let fresh = matches!(input.source.as_deref(), Some("startup" | "resume"));
             if !fresh {
-                carry_record(ctx, session, who);
+                carry_record(ctx, io, session, who);
             }
             if let Err(e) = version::record_start(ctx, session, fresh) {
                 io.warn(format!(
@@ -94,9 +94,11 @@ fn mark_started(folder: &std::path::Path, who: &Who) -> Result<(), crate::Error>
     Ok(())
 }
 
-/// `/clear` starts a new session id in the same terminal (D102). The roster follows it, so `crook
-/// resume` continues the conversation the maintainer last saw, not the one before the clear (D114).
-/// Only `clear` and `compact` count: a `startup` or `resume` runs the id crook itself passed.
+/// `/clear`, or a `/resume` of another conversation from inside the session, starts a new session id
+/// in the same terminal (D102). The roster follows it, so `crook resume` continues the conversation
+/// the maintainer last saw (D114, D116). Every source but `startup` counts: crook launches with the
+/// roster's id, so its own starts never differ, and a stray `claude` run inside the terminal starts
+/// as `startup` and must not take the terminal's place.
 fn follow_new_session(
     folder: &std::path::Path,
     who: &Who,
@@ -105,7 +107,7 @@ fn follow_new_session(
     let Some(session) = input.session_id.as_deref() else {
         return Ok(());
     };
-    if !matches!(input.source.as_deref(), Some("clear" | "compact")) || session.trim().is_empty() {
+    if matches!(input.source.as_deref(), None | Some("startup")) || session.trim().is_empty() {
         return Ok(());
     }
     let on_disk = roster::load(folder)?;
@@ -132,7 +134,7 @@ fn follow_new_session(
 /// the disk's version, hiding a reload the session still needs. The new id takes over the old
 /// id's record instead, read from the roster before [`follow_new_session`] moves it. A needless
 /// reload is the worst case if the clear did load the new text.
-fn carry_record(ctx: &Ctx, session: &str, who: &Who) {
+fn carry_record(ctx: &Ctx, io: &mut Io, session: &str, who: &Who) {
     let Ok(flock) = flock::find(ctx.env, &who.flock) else {
         return;
     };
@@ -153,7 +155,23 @@ fn carry_record(ctx: &Ctx, session: &str, who: &Who) {
     if matches!(version::load(ctx, session), Ok(Some(_))) {
         return;
     }
-    if let Ok(Some(record)) = version::load(ctx, &old) {
-        let _ = version::save(ctx, session, &record);
+    // The old skill text went with the clear, so a nudge to invoke the skill again is not owed.
+    let carried = match version::load(ctx, &old) {
+        Ok(Some(record)) => version::Record {
+            reloaded: false,
+            ..record
+        },
+        Ok(None) => return,
+        Err(e) => {
+            io.warn(format!(
+                "crook hook: could not read the previous session's plugin version: {e}"
+            ));
+            return;
+        }
+    };
+    if let Err(e) = version::save(ctx, session, &carried) {
+        io.warn(format!(
+            "crook hook: could not carry the plugin version to the new session: {e}"
+        ));
     }
 }

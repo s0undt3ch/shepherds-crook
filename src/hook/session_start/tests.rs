@@ -304,24 +304,50 @@ fn a_clear_in_the_coordinator_moves_its_session_id() {
 }
 
 #[test]
-fn startup_and_resume_never_move_a_session_id() {
-    for source in ["startup", "resume", "something-new"] {
+fn startup_never_moves_a_session_id() {
+    let r = rig();
+    add(&r, "a", State::Active, true);
+    let before = load_roster(&r.flock);
+    let a = live_child(&r, "a");
+    start_as(&r, &a, CLEARED, "startup");
+    start_as(&r, &r.coordinator, CLEARED, "startup");
+    let after = load_roster(&r.flock);
+    assert_eq!(after.children[0].session_id, before.children[0].session_id);
+    assert_eq!(after.coordinator.session_id, before.coordinator.session_id);
+}
+
+#[test]
+fn every_other_source_with_a_new_id_moves_it() {
+    for source in ["resume", "compact", "fork", "something-new"] {
         let r = rig();
         add(&r, "a", State::Active, true);
-        let before = load_roster(&r.flock);
         let a = live_child(&r, "a");
         start_as(&r, &a, CLEARED, source);
-        start_as(&r, &r.coordinator, CLEARED, source);
-        let after = load_roster(&r.flock);
         assert_eq!(
-            after.children[0].session_id, before.children[0].session_id,
-            "{source}"
-        );
-        assert_eq!(
-            after.coordinator.session_id, before.coordinator.session_id,
+            load_roster(&r.flock).children[0].session_id,
+            CLEARED,
             "{source}"
         );
     }
+}
+
+#[test]
+fn the_same_id_again_writes_nothing() {
+    let r = rig();
+    add(&r, "a", State::Active, true);
+    let a = live_child(&r, "a");
+    let id = load_roster(&r.flock).children[0].session_id.clone();
+    let before = std::fs::metadata(roster::path(&r.flock.folder))
+        .expect("roster")
+        .modified()
+        .expect("mtime");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    start_as(&r, &a, &id, "compact");
+    let after = std::fs::metadata(roster::path(&r.flock.folder))
+        .expect("roster")
+        .modified()
+        .expect("mtime");
+    assert_eq!(before, after);
 }
 
 #[test]
@@ -352,4 +378,69 @@ fn a_clear_with_no_old_record_records_the_disk_version() {
         .expect("load")
         .expect("record");
     assert_eq!(record.version, "1.0.0");
+}
+
+fn save_record(r: &Rig, session: &str, version: &str, reloaded: bool) {
+    version::save(
+        &r.fx.ctx(),
+        session,
+        &version::Record {
+            version: version.into(),
+            reloaded,
+        },
+    )
+    .expect("save");
+}
+
+#[test]
+fn a_clear_in_a_child_carries_its_record_without_the_reload_flag() {
+    let r = rig();
+    add(&r, "a", State::Active, true);
+    let a = live_child(&r, "a");
+    let old = load_roster(&r.flock).children[0].session_id.clone();
+    save_record(&r, &old, "0.9.0", true);
+    start_as(&r, &a, CLEARED, "clear");
+    let carried = version::load(&r.fx.ctx(), CLEARED)
+        .expect("load")
+        .expect("record");
+    assert_eq!(
+        carried,
+        version::Record {
+            version: "0.9.0".into(),
+            reloaded: false
+        }
+    );
+}
+
+#[test]
+fn a_clear_never_overwrites_a_record_the_new_id_already_has() {
+    let r = rig();
+    let old = load_roster(&r.flock).coordinator.session_id;
+    save_record(&r, &old, "0.9.0", false);
+    save_record(&r, CLEARED, "1.0.0", false);
+    start_as(&r, &r.coordinator, CLEARED, "clear");
+    let kept = version::load(&r.fx.ctx(), CLEARED)
+        .expect("load")
+        .expect("record");
+    assert_eq!(kept.version, "1.0.0");
+}
+
+#[test]
+fn a_clear_after_an_upgrade_makes_the_next_stop_reload() {
+    let r = rig();
+    let old = load_roster(&r.flock).coordinator.session_id;
+    save_record(&r, &old, "0.9.0", false);
+    start_as(&r, &r.coordinator, CLEARED, "clear");
+    r.hc.set_app(&r.coordinator, "claude-code");
+    let input = serde_json::json!({"session_id": CLEARED}).to_string();
+    run_hook(&r.fx, &r.hc, "stop", Some(&r.coordinator), &input);
+    let reloads: Vec<_> = r
+        .hc
+        .calls()
+        .into_iter()
+        .filter(
+            |c| matches!(c, crate::hc::fake::Call::Send { text, .. } if text == "/reload-plugins"),
+        )
+        .collect();
+    assert_eq!(reloads.len(), 1, "the session still runs 0.9.0's text");
 }

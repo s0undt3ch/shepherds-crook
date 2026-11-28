@@ -111,3 +111,4 @@ The maintainer approved these fixes after an audit of the ADRs against the plans
 | # | Change | Where recorded |
 | --- | --- | --- |
 | 12, 45 | Names are shorter than decided: slugs at most 16 characters and not shaped like an hc address, child names at most 15, because hc names are at most 32 characters. | [build-log.md](build-log.md) D27 |
+| ADR 0017 | A session's id is not fixed for good: `/clear` or an in-session `/resume` gives the terminal a new one, and the roster follows it, so `crook resume` continues the conversation the maintainer last saw. | [build-log.md](build-log.md) D102, D114, D116 |

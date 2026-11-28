@@ -849,9 +849,10 @@ Area 2, the plugin:
 - Agents named `coordinator` and `child`, passed as `crook:coordinator` and `crook:child` (Q15); the
   coordinator agent has no `model` (0025).
 - `.claude-plugin/plugin.json` carries `version`: `0.0.0-dev` in the repository, stamped by the release (Q17).
-- The coordinator skill uses `crook spawn`, `stop`, `resume` and `status --json`, always through the shim form and
-  never a bare `crook` (Q20), and runs `close` only when the maintainer asks (Q6); it expects `Result updated: <path>` as
-  the message text and the rescan line wording (8.3, 8.4); it carries the brief template (0024).
+- The coordinator skill uses `crook spawn`, `stop`, `resume` and `status --json`, always by the literal path
+  `crook open` names, never a bare `crook` or a variable (0027, Q46), and runs `close` only when the maintainer
+  asks (Q6); it expects `Result updated: <path>` as the message text and the rescan line wording (8.3, 8.4); it
+  carries the brief template (0024).
 - `plugin/` sits at the repository root (debug fallback, 3.1).
 
 Area 3, the mod:

@@ -614,8 +614,9 @@ Each task lists what, files, ADRs, how it is checked, and when it is done.
 - Check: `claude plugin eval plugin --threshold <agreed>` run by the maintainer or a manual CI job (it spends model
   credit).
 - Done when: the suite passes and the release archive leaves `evals/` out.
-- Caveats: the stub only sees the coordinator's calls because the skill uses the shim form (Q20; a bare `crook`
-  ignores `CROOK_BIN`). Whether `claude plugin eval` passes `CROOK_BIN` through to the session is not checked.
+- Caveats: the stub sits at the shim path under the case's scratch HOME, because `claude plugin eval` does not pass
+  `CROOK_BIN` through. A case cannot give the run's path in its prompt, so the stub's SessionStart hook names it,
+  as the real hook does after a `/clear` (0027, D121).
 
 ### M6: e2e
 

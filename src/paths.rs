@@ -12,11 +12,6 @@ use crate::{Env, Error};
 #[cfg(test)]
 mod tests;
 
-/// The shell form of the shim path that hooks and prompts use (ADR 0019, spike 22): `CROOK_BIN` when
-/// set, else the mise shim. It mirrors [`mise_shim`].
-pub const SHIM_SHELL_EXPR: &str =
-    "\"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}\"";
-
 /// A non-empty, absolute value only.
 fn get_abs(env: Env, key: &str) -> Option<PathBuf> {
     env(key)

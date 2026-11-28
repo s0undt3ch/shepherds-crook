@@ -1,6 +1,6 @@
 schema_version: "1.1"
 name: coord-writes-brief-and-spawns
-description: 'Told to delegate one small mechanical job: a five-heading brief, then spawn on the cheapest model (haiku, per models.md) through the shim form.'
+description: 'Told to delegate one small mechanical job: a five-heading brief, then spawn on the cheapest model (haiku, per models.md) by the literal crook path.'
 runs: 3
 context:
   scaffold_script: scaffold.sh
@@ -47,6 +47,13 @@ graders:
     tool: 'Bash'
     input_match: '"command"\s*:\s*"\\"/[^"\\]+/shims/crook\\" '
     min: 1
+    weight: 20
+  - name: no-compound-crook
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: '"command"\s*:\s*"(?!\\"/)(?:[^"\\]|\\.)*shims/crook|shims/crook\\"(?:[^"\\]|\\.)*(\||&&|;)'
+    min: 0
+    max: 0
     weight: 20
   - name: no-shim-form
     type: 'tool_used'

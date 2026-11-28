@@ -30,6 +30,7 @@ SAFETY = {
     "no-bare-crook",
     "uses-literal-path",
     "no-shim-form",
+    "no-compound-crook",
     "skill-invoked",
     "spawn-call-with-model",
     "spawn-call-with-repo-and-model",

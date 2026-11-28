@@ -182,14 +182,6 @@ fn the_mise_shim_ignores_empty_and_relative_values() {
 }
 
 #[test]
-fn the_shell_expression_spells_the_same_order() {
-    assert_eq!(
-        SHIM_SHELL_EXPR,
-        "\"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}\""
-    );
-}
-
-#[test]
 fn the_call_path_is_crook_bin_else_the_shim_never_a_link_target() {
     let env = env_of(&[("HOME", "/h"), ("MISE_DATA_DIR", "/m")]);
     assert_eq!(
@@ -220,8 +212,10 @@ fn a_call_path_no_rule_can_match_is_refused() {
     assert!(crook_call_path(&quoted_home, None).is_err());
 }
 
+/// Only that the resolver accepts it: whether Claude Code's matcher takes a space in `Bash("<path>" *)` was not
+/// checked (spike 27 used a plain path). A rule that does not match costs a prompt, not a wrong call.
 #[test]
-fn a_call_path_with_spaces_is_fine() {
+fn a_call_path_with_spaces_is_accepted() {
     let env = env_of(&[("HOME", "/Users/a b")]);
     assert_eq!(
         crook_call_path(&env, None).expect("path"),

@@ -1,5 +1,5 @@
 //! The launch command: one pure function per kind of terminal, so the flag order is tested once
-//! (ADR 0007, 0013, 0017, 0018, 0019, 0025; Q1, Q14, Q15, Q18, Q19, Q21, Q32). No other module
+//! (ADR 0007, 0013, 0017, 0018, 0019, 0025, 0027; Q1, Q14, Q15, Q18, Q19, Q32, Q46). No other module
 //! assembles a `claude` or `hc run` argv.
 //!
 //! The prompt rides last and must follow a flag that takes exactly one value (ADR 0007, spike 16).

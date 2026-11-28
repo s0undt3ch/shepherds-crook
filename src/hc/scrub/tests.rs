@@ -23,6 +23,7 @@ fn every_variable_in_adr_0020_is_removed() {
         "CLAUDE_CODE_MESSAGING_SOCKET",
         "CLAUDE_CODE_ENTRYPOINT",
         "CLAUDE_CODE_EXECPATH",
+        "AI_AGENT",
         "HC_TERMINAL_ID",
         "HC_TERMINAL_SOCKET",
         "HC_SCOPE",
@@ -79,6 +80,8 @@ fn names_only_match_whole_or_by_the_listed_prefix() {
         "HC_TERMINAL_IDS",
         "HC_SCOPES",
         "claudecode",
+        "AI_AGENTS",
+        "MY_AI_AGENT",
     ];
     assert_eq!(names(&scrub(vars(&kept))), kept);
 }

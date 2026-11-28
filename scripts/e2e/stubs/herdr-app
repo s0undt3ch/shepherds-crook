@@ -1,0 +1,16 @@
+#!/bin/bash
+# The run's stand-in for herdr-app: logs its argv to $E2E_RUN/herdr-app.log and answers `do` with ok. The real
+# app may be watching the maintainer's own core, so no e2e call may reach it.
+set -u
+[ -n "${E2E_RUN:-}" ] || { echo "herdr-app stub: E2E_RUN is not set" >&2; exit 2; }
+printf '%s\037' "$@" >>"$E2E_RUN/herdr-app.log"
+printf '\n' >>"$E2E_RUN/herdr-app.log"
+# A harness makes the app fail by creating $E2E_RUN/herdr-app.fail.
+if [ -e "$E2E_RUN/herdr-app.fail" ]; then
+  echo "herdr-app stub: failing on purpose" >&2
+  exit 1
+fi
+case "${1:-}" in
+  do) echo '{"ok":true}' ;;
+esac
+exit 0

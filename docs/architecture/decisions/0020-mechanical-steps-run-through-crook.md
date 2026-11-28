@@ -106,7 +106,7 @@ Every command that touches hc runs the 0016 preflight first. When no core is run
 of refusing. The call that starts the core fixes the environment its terminals get; later callers' variables
 do not reach them (spike 23). The variables:
 
-- `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`;
+- `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT` (D93 in [`docs/plans/build-log.md`](../../plans/build-log.md));
 - `CLAUDE_CODE_SESSION_*`, `CLAUDE_CODE_CHILD_*`, `CLAUDE_CODE_MESSAGING_*`;
 - `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`;
 - `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE`: the calling terminal's identity.

@@ -1,0 +1,86 @@
+#!/bin/bash
+# A stand-in for `claude`, for tier 2 (scripts/e2e/tier2.sh). It behaves as much like a Claude Code session as
+# crook can see: it logs its argv and environment, writes a transcript where a session would, runs the
+# plugin's SessionStart hook with the JSON Claude Code pipes in, reports itself to hc over OSC 7501, then reads
+# its terminal until it is told to stop. It never talks to a model or to the network.
+#
+# Everything goes under $E2E_RUN/claude-calls/. Per launch: <n>.argv (arguments separated by the byte 0x1f),
+# <n>.env, <n>.hook-session-start.out. Per session: <session id>.input (what was typed into it) and
+# <session id>.state (written by the harness: the state to report next).
+set -u
+[ -n "${E2E_RUN:-}" ] || { echo "claude stub: E2E_RUN is not set" >&2; exit 2; }
+calls="$E2E_RUN/claude-calls"
+mkdir -p "$calls"
+n="$(date +%s)-$$"
+printf '%s\037' "$@" >"$calls/$n.argv"
+# Names only: a value may be a token.
+env | sed 's/=.*//' | LC_ALL=C sort >"$calls/$n.env"
+
+sid='' source='startup' agent='' plugin='' prompt=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --session-id) sid="${2:-}"; shift 2 || break ;;
+    --resume) sid="${2:-}"; source=resume; shift 2 || break ;;
+    --agent) agent="${2:-}"; shift 2 || break ;;
+    --plugin-dir) plugin="${2:-}"; shift 2 || break ;;
+    # Variadic, as in the real CLI: it takes every argument up to the next flag, so a prompt right after
+    # it is swallowed and never reaches the session.
+    --add-dir)
+      shift
+      while [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; do shift; done
+      ;;
+    --settings | --model) shift 2 || break ;;
+    --*) shift ;;
+    *) prompt="$1"; shift ;;
+  esac
+done
+if [ "$source" = startup ] && [ -z "$prompt" ]; then
+  echo "stub claude: no prompt reached the session (a variadic flag swallowed it?)" >&2
+  : >"$calls/$n.noprompt"
+fi
+[ -n "$sid" ] || sid="no-session-$n"
+printf '%s\n' "$agent" >"$calls/$n.agent"
+
+# Claude Code keeps a transcript per session, in a folder named after the cwd.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  tdir="$CLAUDE_CONFIG_DIR/projects/$(pwd -P | tr / -)"
+  mkdir -p "$tdir"
+  printf '{"type":"summary","sessionId":"%s","source":"stub"}\n' "$sid" >>"$tdir/$sid.jsonl"
+fi
+
+# What a real session exports to the hooks it runs, and the markers crook's scrub exists for.
+export CLAUDECODE=1 CLAUDE_PID=$$ CLAUDE_CODE_SESSION_ID="$sid" AI_AGENT="claude-code_stub"
+export CLAUDE_PLUGIN_ROOT="$plugin"
+json="$(printf '{"session_id":"%s","source":"%s","cwd":"%s","hook_event_name":"SessionStart"}' "$sid" "$source" "$(pwd -P)")"
+if [ -n "${CROOK_BIN:-}" ]; then
+  printf '%s' "$json" | "$CROOK_BIN" hook session-start >"$calls/$n.hook-session-start.out" 2>"$calls/$n.hook-session-start.err"
+  echo "$?" >"$calls/$n.hook-session-start.exit"
+fi
+
+printf 'stub claude: session %s (%s)\n' "$sid" "$agent"
+report() { printf '\033]7501;:state=%s:app=claude\007' "$1"; }
+state=idle
+report "$state"
+# What is typed into the session goes to <session id>.input; "/exit" or the end of the input ends it. A
+# background job gets /dev/null for stdin, so it reads the terminal through a copy of the descriptor.
+exec 3<&0
+(
+  while IFS= read -r line <&3; do
+    printf '%s\n' "$line" >>"$calls/$sid.input"
+    [ "$line" = "/exit" ] && break
+  done
+) &
+reader=$!
+# A harness changes the reported state by writing it to <session id>.state (working, idle, blocked ...).
+while kill -0 "$reader" 2>/dev/null; do
+  if [ -f "$calls/$sid.state" ]; then
+    want="$(cat "$calls/$sid.state")"
+    if [ "$want" != "$state" ]; then
+      state="$want"
+      report "$state"
+    fi
+  fi
+  sleep 1
+done
+wait "$reader"
+exit 0

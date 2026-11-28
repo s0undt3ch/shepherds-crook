@@ -14,6 +14,7 @@ const REMOVED: &[&str] = &[
     "CLAUDE_EFFORT",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_EXECPATH",
+    "AI_AGENT",
     "HC_TERMINAL_ID",
     "HC_TERMINAL_SOCKET",
     "HC_SCOPE",

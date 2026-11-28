@@ -47,6 +47,7 @@ tasks. A dash means the plan has no task for that ADR. "Process" and "context" m
 | [0024](../architecture/decisions/0024-flock-file-formats.md) File formats for the roster, briefs, results and delivery marks | 2.1 to 2.3, 2.6, 5.4, 6.1, 7.1, 7.2 | P2.1, P3.1a, P3.1b, P3.2, P4.2, P5.1 | M1.2, M2.2 | M1.6, S2 |
 | [0025](../architecture/decisions/0025-roles-and-child-models.md) Two roles; the coordinator picks each child's model | 1.2, 2.2, 5.1, 6.1, 6.3 | P1.2, P3.3, P5.1, P6.1 | – | M2.1, M2.3, S3, S9, S12 |
 | [0026](../architecture/decisions/0026-config-file.md) crook's settings live in an XDG config file | 1.1, 1.2, 9.2 | P1.2, P3.3 | – | M5.1 |
+| [0027](../architecture/decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md) The coordinator calls crook by a literal path | 5.1, 5.3, 8.5 | P3.1a, P5.1 | – | S3 |
 
 Every accepted ADR with something to build has at least one task. 0011 is Rejected; the plans cite it only as
 history.

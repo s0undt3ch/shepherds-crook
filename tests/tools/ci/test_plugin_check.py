@@ -210,15 +210,16 @@ def test_an_extra_key_on_a_hook_fails(plugin: Path) -> None:
     assert any("Stop hook keys" in e for e in check_plugin(plugin))
 
 
-def test_a_changed_shim_path_in_skill_text_fails(plugin: Path) -> None:
-    _replace(plugin / "skills" / "crook-coordinator" / "SKILL.md", "${XDG_DATA_HOME:-$HOME/.local/share}", "$HOME/.local/share")
-    assert any("not the exact expression" in e for e in check_plugin(plugin))
+def test_the_shim_form_in_skill_text_fails(plugin: Path) -> None:
+    with (plugin / "skills" / "crook-coordinator" / "SKILL.md").open("a", encoding="utf-8") as fh:
+        fh.write(f"\nCall {SHIM} status.\n")
+    assert any("names the shim path" in e for e in check_plugin(plugin))
 
 
 def test_a_stray_shim_mention_in_a_supporting_file_fails(plugin: Path) -> None:
     with (plugin / "skills" / "crook-child" / "result-template.md").open("a", encoding="utf-8") as fh:
         fh.write("\nRun ~/.local/share/mise/shims/crook now.\n")
-    assert any("not the exact expression" in e for e in check_plugin(plugin))
+    assert any("names the shim path" in e for e in check_plugin(plugin))
 
 
 # plugin-check --since-last-release, against a throwaway git repo.

@@ -28,7 +28,8 @@ SAFETY = {
     "no-forbidden-hc",
     "no-ask-user-question",
     "no-bare-crook",
-    "uses-shim-form",
+    "uses-literal-path",
+    "no-shim-form",
     "skill-invoked",
     "spawn-call-with-model",
     "spawn-call-with-repo-and-model",
@@ -186,6 +187,23 @@ def test_the_stub_reports_the_children_a_case_scaffolds(tmp_path: Path) -> None:
     (workspace / ".stub-children.json").write_text('[{"name":"survey"}]', encoding="utf-8")
     status = json.loads(_call(home, workspace, "status", "demo", "--json").stdout)
     assert status["flocks"][0]["children"] == [{"name": "survey"}]
+
+
+def test_the_stub_tells_only_a_coordinator_its_literal_path(tmp_path: Path) -> None:
+    home, workspace = _install(tmp_path)
+    assert _call(home, workspace, "hook", "session-start").stdout == ""
+    (workspace / ".stub-coordinator").write_text("", encoding="utf-8")
+    out = json.loads(_call(home, workspace, "hook", "session-start").stdout)["hookSpecificOutput"]
+    shim = home / ".local/share/mise/shims/crook"
+    assert out["hookEventName"] == "SessionStart"
+    assert out["additionalContext"].startswith(f'crook: Run every crook command as "{shim}" <subcommand>')
+    assert _call(home, workspace, "hook", "stop").stdout == ""
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_only_coordinator_cases_mark_a_coordinator(case: str) -> None:
+    marked = ".stub-coordinator" in (EVALS / case / "scaffold.sh").read_text(encoding="utf-8")
+    assert marked == case.startswith("coord-")
 
 
 @pytest.mark.parametrize("case", [c for c in CASES if (EVALS / c / "scaffold.sh").read_text().count("stub-children")])

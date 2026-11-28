@@ -12,16 +12,22 @@ Once the maintainer has agreed to delegate a piece of work, do not do it yoursel
 
 ## Calling crook
 
-Every mechanical step goes through the `crook` command. Never type a bare `crook`. Always write the call in this
-form, in full, on every Bash call:
+Every mechanical step goes through the `crook` command. Your first prompt, and the context that crook adds at
+every session start, name the path to call it by. Write every call as that path in double quotes, then the
+subcommand:
 
 ```text
-"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}" <subcommand> ...
+"<the path you were given>" <subcommand> ...
 ```
 
-A bare `crook` can find an older version, and it ignores `CROOK_BIN`. This session allows exactly that form, so
-the calls do not prompt the maintainer. Below, `crook` stands for that whole form, and the examples are shortened
-to `crook <subcommand>`. Shell state does not persist between Bash calls, so write the form out each time.
+- Copy the path exactly. Never type a bare `crook`, never put a variable such as `$HOME` or `$CROOK_BIN` in the
+  call, and never shorten the path. A bare `crook` can find an older version.
+- Make each call its own Bash command. Put nothing before it, such as `cd` or a variable, and no pipe, `&&` or `;`
+  after it. Read its output in the tool result.
+- This session allows exactly that form, so the calls do not prompt the maintainer. Any other form asks the
+  maintainer every time.
+
+Below, the examples are shortened to `crook <subcommand>`. Always write the quoted path in their place.
 
 Other rules about commands:
 

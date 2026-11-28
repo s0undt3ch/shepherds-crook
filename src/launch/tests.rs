@@ -3,6 +3,7 @@ use std::path::Path;
 use super::*;
 
 const SID: &str = "11111111-2222-4333-8444-555555555555";
+const CROOK: &str = "/home/u/.local/share/mise/shims/crook";
 
 fn common<'a>(bin: Option<&'a str>, notes: &'a Path) -> Common<'a> {
     Common {
@@ -31,6 +32,7 @@ fn coord<'a>(
         session,
         model,
         task,
+        crook: CROOK,
     }
 }
 
@@ -81,20 +83,23 @@ fn golden_coordinator_first_start() {
     );
     let mut expected = strs(&[
         "env",
-        "CROOK_BIN=/opt/crook",
+        "CROOK_BIN=/home/u/.local/share/mise/shims/crook",
         "claude",
         "--plugin-dir",
         "/data/crook/current/plugin",
         "--add-dir",
         "/data/crook/flocks/2026-11-27-demo",
         "--settings",
+        r#"{"permissions":{"allow":["Bash(\"/home/u/.local/share/mise/shims/crook\" *)"]}}"#,
     ]);
-    expected.push(settings_json());
     expected.extend(strs(&["--agent", "crook:coordinator", "--session-id", SID]));
     expected.push(
         "You are the coordinator of the crook flock demo. Its folder is /data/crook/flocks/2026-11-27-demo and \
-         its notes folder is /data/crook/flocks/2026-11-27-demo. Load the crook-coordinator skill and follow \
-         it.\n\nThe maintainer's first task: fix the login bug"
+         its notes folder is /data/crook/flocks/2026-11-27-demo. Run every crook command as \
+         \"/home/u/.local/share/mise/shims/crook\" <subcommand> ..., with that exact quoted path, as its own \
+         Bash command: nothing before it and no pipe, `&&` or `;` after it. Only that form runs without asking \
+         the maintainer. Load the crook-coordinator skill and follow it.\n\nThe maintainer's first task: fix \
+         the login bug"
             .to_string(),
     );
     assert_eq!(spec.argv, expected);
@@ -110,6 +115,8 @@ fn golden_coordinator_resume_has_no_prompt_and_the_notes_folder() {
         Some("ignored on a resume"),
     ));
     let mut expected = strs(&[
+        "env",
+        &format!("CROOK_BIN={CROOK}"),
         "claude",
         "--plugin-dir",
         "/data/crook/current/plugin",
@@ -119,7 +126,7 @@ fn golden_coordinator_resume_has_no_prompt_and_the_notes_folder() {
         "/notes/2026-11-27-demo",
         "--settings",
     ]);
-    expected.push(settings_json());
+    expected.push(settings_json(CROOK));
     expected.extend(strs(&[
         "--agent",
         "crook:coordinator",
@@ -260,9 +267,40 @@ fn settings_appear_for_open_only() {
     assert!(c.argv.contains(&"--settings".to_string()));
     let k = child(&kid(common(None, flock()), Session::New(SID)));
     assert!(!k.argv.contains(&"--settings".to_string()));
-    let json: serde_json::Value = serde_json::from_str(&settings_json()).expect("json");
-    let rule = json["permissions"]["allow"][0].as_str().expect("rule");
-    assert!(rule.starts_with("Bash(") && rule.contains(paths::SHIM_SHELL_EXPR));
+}
+
+/// ADR 0027's confirmation: no variable anywhere in the settings, and the one rule names the path the
+/// first prompt tells the model to call.
+#[test]
+fn the_allow_rule_is_the_literal_path_the_first_prompt_names() {
+    let c = coordinator(&coord(common(None, flock()), Session::New(SID), None, None));
+    let settings = &c.argv[position(&c.argv, "--settings") + 1];
+    assert!(!settings.contains('$'), "{settings}");
+    let json: serde_json::Value = serde_json::from_str(settings).expect("json");
+    let rules = json["permissions"]["allow"].as_array().expect("allow");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0], format!("Bash(\"{CROOK}\" *)"));
+    let prompt = c.argv.last().expect("prompt");
+    assert!(
+        prompt.contains(&format!("\"{CROOK}\" <subcommand>")),
+        "{prompt}"
+    );
+}
+
+#[test]
+fn the_coordinator_always_passes_its_path_as_crook_bin_even_over_another() {
+    for bin in [None, Some("/opt/other-crook")] {
+        let c = coordinator(&coord(
+            common(bin, flock()),
+            Session::Resume(SID),
+            None,
+            None,
+        ));
+        assert_eq!(
+            c.argv[..3],
+            strs(&["env", &format!("CROOK_BIN={CROOK}"), "claude"])
+        );
+    }
 }
 
 #[test]
@@ -286,4 +324,12 @@ fn no_notify_and_no_outlive_parent() {
             assert!(!spec.argv.contains(&flag.to_string()));
         }
     }
+}
+
+/// The plugin evals' stub announces the same rule as the real hook, or the evals grade different text.
+#[test]
+fn the_eval_stub_says_the_same_call_rule() {
+    let stub = include_str!("../../plugin/evals/_lib/crook-stub.sh");
+    let expected = call_rule("%s").replace('"', "\\\"");
+    assert!(stub.contains(&format!("rule='{expected}'")), "{expected}");
 }

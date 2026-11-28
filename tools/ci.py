@@ -218,12 +218,12 @@ def _check_templates(plugin: Path, errors: list[str]) -> None:
 
 
 def _check_shim_text(plugin: Path, errors: list[str]) -> None:
-    """Every mention of the shim path in the agents and skills must be the exact expression (D22)."""
+    """No agent or skill text may name the shim path: the coordinator calls crook by the literal path it is
+    given, and only that form matches its allow rule (ADR 0027). Children run no crook commands."""
     for path in sorted([*(plugin / "agents").glob("*.md"), *(plugin / "skills").rglob("*.md")]):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            rest = line.replace(SHIM, "")
-            if "MISE_DATA_DIR" in rest or "shims/crook" in rest:
-                errors.append(f"{path}:{number}: shim path is not the exact expression {SHIM}")
+            if "MISE_DATA_DIR" in line or "shims/crook" in line:
+                errors.append(f"{path}:{number}: names the shim path; call crook by the literal path given (0027)")
 
 
 def check_plugin(plugin: Path) -> list[str]:
@@ -370,7 +370,7 @@ def plugin_check(ctx: Context, *, plugin_dir: str = "plugin", since_last_release
     exactly the three events, each one group of `hooks` (no matcher) with one `type`, `command` and
     `timeout`, the shim command form and the timeouts 120, 30 and 30; that each agent file has a name,
     names exactly one existing `crook-<role>` skill and stays under a line cap; that each `SKILL.md` has a
-    name and a description; that every shim path in the agent and skill text is the exact expression; and
+    name and a description; that no agent or skill text names the shim path (0027); and
     that the brief and result templates keep their 0024 headings.
 
     With `--since-last-release`, also fails when an agent file, a skill, or a supporting file that a skill

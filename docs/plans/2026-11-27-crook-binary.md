@@ -134,9 +134,11 @@ hc run --bg --name <hc name> --cwd <folder>
   config key is set and not empty (0025, 0026, Q32). Otherwise it runs on the maintainer's default model.
 - A child gets `--agent crook:child` (Q15) and always a `--model`: the one given to `spawn`, else
   `default_child_model` from the config, `sonnet` when that is unset (0025, Q9).
-- Only `crook open` adds `--settings`, with JSON that allows the shim command in Bash, so the coordinator is
-  not asked about each `crook` call (Q21). The rule text must match the shim form the skill uses (Q20). Its
-  syntax is not checked against Claude Code; the e2e run confirms it.
+- Only `crook open` adds `--settings`. Its one rule allows `Bash("<path>" *)`, where `<path>` is the literal
+  path from `paths::crook_call_path`: `CROOK_BIN` when set, else the mise shim, never a link target (0027,
+  Q46). The coordinator also always gets `env CROOK_BIN=<path>`, so its hooks name the same path, and its first
+  prompt says to call crook only as `"<path>" <subcommand>`. A path holding `"`, `$`, a backtick, a backslash
+  or a control character is refused, because no rule can match a call to it (spike 27).
 
 ### Never break the session
 
@@ -495,12 +497,13 @@ prove the task; write them first.
     work", plus the brief and result paths (Q14);
   - coordinator resume: no prompt (0018).
 - Files: `src/launch.rs`.
-- ADR: 0007, 0013, 0017, 0018, 0019, 0025; Q1, Q14, Q15, Q21, Q32.
+- ADR: 0007, 0013, 0017, 0018, 0019, 0025, 0027; Q1, Q14, Q15, Q32, Q46.
 - Tests: golden argv for each of the four cases; the token before the prompt is `--session-id <uuid>` or
   `--resume <uuid>`; every `--add-dir` comes before `--agent`; `--plugin-dir` ends in `current/plugin`;
   `--agent` is `crook:coordinator` or `crook:child`; a child always has `--model`, the coordinator only when
-  `coordinator_model` is set; `--settings` appears for `open` only; `env CROOK_BIN=…` present only when 3.4
-  returns a value; `--no-notify` and `--outlive-parent` never appear.
+  `coordinator_model` is set; `--settings` appears for `open` only, holds no `$`, and its one rule names the path
+  the first prompt names; a child's `env CROOK_BIN=…` is present only when 3.4 returns a value, the
+  coordinator's always; `--no-notify` and `--outlive-parent` never appear.
 - Done when: no other module assembles a `claude` or `hc run` argv.
 
 #### 5.2 herdr-app renames
@@ -522,7 +525,7 @@ prove the task; write them first.
   soon as `hc run` succeeds; a failed launch leaves it false. Then rename (5.2). Print one line. `open` takes
   the first task from `new` when `new` calls it (Q1).
 - Files: `src/cmd/open.rs`.
-- ADR: 0015, 0018, 0020, 0021; Q1, Q7, Q8, Q19, Q21.
+- ADR: 0015, 0018, 0020, 0021, 0027; Q1, Q7, Q8, Q19, Q46.
 - Tests: first open uses `--session-id` and sets `started`; a later open uses `--resume`; a failed launch
   leaves `started` false; `CROOK_BIN` and `--settings` present; labels and `--no-parent` present;
   live coordinator starts nothing; closed flock refused; unknown slug refused with the slugs that exist.
@@ -734,10 +737,13 @@ prove the task; write them first.
 
 - What: write the version record (8.2). In the coordinator only (shared mechanics): resume every `active` child
   with no live terminal (6.3), then the results rescan (8.3), since 0008 says the rescan runs "at start and on
-  every turn". Report what was resumed and what is undelivered in `additionalContext`.
+  every turn". Report what was resumed and what is undelivered in `additionalContext`. The coordinator's context
+  starts, on every source, with the rule to call crook as `"<path>" <subcommand>`, the path resolved from the
+  hook's own `CROOK_BIN`, else the shim (0027). It comes before the flock lookup, so a broken flock still gets it.
 - Files: `src/hook/session_start.rs`.
-- ADR: 0008, 0017, 0019, 0020.
-- Tests: child session writes a record and resumes nothing; coordinator resumes the right children and prints
+- ADR: 0008, 0017, 0019, 0020, 0027.
+- Tests: the coordinator gets the crook path first on `startup`, `resume`, `clear` and `compact`, a child never;
+  child session writes a record and resumes nothing; coordinator resumes the right children and prints
   them; a resume failure for one child still resumes the others and still exits 0.
 - Done when: a restarted coordinator brings its children back with no model involvement.
 

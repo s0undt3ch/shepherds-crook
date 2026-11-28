@@ -42,9 +42,16 @@ graders:
     tool: 'Skill'
     input_match: '"skill"\s*:\s*"(?:[\w-]+:)?crook-coordinator"'
     weight: 20
-  - name: uses-shim-form
+  - name: uses-literal-path
     type: 'tool_used'
     tool: 'Bash'
-    input_match: 'CROOK_BIN:-'
+    input_match: '"command"\s*:\s*"\\"/[^"\\]+/shims/crook\\" '
     min: 1
+    weight: 20
+  - name: no-shim-form
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'CROOK_BIN|MISE_DATA_DIR|\$HOME'
+    min: 0
+    max: 0
     weight: 20

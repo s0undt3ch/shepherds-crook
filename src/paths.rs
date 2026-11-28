@@ -112,6 +112,32 @@ pub fn mod_version_marker(env: Env) -> Result<PathBuf, Error> {
     Ok(mod_install(env)?.join(".crook-version"))
 }
 
+/// The literal path the coordinator calls crook by (ADR 0027): `crook_bin` when given and not empty, else
+/// the mise shim. Links are not followed, so the shim still picks the version mise has active. A path an
+/// allow rule cannot match as a literal is refused: a relative one, or one holding `"`, `$`, `` ` ``, `\\`
+/// or a control character (spike 27).
+pub fn crook_call_path(env: Env, crook_bin: Option<&str>) -> Result<String, Error> {
+    let path = match crook_bin.filter(|v| !v.is_empty()) {
+        Some(bin) => bin.to_string(),
+        None => mise_shim(env)?.display().to_string(),
+    };
+    if !Path::new(&path).is_absolute() {
+        return Err(Error::Env(format!(
+            "crook's path must be absolute, not {path:?}"
+        )));
+    }
+    if let Some(c) = path
+        .chars()
+        .find(|c| matches!(c, '"' | '$' | '`' | '\\') || c.is_control())
+    {
+        return Err(Error::Env(format!(
+            "crook's path {path:?} holds {c:?}, so no allow rule can match a call to it; \
+             set CROOK_BIN or MISE_DATA_DIR to a path without it"
+        )));
+    }
+    Ok(path)
+}
+
 /// The mise shim: `${MISE_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/mise}/shims/crook` (ADR 0019).
 /// That is where mise itself puts its shims.
 pub fn mise_shim(env: Env) -> Result<PathBuf, Error> {

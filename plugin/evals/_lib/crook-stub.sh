@@ -35,6 +35,14 @@ resume)
     printf 'resumed demo.%s (terminal t3)\n' "$2"
     ;;
 hook)
+    # The coordinator's SessionStart context names the literal path to call, as the real hook does
+    # (ADR 0027). The text must stay launch::call_rule's; a Rust test compares them.
+    if [ "$2" = session-start ] && [ -f "$workspace/.stub-coordinator" ]; then
+        # shellcheck disable=SC2016 # the backticks are text
+        rule='Run every crook command as \"%s\" <subcommand> ..., with that exact quoted path, as its own Bash command: nothing before it and no pipe, `&&` or `;` after it. Only that form runs without asking the maintainer.'
+        context=${rule//'%s'/$0}
+        printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"crook: %s"}}\n' "$context"
+    fi
     exit 0
     ;;
 esac

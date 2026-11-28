@@ -8,7 +8,7 @@ use crate::files::roster;
 use crate::hc::Hc;
 use crate::hc::preflight;
 use crate::launch::{self, Session};
-use crate::{Ctx, Error, herdr_app};
+use crate::{Ctx, Error, herdr_app, paths};
 
 /// `task` is the first task from `crook new --task`; it only matters on a first start (Q1).
 pub fn run(
@@ -26,6 +26,7 @@ pub fn run(
         )));
     }
     let setup = Setup::load(ctx)?;
+    let crook = paths::crook_call_path(ctx.env, setup.crook_bin.as_deref())?;
     preflight::run(hc, &(ctx.vars)())?;
 
     let mut found = coordinator_terminal(hc, slug)?;
@@ -70,6 +71,7 @@ pub fn run(
         session,
         model: setup.config.coordinator_model.as_deref(),
         task,
+        crook: &crook,
     });
     let address = match hc.run(&spec) {
         Ok(terminal) => terminal.address,

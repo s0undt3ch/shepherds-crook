@@ -188,3 +188,43 @@ fn the_shell_expression_spells_the_same_order() {
         "\"${CROOK_BIN:-${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims/crook}\""
     );
 }
+
+#[test]
+fn the_call_path_is_crook_bin_else_the_shim_never_a_link_target() {
+    let env = env_of(&[("HOME", "/h"), ("MISE_DATA_DIR", "/m")]);
+    assert_eq!(
+        crook_call_path(&env, Some("/dev/crook")).expect("path"),
+        "/dev/crook"
+    );
+    assert_eq!(crook_call_path(&env, None).expect("path"), "/m/shims/crook");
+    assert_eq!(
+        crook_call_path(&env, Some("")).expect("path"),
+        "/m/shims/crook"
+    );
+}
+
+#[test]
+fn a_call_path_no_rule_can_match_is_refused() {
+    let env = env_of(&[("HOME", "/h")]);
+    for bad in [
+        "relative/crook",
+        "/a\"b/crook",
+        "/a$b/crook",
+        "/a`b`/crook",
+        "/a\\b/crook",
+        "/a\nb/crook",
+    ] {
+        assert!(crook_call_path(&env, Some(bad)).is_err(), "{bad:?}");
+    }
+    let quoted_home = env_of(&[("HOME", "/h\"q")]);
+    assert!(crook_call_path(&quoted_home, None).is_err());
+}
+
+#[test]
+fn a_call_path_with_spaces_is_fine() {
+    let env = env_of(&[("HOME", "/Users/a b")]);
+    assert_eq!(
+        crook_call_path(&env, None).expect("path"),
+        "/Users/a b/.local/share/mise/shims/crook"
+    );
+}

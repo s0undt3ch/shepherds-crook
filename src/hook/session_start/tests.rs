@@ -167,7 +167,8 @@ fn the_coordinator_start_also_rescans_the_results() {
     assert_eq!(
         ran.context().expect("context"),
         format!(
-            "Undelivered child result: {}",
+            "{}\nUndelivered child result: {}",
+            path_line(&r),
             r.flock.result_path("a").display()
         )
     );
@@ -190,14 +191,80 @@ fn a_closed_flock_resumes_nothing() {
     let before = runs(&r).len();
     let ran = start(&r, &r.coordinator);
     assert_eq!(runs(&r).len(), before);
-    assert_eq!(ran.stdout, "");
+    assert_eq!(ran.context(), Some(path_line(&r)));
+}
+
+/// The shim under the fixture's data home: no `CROOK_BIN` and no `MISE_DATA_DIR` there.
+fn shim(r: &Rig) -> String {
+    r.fx.root()
+        .join("data/mise/shims/crook")
+        .display()
+        .to_string()
+}
+
+fn path_line(r: &Rig) -> String {
+    format!("crook: {}", crate::launch::call_rule(&shim(r)))
 }
 
 #[test]
-fn nothing_to_say_prints_nothing() {
+fn a_quiet_coordinator_start_says_only_the_crook_path() {
     let r = rig();
     let ran = start(&r, &r.coordinator);
-    assert_eq!((ran.stdout.as_str(), ran.stderr.as_str()), ("", ""));
+    assert_eq!(ran.stderr, "");
+    assert_eq!(ran.context(), Some(path_line(&r)));
+    assert!(path_line(&r).contains(&format!("\"{}\" <subcommand>", shim(&r))));
+}
+
+/// ADR 0027: the path rides on every source, so it survives `/clear`, compaction and a resume.
+#[test]
+fn every_source_names_the_crook_path_first() {
+    for source in ["startup", "resume", "clear", "compact"] {
+        let r = rig();
+        add(&r, "lost", State::Active, true);
+        let input = serde_json::json!({"session_id": SESSION, "source": source}).to_string();
+        let ran = run_hook(&r.fx, &r.hc, "session-start", Some(&r.coordinator), &input);
+        let context = ran.context().expect(source);
+        assert_eq!(
+            context.lines().next(),
+            Some(path_line(&r).as_str()),
+            "{source}"
+        );
+        assert!(context.contains("resumed demo.lost"), "{source}: {context}");
+    }
+}
+
+#[test]
+fn the_crook_path_follows_crook_bin() {
+    let r = rig();
+    r.fx.set_env("CROOK_BIN", "/opt/dev/crook");
+    let ran = start(&r, &r.coordinator);
+    assert_eq!(
+        ran.context(),
+        Some(format!(
+            "crook: {}",
+            crate::launch::call_rule("/opt/dev/crook")
+        ))
+    );
+}
+
+#[test]
+fn a_crook_path_no_rule_can_match_is_a_warning_and_the_rest_still_runs() {
+    let r = rig();
+    r.fx.set_env("CROOK_BIN", "/opt/$dev/crook");
+    add(&r, "lost", State::Active, true);
+    let ran = start(&r, &r.coordinator);
+    assert!(ran.stderr.contains("no literal path"), "{}", ran.stderr);
+    let context = ran.context().expect("context");
+    assert!(!context.contains("Run every crook command"), "{context}");
+    assert!(context.contains("resumed demo.lost") || ran.stderr.contains("could not resume"));
+}
+
+#[test]
+fn a_child_is_never_told_the_crook_path() {
+    let r = rig();
+    add(&r, "a", State::Active, true);
+    let a = live_child(&r, "a");
+    assert_eq!(start(&r, &a).stdout, "");
 }
 
 #[test]
@@ -236,7 +303,11 @@ fn a_broken_flock_is_a_warning() {
     let r = rig();
     std::fs::remove_file(r.flock.folder.join("roster.json")).expect("remove");
     let ran = start(&r, &r.coordinator);
-    assert_eq!(ran.stdout, "");
+    assert_eq!(
+        ran.context(),
+        Some(path_line(&r)),
+        "the path comes before the lookup that failed"
+    );
     assert!(ran.stderr.contains("broken flock"), "{}", ran.stderr);
 }
 

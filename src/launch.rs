@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use crate::hc::{Parent, RunSpec};
-use crate::{names, paths};
+use crate::names;
 
 #[cfg(test)]
 mod tests;
@@ -48,6 +48,8 @@ pub struct Coordinator<'a> {
     pub model: Option<&'a str>,
     /// The first task from `crook new --task` (Q1). Used only on a first start.
     pub task: Option<&'a str>,
+    /// The literal path from [`paths::crook_call_path`] (ADR 0027).
+    pub crook: &'a str,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,14 +83,21 @@ fn text(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// The `--settings` JSON that lets the coordinator call the shim without a prompt (Q21). The rule
-/// must match the shim form the coordinator skill writes (Q20); Claude Code's rule syntax is not
-/// checked here, the e2e run confirms it.
-pub fn settings_json() -> String {
+/// The `--settings` JSON that lets the coordinator call crook without a prompt (ADR 0027). Claude Code
+/// matches a rule only against a command with no variables in it, so the rule names the literal path.
+pub fn settings_json(crook: &str) -> String {
     serde_json::json!({
-        "permissions": { "allow": [format!("Bash({} *)", paths::SHIM_SHELL_EXPR)] }
+        "permissions": { "allow": [format!("Bash(\"{crook}\" *)")] }
     })
     .to_string()
+}
+
+/// How the coordinator must call crook, for its first prompt and its SessionStart context (ADR 0027).
+pub fn call_rule(crook: &str) -> String {
+    format!(
+        "Run every crook command as \"{crook}\" <subcommand> ..., with that exact quoted path, as its own Bash \
+         command: nothing before it and no pipe, `&&` or `;` after it. Only that form runs without asking the maintainer."
+    )
 }
 
 /// The argv after `--` in `hc run`.
@@ -133,15 +142,22 @@ fn claude_argv(
 
 /// `crook open`'s launch: `--no-parent`, so a maintainer's `open` from inside another terminal
 /// does not make that terminal its parent (spike 24). A resume has no prompt (ADR 0018).
+/// The coordinator always gets `CROOK_BIN` set to `c.crook`, so its hooks name the same path as its allow
+/// rule whatever the core's environment holds (ADR 0027).
 pub fn coordinator(c: &Coordinator) -> RunSpec {
     let prompt = match c.session {
         Session::New(_) => Some(coordinator_prompt(
             c.slug,
             c.common.flock_folder,
             c.common.notes_folder,
+            c.crook,
             c.task,
         )),
         Session::Resume(_) => None,
+    };
+    let common = Common {
+        crook_bin: Some(c.crook),
+        ..c.common
     };
     RunSpec {
         name: names::hc_coordinator(c.slug),
@@ -149,8 +165,8 @@ pub fn coordinator(c: &Coordinator) -> RunSpec {
         labels: pairs(names::coordinator_labels(c.slug, c.common.version)),
         parent: Parent::None,
         argv: claude_argv(
-            &c.common,
-            Some(settings_json()),
+            &common,
+            Some(settings_json(c.crook)),
             COORDINATOR_AGENT,
             c.model,
             c.session,
@@ -186,13 +202,15 @@ pub fn coordinator_prompt(
     slug: &str,
     flock_folder: &Path,
     notes_folder: &Path,
+    crook: &str,
     task: Option<&str>,
 ) -> String {
     let mut prompt = format!(
-        "You are the coordinator of the crook flock {slug}. Its folder is {} and its notes folder is {}. \
+        "You are the coordinator of the crook flock {slug}. Its folder is {} and its notes folder is {}. {} \
          Load the crook-coordinator skill and follow it.",
         flock_folder.display(),
-        notes_folder.display()
+        notes_folder.display(),
+        call_rule(crook)
     );
     if let Some(task) = task {
         prompt.push_str("\n\nThe maintainer's first task: ");

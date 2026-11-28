@@ -12,7 +12,8 @@ plans in [`docs/plans/`](docs/plans/README.md).
 
 ## Install
 
-crook installs with mise, through its packslip backend:
+No release is published yet, so these steps work from the first release on. crook installs with mise, through its
+packslip backend:
 
 ```sh
 mise use -g packslip:github.com/s0undt3ch/shepherds-crook

@@ -323,3 +323,33 @@ fn startup_and_resume_never_move_a_session_id() {
         );
     }
 }
+
+#[test]
+fn a_clear_carries_the_old_sessions_record_to_the_new_id() {
+    let r = rig();
+    let old = load_roster(&r.flock).coordinator.session_id;
+    version::save(
+        &r.fx.ctx(),
+        &old,
+        &version::Record {
+            version: "0.9.0".into(),
+            reloaded: false,
+        },
+    )
+    .expect("save");
+    start_as(&r, &r.coordinator, CLEARED, "clear");
+    let carried = version::load(&r.fx.ctx(), CLEARED)
+        .expect("load")
+        .expect("record");
+    assert_eq!(carried.version, "0.9.0", "not the disk's 1.0.0");
+}
+
+#[test]
+fn a_clear_with_no_old_record_records_the_disk_version() {
+    let r = rig();
+    start_as(&r, &r.coordinator, CLEARED, "clear");
+    let record = version::load(&r.fx.ctx(), CLEARED)
+        .expect("load")
+        .expect("record");
+    assert_eq!(record.version, "1.0.0");
+}

@@ -19,6 +19,9 @@ pub fn run(ctx: &Ctx, hc: &dyn Hc, io: &mut Io, input: &Input, who: &Who) -> Rep
             // `compact` the session may still run an older plugin text than the disk has, and
             // overwriting would hide that from the Stop hook's reload.
             let fresh = matches!(input.source.as_deref(), Some("startup" | "resume"));
+            if !fresh {
+                carry_record(ctx, session, who);
+            }
             if let Err(e) = version::record_start(ctx, session, fresh) {
                 io.warn(format!(
                     "crook hook: could not record the plugin version: {e}"
@@ -123,4 +126,34 @@ fn follow_new_session(
         }
     }
     Ok(())
+}
+
+/// `/clear` brings a new session id (D102), so D70's "keep the record" would find none and record
+/// the disk's version, hiding a reload the session still needs. The new id takes over the old
+/// id's record instead, read from the roster before [`follow_new_session`] moves it. A needless
+/// reload is the worst case if the clear did load the new text.
+fn carry_record(ctx: &Ctx, session: &str, who: &Who) {
+    let Ok(flock) = flock::find(ctx.env, &who.flock) else {
+        return;
+    };
+    let Ok(on_disk) = roster::load(&flock.folder) else {
+        return;
+    };
+    let old = match &who.child {
+        Some(name) => on_disk
+            .children
+            .iter()
+            .find(|c| &c.name == name)
+            .map(|c| c.session_id.clone()),
+        None => Some(on_disk.coordinator.session_id.clone()),
+    };
+    let Some(old) = old.filter(|old| old != session) else {
+        return;
+    };
+    if matches!(version::load(ctx, session), Ok(Some(_))) {
+        return;
+    }
+    if let Ok(Some(record)) = version::load(ctx, &old) {
+        let _ = version::save(ctx, session, &record);
+    }
 }

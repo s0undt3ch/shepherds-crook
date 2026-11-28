@@ -1,13 +1,19 @@
 ---
 number: 19
-title: "Ship crook as a binary, installed by mise, that installs its herdr mod"
+title: Ship crook as a binary, installed by mise, that installs its herdr mod
 status: accepted
 date: 2026-11-27
 decision-makers:
 - maintainer
+links:
+- target: 27
+  kind: amendedby
 ---
 
 # Ship crook as a binary, installed by mise, that installs its herdr mod
+
+Amended by [0027](0027-the-coordinator-calls-crook-by-a-literal-path.md): the coordinator calls crook by the
+literal path `crook open` resolves from the shim, not by the shim form; hooks and the mod keep the shim form.
 
 ## Context and problem statement
 

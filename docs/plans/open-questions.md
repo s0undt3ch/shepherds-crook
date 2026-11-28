@@ -104,7 +104,7 @@ The maintainer approved these fixes after an audit of the ADRs against the plans
 
 | # | Question | Decision | Status |
 | --- | --- | --- | --- |
-| 46 | Q21's allow rule can never match: Claude Code refuses to match any command that holds a variable (spike 27). How does the coordinator call `crook` with no prompt? | Proposed: `crook open` resolves the shim to a literal path, allows `Bash("<path>" *)`, and names the path in the first prompt and in the coordinator's SessionStart context ([0027](../architecture/decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md)). Not built until the maintainer accepts 0027. | open |
+| 46 | Q21's allow rule can never match: Claude Code refuses to match any command that holds a variable (spike 27). How does the coordinator call `crook` with no prompt? | `crook open` resolves the shim to a literal path, allows `Bash("<path>" *)`, and names the path in the first prompt and in the coordinator's SessionStart context ([0027](../architecture/decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md), accepted 2026-11-28). | decided |
 
 ## Changed during the build
 

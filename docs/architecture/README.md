@@ -44,7 +44,7 @@ that decisions cite lives in [`research/`](research/).
 | [0024](decisions/0024-flock-file-formats.md) | File formats for the roster, briefs, results and delivery marks | Accepted |
 | [0025](decisions/0025-roles-and-child-models.md) | Two roles; the coordinator picks each child's model | Accepted |
 | [0026](decisions/0026-config-file.md) | crook's settings live in an XDG config file | Accepted |
-| [0027](decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md) | The coordinator calls crook by a literal path | Proposed |
+| [0027](decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md) | The coordinator calls crook by a literal path | Accepted |
 
 ## Open questions
 

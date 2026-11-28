@@ -1,10 +1,15 @@
 ---
 number: 27
-title: "The coordinator calls crook by a literal path"
-status: proposed
+title: The coordinator calls crook by a literal path
+status: accepted
 date: 2026-11-28
 decision-makers:
 - maintainer
+links:
+- target: 19
+  kind: amends
+- target: 20
+  kind: amends
 ---
 
 # The coordinator calls crook by a literal path
@@ -73,5 +78,4 @@ Chosen option: Option A, because it is the only form an allow rule matches, and 
 
 - Spike 27 in [the spikes](../research/2026-11-26-hc-herdr-app-spikes.md).
 - Build log D103 and D105; open question Q46.
-- If accepted, it amends [0019](0019-ship-crook-as-a-binary.md) and
-  [0020](0020-mechanical-steps-run-through-crook.md); record that with `adrs link` then.
+- It amends [0019](0019-ship-crook-as-a-binary.md) and [0020](0020-mechanical-steps-run-through-crook.md).

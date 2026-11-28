@@ -215,6 +215,7 @@ fn git(cwd: &Path, args: &[&str]) {
         .args(["-c", "commit.gpgsign=false"])
         .args(args)
         .current_dir(cwd)
+        .env("HOME", cwd.join(".no-home"))
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()

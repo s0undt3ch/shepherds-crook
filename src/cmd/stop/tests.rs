@@ -104,6 +104,8 @@ fn a_clean_worktree_is_removed_and_the_branch_stays() {
     let branches = std::process::Command::new("git")
         .args(["branch", "--list", "crook/*"])
         .current_dir(&w.repo)
+        .env_clear()
+        .envs(crate::testutil::git_env())
         .output()
         .expect("git");
     assert!(String::from_utf8_lossy(&branches.stdout).contains("crook/demo/auth"));

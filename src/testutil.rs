@@ -21,6 +21,20 @@ pub fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<>
     move |key| map.get(key).cloned()
 }
 
+/// The environment every real `git` in a test runs with: the caller's `PATH` and nothing of the developer's
+/// home or git config (build log D118).
+// Tests run outside any Ctx; this reads only the caller's PATH and a temp folder name.
+#[allow(clippy::disallowed_methods)]
+pub fn git_env() -> Vec<(String, String)> {
+    let home = std::env::temp_dir().join("crook-tests-no-home");
+    vec![
+        ("PATH".into(), std::env::var("PATH").unwrap_or_default()),
+        ("HOME".into(), home.display().to_string()),
+        ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+    ]
+}
+
 /// A writer whose contents the test can read at any moment, even while a command holds it.
 #[derive(Clone, Default)]
 pub struct SharedBuf(pub Rc<RefCell<Vec<u8>>>);
@@ -89,7 +103,13 @@ impl Runner for Router {
     fn run(&self, cmd: Cmd, timeout: Duration) -> Result<Output, Error> {
         self.programs.borrow_mut().push(cmd.program.clone());
         match cmd.program.as_str() {
-            "git" => RealRunner.run(cmd, timeout),
+            "git" => {
+                let mut cmd = cmd;
+                if cmd.env.is_none() {
+                    cmd = cmd.env(git_env());
+                }
+                RealRunner.run(cmd, timeout)
+            }
             // A test's own script, such as a stand-in login shell.
             program if program.starts_with('/') => {
                 let mut cmd = cmd;
@@ -302,8 +322,8 @@ pub fn init_repo(parent: &std::path::Path) -> PathBuf {
             .args(["-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&root)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_clear()
+            .envs(git_env())
             .output()
             .expect("git runs");
         assert!(out.status.success(), "git {args:?}");

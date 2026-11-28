@@ -19,8 +19,8 @@ fn raw(cwd: &Path, args: &[&str]) -> String {
         .args(["-c", "commit.gpgsign=false"])
         .args(args)
         .current_dir(cwd)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_clear()
+        .envs(crate::testutil::git_env())
         .output()
         .expect("git runs");
     assert!(
@@ -417,8 +417,8 @@ fn a_real_conflicted_rebase_blocks_removal() {
     let out = Command::new("git")
         .args(["rebase", "main"])
         .current_dir(&wt.path)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_clear()
+        .envs(crate::testutil::git_env())
         .output()
         .expect("git runs");
     assert!(!out.status.success(), "the rebase should conflict");

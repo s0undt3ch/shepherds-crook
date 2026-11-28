@@ -39,8 +39,12 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: |
         git am --no-verify --committer-date-is-author-date "$RELEASE_PATCH_NAME"
-        mapfile -t allowed <<<"$ALLOWED_FILES"
-        "$ACTION_PATH/check-files.sh" commit "${allowed[@]}"
+        # No `mapfile`: macOS runners' /bin/bash is 3.2.
+        allowed=()
+        while IFS= read -r line; do
+          if [ -n "$line" ]; then allowed+=("$line"); fi
+        done <<<"$ALLOWED_FILES"
+        "$ACTION_PATH/check-files.sh" commit ${allowed[@]+"${allowed[@]}"}
         # Safety net: actions/checkout lands on GITHUB_SHA, where the patch was built; this fails if a
         # future checkout change (e.g. `ref: main`) would tag a tree the release never built.
         if [ "$VERIFY_BASE" = "true" ]; then

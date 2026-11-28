@@ -146,6 +146,26 @@ def test_bump_refuses_anything_but_x_y_z_or_x_y_z_rc_n(
     assert _version_of(cargo_toml.parent) == "0.1.0"
 
 
+@needs_cargo
+@pytest.mark.parametrize("version", ["0.0.1-dev3", "0.1.1-dev0+gabc1234", "0.1.0-rc.2.dev5"])
+def test_bump_takes_a_dev_version_with_dev(crate: Path, plugin_json: Path, version: str) -> None:
+    ctx = make_context(crate)
+    bump(ctx, version, dev=True, manifest=ResolvedPath(crate / "Cargo.toml"), plugin_manifest=ResolvedPath(plugin_json))
+    assert _version_of(crate) == version
+    assert _plugin_version(plugin_json) == version
+
+
+@pytest.mark.parametrize(("version", "dev"), [("0.0.1-dev3", False), ("1.2.3", True), ("0.1.1-dev1+gXYZ1234", True)])
+def test_a_dev_version_needs_dev_and_dev_takes_only_a_dev_version(
+    version: str, dev: bool, tmp_path: Path, plugin_json: Path, cargo_toml: Path
+) -> None:
+    calls: Calls = []
+    ctx = _recording_ctx(tmp_path, calls)
+    with pytest.raises(SystemExit):
+        bump(ctx, version, dev=dev, manifest=ResolvedPath(cargo_toml), plugin_manifest=ResolvedPath(plugin_json))
+    assert calls == []
+
+
 def test_bump_syncs_the_lock_file_of_the_manifest_it_was_given(
     tmp_path: Path, plugin_json: Path, cargo_toml: Path
 ) -> None:

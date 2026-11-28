@@ -67,6 +67,12 @@ def test_stage_lays_out_the_archive(repo: Path, binary: Path, tmp_path: Path) ->
     assert not (folder / "plugin/skills/.DS_Store").exists()
 
 
+@pytest.mark.parametrize("version", ["0.0.1-dev3", "0.1.1-dev0+gabc1234", "0.1.0-rc.2.dev5+g0123abcd"])
+def test_stage_takes_ci_dev_versions(repo: Path, binary: Path, tmp_path: Path, version: str) -> None:
+    folder = stage_archive_folder(repo, binary, tmp_path / "out", version=version, triple=TRIPLE)
+    assert folder.name == f"crook-{version}-{TRIPLE}"
+
+
 def test_stage_ships_only_what_git_tracks(repo: Path, binary: Path, tmp_path: Path) -> None:
     folder = stage_archive_folder(repo, binary, tmp_path / "out", version="0.0.0-ci", triple=TRIPLE)
     shipped = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if not p.is_dir())

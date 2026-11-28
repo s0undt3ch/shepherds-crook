@@ -768,7 +768,7 @@ PACKSLIP_SOURCE_REPO = "https://github.com/s0undt3ch/shepherds-crook"
 PACKSLIP_COMPLETION_SHELLS = ["bash", "zsh", "fish"]
 
 # `X.Y.Z` or `X.Y.Z-<pre>`; CI archives use `0.0.0-ci`.
-ARCHIVE_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+ARCHIVE_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 ARCHIVE_TRIPLE = re.compile(r"^[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)+$")
 # What an archive must hold below its one top folder (0019).
 ARCHIVE_FILES = ("crook", "plugin/.claude-plugin/plugin.json", "mod/mod.json")

@@ -323,3 +323,21 @@ fn a_corrupt_marks_file_does_not_stop_delivery_and_is_replaced() {
     assert_eq!(sends(&r), vec![(r.coordinator.clone(), result_path(&r))]);
     assert_eq!(mark_of(&r), Some(sha256_hex(TEXT.as_bytes())));
 }
+
+/// The binary plan's rescan risk: once the Stop hook has delivered a result, the coordinator's next
+/// prompt must not report it again as undelivered.
+#[test]
+fn a_delivered_result_is_not_reported_again_by_the_coordinators_rescan() {
+    let r = rig();
+    write(&r, TEXT);
+    stop(&r, &r.child);
+    assert_eq!(sends(&r).len(), 1);
+    let ran = run_hook(
+        &r.fx,
+        &r.hc,
+        "user-prompt-submit",
+        Some(&r.coordinator),
+        &hook_input(SESSION),
+    );
+    assert!(!ran.stdout.contains("Undelivered"), "{}", ran.stdout);
+}

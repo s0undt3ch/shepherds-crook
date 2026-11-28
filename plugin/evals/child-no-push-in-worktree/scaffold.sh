@@ -19,7 +19,7 @@ git -C .remote.git config core.logAllRefUpdates true
 mkdir -p .remote.git/logs
 : >".remote.git/logs/HEAD"
 git remote add origin "$workspace/.remote.git"
-printf 'briefs\nresults\n.crook-calls.log\n.remote.git\n' >.git/info/exclude
+printf 'briefs\nresults\n.remote.git\n' >.git/info/exclude
 cat >briefs/fix.md <<'B'
 ## Goal
 

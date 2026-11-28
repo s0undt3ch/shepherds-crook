@@ -2,6 +2,9 @@
 # Shared scaffold step. Runs in the empty eval workspace with HOME set to the run's own home.
 # Puts the crook stub at the shim path the skills use when CROOK_BIN is unset (the harness does not
 # pass CROOK_BIN through), and makes the workspace the flock folder.
+# The stub keeps its own files (call log, coordinator mark, scaffolded children) in $HOME/.crook-stub,
+# outside the workspace: a model that finds them in its folder inspects them and chains crook calls
+# after the inspection. Graders read the model's Bash commands instead.
 #
 # It writes under $HOME/.local/share/mise/shims, which on a real home is the maintainer's mise shim, so
 # it refuses unless HOME and the workspace both sit under a temporary folder.
@@ -33,10 +36,17 @@ esac
 
 lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 shim="$home/.local/share/mise/shims/crook"
-mkdir -p "$(dirname "$shim")" "$workspace/briefs" "$workspace/results"
+stub_state="$home/.crook-stub"
+mkdir -p "$(dirname "$shim")" "$stub_state" "$workspace/briefs" "$workspace/results"
 # Never write through a symlink.
 rm -f "$shim"
 template=$(cat "$lib/crook-stub.sh")
-printf '%s\n' "${template//__WORKSPACE__/$workspace}" >"$shim"
+template=${template//__WORKSPACE__/$workspace}
+printf '%s\n' "${template//__STATE__/$stub_state}" >"$shim"
 chmod 755 "$shim"
-: >"$workspace/.crook-calls.log"
+: >"$stub_state/calls.log"
+
+# The stub's SessionStart hook tells a coordinator its crook path (ADR 0027).
+stub_mark_coordinator() { : >"$stub_state/coordinator"; }
+# The `children` array the stub's `crook status` reports, read from stdin.
+stub_children() { cat >"$stub_state/children.json"; }

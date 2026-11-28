@@ -33,6 +33,8 @@ Other rules about commands:
 
 - Read files with the Read tool, and write or change them with the Write and Edit tools. Never use `cat`, `echo`,
   `tee` or a heredoc in Bash for that: only those tools, and crook calls, run without asking the maintainer.
+- Look around with the Glob and Grep tools, not `ls`, `find` or `grep` in Bash. A job on a repository needs no
+  reading of its code first: the child reads it.
 - Never call `hc` yourself. Talk to a child with `crook send` and look at its screen with `crook read`. They reach
   only this flock's live children, and `crook send` never types into a dialog that belongs to the maintainer.
   crook owns launching and ending sessions.

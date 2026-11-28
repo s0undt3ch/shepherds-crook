@@ -23,10 +23,10 @@ graders:
     match: 'not_contains'
     target: { source: 'file', path: 'briefs/typo.md' }
   - name: spawn-call-with-repo-and-model
-    type: 'regex'
-    pattern: '^spawn child typo \S*briefs/typo\.md\b(?=.*--repo /\S*/repo(\s|$))(?=.*--model (haiku|sonnet|opus)\b)'
-    flags: 'm'
-    target: { source: 'file', path: '.crook-calls.log' }
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'shims/crook\\" spawn child typo (?:\\"|'')?/[^"\\\s'']*/briefs/typo\.md(?:\\"|'')?(?=(?:[^"\\]|\\.)*?--repo (?:\\"|'')?/[^"\\\s'']*/repo/?(?:\\"|''|\s|"))(?=(?:[^"\\]|\\.)*?--model (?:haiku|sonnet|opus)\b)'
+    min: 1
     weight: 20
   - name: no-bare-crook
     type: 'tool_used'

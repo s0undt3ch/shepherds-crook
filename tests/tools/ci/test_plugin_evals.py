@@ -130,8 +130,6 @@ def test_every_graded_file_is_made_by_the_scaffold_or_the_model(case: str) -> No
             continue  # the coordinator writes its briefs
         if path == ".git/logs/HEAD":
             assert "git init" in made
-        elif path == ".crook-calls.log":
-            assert path in (EVALS / "_lib" / "install.sh").read_text(encoding="utf-8")
         else:
             assert path in made, f"{case}: {grader['name']} reads {path}, which nothing creates"
 
@@ -172,7 +170,7 @@ def test_the_stub_logs_arguments_and_prints_a_valid_status(tmp_path: Path) -> No
     brief = str(workspace.resolve() / "briefs" / "survey.md")
     out = _call(home, workspace, "spawn", "child", "survey", brief, "--model", "haiku").stdout
     assert out.startswith("spawned demo.survey (terminal ")
-    log = (workspace / ".crook-calls.log").read_text(encoding="utf-8").splitlines()
+    log = (home / ".crook-stub" / "calls.log").read_text(encoding="utf-8").splitlines()
     assert log == ["status demo --json", f"spawn child survey {brief} --model haiku"]
 
 
@@ -186,7 +184,7 @@ def test_the_stub_refuses_a_brief_outside_briefs_or_missing(tmp_path: Path) -> N
 
 def test_the_stub_reports_the_children_a_case_scaffolds(tmp_path: Path) -> None:
     home, workspace = _install(tmp_path)
-    (workspace / ".stub-children.json").write_text('[{"name":"survey"}]', encoding="utf-8")
+    (home / ".crook-stub" / "children.json").write_text('[{"name":"survey"}]', encoding="utf-8")
     status = json.loads(_call(home, workspace, "status", "demo", "--json").stdout)
     assert status["flocks"][0]["children"] == [{"name": "survey"}]
 
@@ -194,7 +192,7 @@ def test_the_stub_reports_the_children_a_case_scaffolds(tmp_path: Path) -> None:
 def test_the_stub_tells_only_a_coordinator_its_literal_path(tmp_path: Path) -> None:
     home, workspace = _install(tmp_path)
     assert _call(home, workspace, "hook", "session-start").stdout == ""
-    (workspace / ".stub-coordinator").write_text("", encoding="utf-8")
+    (home / ".crook-stub" / "coordinator").write_text("", encoding="utf-8")
     out = json.loads(_call(home, workspace, "hook", "session-start").stdout)["hookSpecificOutput"]
     shim = home / ".local/share/mise/shims/crook"
     assert out["hookEventName"] == "SessionStart"
@@ -202,13 +200,80 @@ def test_the_stub_tells_only_a_coordinator_its_literal_path(tmp_path: Path) -> N
     assert _call(home, workspace, "hook", "stop").stdout == ""
 
 
+def test_the_stub_keeps_nothing_of_its_own_in_the_workspace(tmp_path: Path) -> None:
+    """A model that finds the stub's files in its folder inspects them and chains crook calls after."""
+    home, workspace = _install(tmp_path)
+    _call(home, workspace, "status", "demo", "--json")
+    assert sorted(p.name for p in workspace.iterdir()) == ["briefs", "results"]
+
+
+def _bash(command: str) -> str:
+    """A Bash tool input as the harness serialises it for `input_match`."""
+    return json.dumps({"command": command, "description": "x"}, separators=(",", ":"))
+
+
+def _input_match(case: str, name: str) -> re.Pattern[str]:
+    (grader,) = [g for g in _graders(case) if g["name"] == name]
+    return re.compile(grader["input_match"])
+
+
+SHIM = "/tmp/h/.local/share/mise/shims/crook"
+WS = "/tmp/h/cwd"
+
+
+@pytest.mark.parametrize(
+    ("command", "matches"),
+    [
+        (f'"{SHIM}" spawn child typo {WS}/briefs/typo.md --repo {WS}/repo --model haiku', True),
+        (f'"{SHIM}" spawn child typo "{WS}/briefs/typo.md" --model sonnet --repo "{WS}/repo"', True),
+        (f'"{SHIM}" spawn child typo \'{WS}/briefs/typo.md\' --repo \'{WS}/repo/\' --model opus', True),
+        (f'"{SHIM}" spawn child typo briefs/typo.md --repo {WS}/repo --model haiku', False),
+        (f'"{SHIM}" spawn child typo {WS}/briefs/typo.md --model haiku', False),
+        (f'"{SHIM}" spawn child typo {WS}/briefs/typo.md --repo {WS}/repo', False),
+        (f'"{SHIM}" spawn child typo {WS}/briefs/typo.md --repo {WS}/repository --model haiku', False),
+        (f'"{SHIM}" spawn child other {WS}/briefs/typo.md --repo {WS}/repo --model haiku', False),
+    ],
+)
+def test_the_repo_spawn_grader_reads_the_typed_command(command: str, matches: bool) -> None:
+    found = _input_match("coord-repo-child", "spawn-call-with-repo-and-model").search(_bash(command))
+    assert bool(found) is matches
+
+
+@pytest.mark.parametrize(
+    ("command", "matches"),
+    [
+        (f'"{SHIM}" spawn child survey {WS}/briefs/survey.md --model haiku', True),
+        (f'"{SHIM}" spawn child survey "{WS}/briefs/survey.md" --model haiku', True),
+        (f'"{SHIM}" spawn child survey {WS}/briefs/survey.md --model sonnet', False),
+        (f'"{SHIM}" spawn child survey {WS}/briefs/survey.md', False),
+    ],
+)
+def test_the_spawn_grader_reads_the_typed_command(command: str, matches: bool) -> None:
+    found = _input_match("coord-writes-brief-and-spawns", "spawn-call-with-model").search(_bash(command))
+    assert bool(found) is matches
+
+
+@pytest.mark.parametrize(
+    ("command", "matches"),
+    [
+        (f'"{SHIM}" resume survey --model sonnet', True),
+        (f'"{SHIM}" stop survey', True),
+        (f'"{SHIM}" status demo --json', False),
+        (f'"{SHIM}" read survey', False),
+    ],
+)
+def test_the_no_resume_grader_reads_the_typed_command(command: str, matches: bool) -> None:
+    found = _input_match("coord-failed-result-asks-first", "no-resume").search(_bash(command))
+    assert bool(found) is matches
+
+
 @pytest.mark.parametrize("case", CASES)
 def test_only_coordinator_cases_mark_a_coordinator(case: str) -> None:
-    marked = ".stub-coordinator" in (EVALS / case / "scaffold.sh").read_text(encoding="utf-8")
+    marked = "stub_mark_coordinator" in (EVALS / case / "scaffold.sh").read_text(encoding="utf-8")
     assert marked == case.startswith("coord-")
 
 
-@pytest.mark.parametrize("case", [c for c in CASES if (EVALS / c / "scaffold.sh").read_text().count("stub-children")])
+@pytest.mark.parametrize("case", [c for c in CASES if (EVALS / c / "scaffold.sh").read_text().count("stub_children")])
 def test_a_scaffolded_child_has_every_key_the_schema_requires(case: str, tmp_path: Path) -> None:
     home = tmp_path / "home"
     workspace = home / "cwd"
@@ -292,7 +357,7 @@ def test_install_never_writes_through_a_symlink(tmp_path: Path) -> None:
     )
     assert target.read_text(encoding="utf-8") == "the real shim"
     assert not shim.is_symlink()
-    assert "crook-calls.log" in shim.read_text(encoding="utf-8")
+    assert f"state='{home.resolve()}/.crook-stub'" in shim.read_text(encoding="utf-8")
 
 
 def test_install_refuses_unusual_path_characters(tmp_path: Path) -> None:

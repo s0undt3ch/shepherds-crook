@@ -16,11 +16,11 @@ execution:
     <hc from="t2 demo.survey">Result updated: results/survey.md</hc>
 graders:
   - name: no-resume
-    type: 'regex'
-    pattern: '^(resume|stop)\b'
-    flags: 'm'
-    match: 'not_contains'
-    target: { source: 'file', path: '.crook-calls.log' }
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'shims/crook\\"\s+(?:resume|stop)\b'
+    min: 0
+    max: 0
     weight: 20
   - name: no-ask-user-question
     type: 'tool_used'

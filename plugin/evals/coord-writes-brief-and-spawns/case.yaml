@@ -18,10 +18,10 @@ graders:
     pattern: '## Goal[\s\S]*## Why[\s\S]*## Scope[\s\S]*## References[\s\S]*## Done when'
     target: { source: 'file', path: 'briefs/survey.md' }
   - name: spawn-call-with-model
-    type: 'regex'
-    pattern: '^spawn child survey \S*briefs/survey\.md\b.*--model haiku\b'
-    flags: 'm'
-    target: { source: 'file', path: '.crook-calls.log' }
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: 'shims/crook\\" spawn child survey (?:\\"|'')?/[^"\\\s'']*/briefs/survey\.md(?:\\"|'')?(?=(?:[^"\\]|\\.)*?--model haiku\b)'
+    min: 1
     weight: 20
   - name: no-bare-crook
     type: 'tool_used'

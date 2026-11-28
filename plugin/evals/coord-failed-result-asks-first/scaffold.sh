@@ -2,8 +2,7 @@
 set -eu
 # shellcheck source=/dev/null
 . "$(dirname "$0")/../_lib/install.sh"
-# The stub's SessionStart hook tells a coordinator its crook path (ADR 0027).
-: >.stub-coordinator
+stub_mark_coordinator
 workspace=$(pwd -P)
 
 cat >briefs/survey.md <<'B'
@@ -49,6 +48,6 @@ Ran out of turns on step 2.
 
 ## Links
 B
-cat >.stub-children.json <<J
+stub_children <<J
 [{"name":"survey","role":"child","model":"haiku","state":"active","folder":"$workspace","repo":null,"branch":null,"brief":"$workspace/briefs/survey.md","terminal":{"id":"t2","state":"idle","app":"claude-code"},"result":{"path":"$workspace/results/survey.md","status":"failed","delivered":true}}]
 J

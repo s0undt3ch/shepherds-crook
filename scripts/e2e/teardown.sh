@@ -15,19 +15,20 @@ command -v lsof >/dev/null || die "lsof is needed to find what still runs in the
 cd / || exit 1
 failed=0
 
+# Claude keeps its own sockets in cc-socks/ until its processes exit; the leftovers loop below ends those.
 # The run's own core only: hc.sh sets the run's HC_SESSION and sockets, and refuses anything else.
-if [ -n "$(find "$RT" -type s 2>/dev/null)" ]; then
+if [ -n "$(find "$RT" -type s -not -path "*/cc-socks/*" 2>/dev/null)" ]; then
   "$BASH" "$here/hc.sh" "$envf" server stop >/dev/null 2>&1 || {
     echo "teardown: hc server stop failed" >&2
     failed=1
   }
   # The core removes its sockets as it exits; poll for them instead of guessing a delay.
   for _ in $(seq 1 20); do
-    [ -z "$(find "$RT" -type s 2>/dev/null)" ] && break
+    [ -z "$(find "$RT" -type s -not -path "*/cc-socks/*" 2>/dev/null)" ] && break
     sleep 0.5
   done
 fi
-if [ -n "$(find "$RT" -type s 2>/dev/null)" ]; then
+if [ -n "$(find "$RT" -type s -not -path "*/cc-socks/*" 2>/dev/null)" ]; then
   echo "teardown: a socket is still in $RT after hc server stop" >&2
   failed=1
 fi

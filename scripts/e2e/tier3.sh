@@ -197,6 +197,7 @@ not_in_tree() { ! grep -rq -- "$1" "$2"; }
 names_in() { find "$1" -maxdepth 1 -type f -exec basename {} \; 2>/dev/null | LC_ALL=C sort | tr '\n' ' '; }
 new_terminal() { local a; a="$(address_of "$1")" && [ -n "$a" ] && [ "$a" != "$2" ]; }
 roster_model_is() { [ "$(child_field "$1" "$2" model)" = "$3" ]; }
+no_core_sockets() { [ -z "$(find "$RT/herdr-core" -type s 2>/dev/null)" ]; }
 no_resumed_names() {
   local out
   out="$(hc ls --json)" || return 1
@@ -241,7 +242,7 @@ s4() {
   spawn_child s4 one "Set the result file's status to done and its Summary to the single word ok." || { stop_scenario "spawn one"; return; }
   wait_for 240 result_is s4 one "done" || { stop_scenario "the child never wrote status done"; return; }
   expect ".delivered.json holds the SHA-256 of the whole result file (Q27)" wait_for 60 mark_is_file s4 one
-  local p ctr n0 m0 sid proj before after newfiles
+  local p ctr n0 m0 sid proj before after newfiles newid
   p="$(res s4 one)"
   ctr="$(transcript "$(coord_sid s4)")"
   expect "the coordinator's screen shows an <hc from=…> line with 'Result updated: <path>'" \
@@ -272,8 +273,26 @@ s4() {
   if say s4.one "/clear" 60 && sleep 3 && say s4.one "Append the line 'after clear' under Summary in $p, keep status done, then end your turn." 120; then
     after="$(names_in "$proj")"
     newfiles="$(comm -13 <(printf '%s\n' "$before" | tr ' ' '\n' | sort) <(printf '%s\n' "$after" | tr ' ' '\n' | sort) | tr '\n' ' ')"
-    note "/clear: transcripts new in the child's project folder: ${newfiles:-none}; the roster still says session_id $sid"
+    note "/clear: transcripts new in the child's project folder: ${newfiles:-none}; the original session id was $sid"
     note "/clear: SessionStart records now: $(names_in "$STATE/crook/sessions")"
+    newid="${newfiles%%.jsonl*}"
+    newid="${newid// /}"
+    if [ -n "$newid" ] && [ "$newid" != "$sid" ] && [ -z "${newfiles#*.jsonl }" ]; then
+      expect "/clear (D114): roster.json's session_id for the child is the new session id, not the original" test "$(child_field s4 one session_id)" = "$newid"
+      expect "/clear (D115): a version record exists for the new id" test -s "$STATE/crook/sessions/$newid"
+      expect "/clear (D115): the new id's record holds the version the old id's did" test "$(jq -r .version "$STATE/crook/sessions/$newid")" = "$(jq -r .version "$STATE/crook/sessions/$sid" 2>/dev/null)"
+      hc kill s4.one >/dev/null 2>&1
+      wait_for 30 not_live s4.one || note "the cleared child's terminal did not end"
+      if crook resume one --flock s4 >"$RUN_TMP/resume-s4.out" 2>&1; then
+        expect "/clear: crook resume launches with --resume <the new id>" wait_for 30 proc_with_id --resume "$newid" "--agent crook:child"
+        wait_for 90 state_is s4.one blocked || true
+        trust_in s4.one || true
+      else
+        bad "/clear: crook resume one failed: $(head -c 200 "$RUN_TMP/resume-s4.out")"
+      fi
+    else
+      nx "/clear: not exactly one new transcript (${newfiles:-none}), so the new session id is unknown"
+    fi
     if grep -q 'after clear' "$p"; then
       expect "/clear: a result changed after it is still delivered to the coordinator" wait_for 60 mark_is_file s4 one
     else
@@ -360,7 +379,7 @@ s6() {
   asid="$(child_field s6 a session_id)"
   before="$(jq -S '.children | map({name,session_id,model,state})' "$(roster s6)")"
   hc server stop >/dev/null 2>&1
-  expect "hc server stop ended every terminal" wait_for 15 test -z "$(find "$RT" -type s)"
+  expect "hc server stop ended the core: no core socket is left" wait_for 15 no_core_sockets
   out="$(crook open s6 2>&1)"
   case "$out" in *"opened flock s6"*) ok "crook open s6 after the core stop starts the coordinator" ;; *) stop_scenario "crook open s6: $out"; return ;; esac
   # Every resumed session shows the add-dir dialog again.

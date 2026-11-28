@@ -93,3 +93,7 @@ topo_order = false
 # Order of commits in each group/release within the changelog.
 # Allowed values: newest, oldest
 sort_commits = "oldest"
+
+[bump]
+# The first release's version when no final tag exists yet; it must match `tag_pattern` above.
+initial_tag = "v0.1.0"

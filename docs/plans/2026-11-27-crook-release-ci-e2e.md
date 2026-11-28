@@ -248,6 +248,7 @@ Needs the binary plan's `crook new`, `open`, `spawn` and `hook`. The design is i
 | --- | --- | --- | --- | --- |
 | M7.0 Check the release setup | the repository's settings | 0022 | The maintainer reads the settings | The `release` environment exists, with `GH_APP_CLIENT_ID` as an environment variable and `GH_APP_PRIVATE_KEY` as an environment secret; M7.1 does not start before this |
 | M7.1 Release workflow | `.github/workflows/release.yml`, `.github/actions/apply-release-patch`, `.github/actions/configure-git`, `tools/release.py`, `cliff.toml` | 0019, 0022 | Dispatch `0.1.0-rc.1` from `main` (Q33) | Tag, GitHub release with archives and `.sha256` files, `packslip.sigstore.json`; the changelog starts after `714568f` |
+| M7.5 CI prepares the release | `.github/workflows/_prepare-release.yml`, `ci.yml`, `release.yml`, `tools/release.py` (`next-version`), `cliff.toml` (`[bump]`) | 0022 | Every CI run | As in ToolR: one reusable workflow prepares the release. `release.yml` calls it with the dispatched version in the `release` environment; `ci.yml` calls it with none, so it prepares the version git-cliff bumps to, and CI's build and smoke jobs run on that release patch. Nothing is pushed from CI (D124) |
 | M7.2 Packslip verification | `release.yml` (`publish-packslip`) | 0019 | The job's own `packslip verify` step | Identity is `…/release.yml@refs/heads/main`; version and commit match |
 | M7.3 Install smoke | `.github/workflows/install-smoke.yml` | 0019, 0020 | Dispatched by the release, and nightly | See the list below |
 | M7.4 Record the result | `docs/architecture/README.md` "Packaging" | 0019 | Review | The README's "first release confirms it" note is settled with the run's link |
@@ -294,9 +295,11 @@ default is not checked here; the first step below checks it.
 - `HERDR_APP_HOME`: `$RUN/herdr-app`, for `crook setup` (spike 17 showed `appHome()` follows it).
 - `CROOK_BIN`: `$RUN/shims/crook`. It is set on the call that starts the core, so every terminal gets it (spike
   23), and `crook spawn` also passes it with `env` (0019).
-- `HOME` stays real: Claude needs its login. Each run therefore leaves trust entries and transcripts in the real
-  Claude config, and loads the maintainer's own Claude settings, plugins and hooks. The report says so, as v1's
-  skill did.
+- `HOME` and `CLAUDE_CONFIG_DIR` are the run's in tier 3 too (D122). `login.sh` copies the maintainer's Claude
+  login into the run without its refresh token (on macOS a keychain item named after the run's config folder,
+  reached through a `Library/Keychains` link in the run's `HOME`), seeds the run's `.claude.json` from the
+  maintainer's without `projects` and `mcpServers`, and teardown deletes the copy. The run's `settings.json` sets
+  only the permission mode and `tui`.
 
 ### Safety rules
 
@@ -411,7 +414,7 @@ skill, run only when the maintainer says so, with throwaway labels and `space.cl
   name that is not a known user setting.
 - T3 depends on model behaviour. As in v1, a step where the model does not follow the prompt is recorded as "not
   exercised", not as a crook failure.
-- Each T3 run leaves trust entries and transcripts in the real Claude config.
+- A T3 run needs an access token with an hour left, because the copy cannot refresh (D122).
 - If `coordinator_model` is unset in a run's config, the coordinator runs on the maintainer's default model and
   the run costs more. `setup.sh` sets it (Q32).
 - `hc send` can wait on a draft longer than a hook's time budget (120 seconds for session-start, 30 for the

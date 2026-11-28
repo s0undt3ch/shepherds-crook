@@ -28,24 +28,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Bumps the version and the changelog on a local commit and hands it on as a
-  # patch artifact. Nothing is pushed: `publish-release` pushes it, after every
-  # build has passed.
-  prepare-release:
-    name: Prepare Release
+  # The release-only gates, and the values every later job reads.
+  prepare-ci:
+    name: Prepare CI
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     environment: release
     permissions:
       contents: read
     outputs:
-      release-version: ${{ steps.bump-version.outputs.release-version }}
-      release-patch-name: ${{ steps.bump-version.outputs.release-patch-name }}
-      release-dev-patch-name: ${{ steps.bump-version.outputs.release-dev-patch-name }}
-      release-prerelease: ${{ steps.bump-version.outputs.release-prerelease }}
-      release-notes-filename: ${{ steps.prepare-release-notes.outputs.release-notes-filename }}
       # Mirror env.CACHE_SEED / env.MISE_VERSION. A workflow-call `with:` block
-      # can't read `env`, so the build job reads these outputs instead.
+      # can't read `env`, so the reusable workflows read these outputs instead.
       cache-seed: ${{ steps.expose.outputs.cache-seed }}
       mise-version: ${{ steps.expose.outputs.mise-version }}
       targets: ${{ steps.targets.outputs.targets }}
@@ -76,8 +69,6 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The changelog needs the history and the tags.
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Load shared env vars
@@ -94,175 +85,38 @@ jobs:
             echo "mise-version=${MISE_VERSION}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Setup Prek
-        # Installs every tool in mise.toml (git-cliff, prek, the Rust toolchain) and primes the hook cache.
-        id: setup-pre-commit
-        uses: ./.github/actions/setup-pre-commit
-        with:
-          cache-seed: ${{ env.CACHE_SEED }}|prepare-release
-          mise-version: ${{ env.MISE_VERSION }}
-
       - name: Setup ToolR
-        # `toolr release bump` dispatches from the tools venv.
         id: setup-toolr
         uses: ./.github/actions/setup-toolr
         with:
-          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|prepare-release
+          cache-prefix: ${{ env.CACHE_SEED }}|setup-toolr|prepare-ci
 
       - name: List the build targets
         id: targets
         run: toolr ci targets
 
-      - name: Configure Git
-        uses: ./.github/actions/configure-git
+  # Bumps the version and the changelog on a local commit and hands it on as a
+  # patch artifact. Nothing is pushed: `publish-release` pushes it, after every
+  # build has passed.
+  prepare-release:
+    name: Prepare Release
+    needs:
+      - prepare-ci
+    uses: ./.github/workflows/_prepare-release.yml
+    permissions:
+      contents: read
+    with:
+      release-version: ${{ inputs.release-version }}
+      environment: release
+      cache-seed: ${{ needs.prepare-ci.outputs.cache-seed }}
+      mise-version: ${{ needs.prepare-ci.outputs.mise-version }}
 
-      - name: Bump Version
-        id: bump-version
-        env:
-          RELEASE_VERSION: ${{ inputs.release-version }}
-        run: |
-          set -euo pipefail
-          # `toolr release bump` refuses anything but X.Y.Z or X.Y.Z-rc.N, so
-          # the value is safe to use below. It writes Cargo.toml, Cargo.lock and
-          # plugin.json's `version`: the files the release commit owns.
-          toolr release bump "$RELEASE_VERSION"
-          if git ls-remote --exit-code --tags origin "refs/tags/v${RELEASE_VERSION}" >/dev/null; then
-            echo "::error::Tag v${RELEASE_VERSION} already exists" >&2
-            exit 1
-          fi
-          prerelease=false
-          case "$RELEASE_VERSION" in
-            *-rc.*) prerelease=true ;;
-          esac
-          {
-            echo "release-version=${RELEASE_VERSION}"
-            echo "release-patch-name=crook-${RELEASE_VERSION}.patch"
-            echo "release-dev-patch-name=crook-${RELEASE_VERSION}-dev.patch"
-            echo "release-prerelease=${prerelease}"
-          } >> "$GITHUB_OUTPUT"
-          echo "Releasing version: \`${RELEASE_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
-
-      # Notes start after v1's last commit until a final `vX.Y.Z` tag exists (Q33): cliff.toml's tag_pattern skips -rc tags.
-      - name: Resolve the changelog range
-        id: changelog-range
-        run: |
-          set -euo pipefail
-          range="$(toolr release changelog-range | tail -n 1)"
-          case "$range" in
-            "" | [0-9a-f]*..HEAD) ;;
-            *) echo "::error::Unexpected changelog range: ${range}" >&2; exit 1 ;;
-          esac
-          echo "range=${range}" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare GH Release notes
-        id: prepare-release-notes
-        env:
-          RELEASE_VERSION: ${{ steps.bump-version.outputs.release-version }}
-          CHANGELOG_RANGE: ${{ steps.changelog-range.outputs.range }}
-        run: |
-          set -euo pipefail
-          cliff_range=(--unreleased)
-          if [ -n "$CHANGELOG_RANGE" ]; then
-            cliff_range=("$CHANGELOG_RANGE")
-          fi
-          git-cliff --config cliff.toml "${cliff_range[@]}" --tag "v${RELEASE_VERSION}" --strip all \
-            --output release-notes.md
-          echo "release-notes-filename=release-notes.md" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Release Notes Artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ steps.prepare-release-notes.outputs.release-notes-filename }}
-          path: ${{ steps.prepare-release-notes.outputs.release-notes-filename }}
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Update CHANGELOG.md
-        # A pre-release gets no CHANGELOG section: the final release rolls it up.
-        if: steps.bump-version.outputs.release-prerelease != 'true'
-        env:
-          RELEASE_VERSION: ${{ steps.bump-version.outputs.release-version }}
-          CHANGELOG_RANGE: ${{ steps.changelog-range.outputs.range }}
-        run: |
-          set -euo pipefail
-          cliff_range=(--unreleased)
-          if [ -n "$CHANGELOG_RANGE" ]; then
-            cliff_range=("$CHANGELOG_RANGE")
-          fi
-          # `--prepend` fails on a file that does not exist, and the first final release has none.
-          [ -f CHANGELOG.md ] || : > CHANGELOG.md
-          git-cliff --config cliff.toml --verbose "${cliff_range[@]}" --tag "v${RELEASE_VERSION}" --prepend CHANGELOG.md
-
-      - name: Commit changes
-        env:
-          RELEASE_VERSION: ${{ steps.bump-version.outputs.release-version }}
-          RELEASE_PRERELEASE: ${{ steps.bump-version.outputs.release-prerelease }}
-          # `pin-github-actions` resolves pins through `gh api`.
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # The files the release owns: the version in the binary and in the plugin (the mod has no
-          # version file), and the changelog of a final release.
-          files=(Cargo.toml Cargo.lock plugin/.claude-plugin/plugin.json)
-          if [ "$RELEASE_PRERELEASE" != "true" ]; then
-            files+=(CHANGELOG.md)
-          fi
-          # Fixing pass: let the auto-fixers tidy the release's own files.
-          prek run --files "${files[@]}" || true
-          # Strict pass: anything still failing is a real failure.
-          if ! prek run --files "${files[@]}" --show-diff-on-failure; then
-            echo "::error::prek failed on the release changes; the uncommitted release diff follows." >&2
-            git --no-pager diff HEAD >&2
-            exit 1
-          fi
-          # Only the files the release owns may differ from the dispatched commit.
-          .github/actions/apply-release-patch/check-files.sh worktree "${files[@]}"
-          git add -- "${files[@]}"
-          # prek's own git hooks, if installed, could stage more: the commit skips them.
-          git commit --no-verify -m "chore(release): Prepare for ${RELEASE_VERSION} release"
-
-      - name: Show Changes Diff
-        run: git show --color --stat --patch HEAD
-
-      - name: Create Release Patch
-        env:
-          RELEASE_PATCH_NAME: ${{ steps.bump-version.outputs.release-patch-name }}
-        run: git format-patch --keep-subject --binary --stdout HEAD^ > "$RELEASE_PATCH_NAME"
-
-      - name: Upload Changes Diff Artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ steps.bump-version.outputs.release-patch-name }}
-          path: ${{ steps.bump-version.outputs.release-patch-name }}
-          retention-days: 7
-          if-no-files-found: error
-
-      # `main` keeps `0.0.0-dev` in plugin.json (Q17), so a second commit on top of the release commit
-      # puts it back. The tag stays on the release commit; the push carries both. Its patch is separate
-      # because the archives are built on the release patch alone.
-      - name: Create the back-to-dev patch
-        env:
-          RELEASE_DEV_PATCH_NAME: ${{ steps.bump-version.outputs.release-dev-patch-name }}
-        run: |
-          set -euo pipefail
-          toolr release dev-stamp
-          .github/actions/apply-release-patch/check-files.sh worktree plugin/.claude-plugin/plugin.json
-          git add -- plugin/.claude-plugin/plugin.json
-          git commit --no-verify -m "chore(release): Prepare for next development"
-          git format-patch --keep-subject --binary --stdout HEAD^ > "$RELEASE_DEV_PATCH_NAME"
-
-      - name: Upload the back-to-dev patch
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ steps.bump-version.outputs.release-dev-patch-name }}
-          path: ${{ steps.bump-version.outputs.release-dev-patch-name }}
-          retention-days: 7
-          if-no-files-found: error
 
   # Builds on the release patch, so each archive carries the stamped binary and plugin versions.
   build-binary-archive:
     name: Build (binary)
     needs:
+      - prepare-ci
       - prepare-release
     uses: ./.github/workflows/_build-binary-archive.yml
     permissions:
@@ -270,20 +124,21 @@ jobs:
     with:
       release-version: ${{ needs.prepare-release.outputs.release-version }}
       release-patch-name: ${{ needs.prepare-release.outputs.release-patch-name }}
-      cache-seed: ${{ needs.prepare-release.outputs.cache-seed }}
-      mise-version: ${{ needs.prepare-release.outputs.mise-version }}
-      targets: ${{ needs.prepare-release.outputs.targets }}
+      cache-seed: ${{ needs.prepare-ci.outputs.cache-seed }}
+      mise-version: ${{ needs.prepare-ci.outputs.mise-version }}
+      targets: ${{ needs.prepare-ci.outputs.targets }}
 
   smoke-binary:
     name: Smoke
     needs:
       - build-binary-archive
+      - prepare-ci
       - prepare-release
     uses: ./.github/workflows/_smoke-binary-archive.yml
     permissions:
       contents: read
     with:
-      targets: ${{ needs.prepare-release.outputs.targets }}
+      targets: ${{ needs.prepare-ci.outputs.targets }}
       expected-version: ${{ needs.prepare-release.outputs.release-version }}
 
   # The exact set the release ships: one archive and one .sha256 per target, each in the layout 0019 fixes.
@@ -291,6 +146,7 @@ jobs:
     name: Verify archives
     needs:
       - build-binary-archive
+      - prepare-ci
       - prepare-release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -323,7 +179,7 @@ jobs:
 
       - name: Check the file set and the archive layout
         env:
-          TARGETS: ${{ needs.prepare-release.outputs.targets }}
+          TARGETS: ${{ needs.prepare-ci.outputs.targets }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.release-version }}
         run: |
           set -euo pipefail
@@ -365,9 +221,10 @@ jobs:
     # The `release` environment holds the App's client id (a variable) and private key (a secret).
     environment: release
     needs:
-      - prepare-release
       - attest-archives
       - build-binary-archive
+      - prepare-ci
+      - prepare-release
       - smoke-binary
       - verify-archives
     runs-on: ubuntu-latest
@@ -446,7 +303,7 @@ jobs:
       # Nothing else may go on the release: the exact set `verify-archives` checked.
       - name: Check the release assets
         env:
-          TARGETS: ${{ needs.prepare-release.outputs.targets }}
+          TARGETS: ${{ needs.prepare-ci.outputs.targets }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.release-version }}
         run: scripts/check-release-assets.sh release-assets "$RELEASE_VERSION" "$(jq length <<<"$TARGETS")"
 
@@ -536,6 +393,7 @@ jobs:
     name: Publish packslip
     # Only after publish-release succeeded; a re-run of the failed jobs re-signs with --clobber.
     needs:
+      - prepare-ci
       - prepare-release
       - publish-release
     runs-on: ubuntu-latest
@@ -560,7 +418,7 @@ jobs:
       - name: Check the release holds every archive
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGETS: ${{ needs.prepare-release.outputs.targets }}
+          TARGETS: ${{ needs.prepare-ci.outputs.targets }}
           VERSION: ${{ needs.prepare-release.outputs.release-version }}
         run: |
           set -euo pipefail
@@ -654,6 +512,7 @@ jobs:
       - attest-archives
       - build-binary-archive
       - install-smoke
+      - prepare-ci
       - prepare-release
       - publish-packslip
       - publish-release

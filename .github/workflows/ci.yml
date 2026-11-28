@@ -457,16 +457,30 @@ jobs:
         id: targets
         run: toolr ci targets
 
-  build-binary-archive:
-    name: Build (binary)
-    # The release-shaped build. On PRs `toolr ci targets` leaves out Intel macOS.
+  # The release a dispatch would make now, prepared but never pushed, so every run rehearses it (D124).
+  prepare-release:
+    name: Prepare Release
     needs:
       - prepare-ci
+    uses: ./.github/workflows/_prepare-release.yml
+    permissions:
+      contents: read
+    with:
+      cache-seed: ${{ needs.prepare-ci.outputs.cache-seed }}
+      mise-version: ${{ needs.prepare-ci.outputs.mise-version }}
+
+  build-binary-archive:
+    name: Build (binary)
+    # The release-shaped build, on the prepared release patch. On PRs `toolr ci targets` leaves out Intel macOS.
+    needs:
+      - prepare-ci
+      - prepare-release
     uses: ./.github/workflows/_build-binary-archive.yml
     permissions:
       contents: read
     with:
-      release-version: 0.0.0-ci
+      release-version: ${{ needs.prepare-release.outputs.release-version }}
+      release-patch-name: ${{ needs.prepare-release.outputs.release-patch-name }}
       cache-seed: ${{ needs.prepare-ci.outputs.cache-seed }}
       mise-version: ${{ needs.prepare-ci.outputs.mise-version }}
       targets: ${{ needs.prepare-ci.outputs.targets }}
@@ -558,11 +572,13 @@ jobs:
     needs:
       - build-binary-archive
       - prepare-ci
+      - prepare-release
     uses: ./.github/workflows/_smoke-binary-archive.yml
     permissions:
       contents: read
     with:
       targets: ${{ needs.prepare-ci.outputs.targets }}
+      expected-version: ${{ needs.prepare-release.outputs.release-version }}
 
   codecov-notify:
     name: Codecov Notify
@@ -625,6 +641,7 @@ jobs:
       - plugin-check
       - pre-commit
       - prepare-ci
+      - prepare-release
       - smoke-binary
       - test-linux
       - test-macos

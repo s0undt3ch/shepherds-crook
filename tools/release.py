@@ -155,6 +155,50 @@ def dev_stamp(ctx: Context, plugin_manifest: ResolvedPath | None = None) -> None
     ctx.print(DEV_VERSION)
 
 
+def _has_commit(repo: Path, rev: str) -> bool:
+    ret = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), "cat-file", "-e", f"{rev}^{{commit}}"],  # noqa: S607
+        capture_output=True,
+        check=False,
+    )
+    return ret.returncode == 0
+
+
+@group.command
+def next_version(ctx: Context, repo: ResolvedPath | None = None) -> None:
+    """
+    Print the version a release made now would get, worked out from the conventional commits.
+
+    git-cliff's `--bumped-version` reads the commits since the last final `vX.Y.Z` tag, or, before the first
+    one, those after v1's last commit (Q33). With no final tag the base is `v0.1.0` (cliff.toml `[bump]`).
+    CI prepares a release with it on every run, so the release path is exercised before anyone dispatches one
+    (D124).
+
+    Args:
+        repo: The repository to look in. Defaults to this one.
+    """
+    root = repo or REPO_ROOT
+    try:
+        tags = final_tags(root)
+    except RuntimeError as exc:
+        ctx.error(str(exc), markup=False)
+        ctx.exit(1)
+    span = ["--unreleased"] if tags or not _has_commit(root, CHANGELOG_BASE) else [f"{CHANGELOG_BASE}..HEAD"]
+    ret = subprocess.run(  # noqa: S603
+        ["git-cliff", "--config", str(REPO_ROOT / "cliff.toml"), "--bumped-version", *span],  # noqa: S607
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = ret.stdout.split()
+    version = lines[-1].removeprefix("v") if lines else ""
+    if ret.returncode != 0 or not _valid_release_version(version) or "-" in version:
+        ctx.error(f"git-cliff gave no next version: {ret.stderr.strip() or ret.stdout.strip()}", markup=False)
+        ctx.exit(1)
+    ctx.print(version, markup=False, highlight=False)
+
+
 def final_tags(repo: Path) -> list[str]:
     """Final release tags (`vX.Y.Z`) that are ancestors of HEAD."""
     ret = subprocess.run(  # noqa: S603

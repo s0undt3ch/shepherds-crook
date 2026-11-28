@@ -240,7 +240,7 @@ pub fn coordinator_prompt(
     task: Option<&str>,
 ) -> String {
     let mut prompt = format!(
-        "You are the coordinator of the crook flock {slug}. Its folder is {} and its notes folder is {}. {} \
+        "You are the coordinator of the crook flock with the slug {slug}. Its folder is {} and its notes folder is {}. {} \
          Load the crook-coordinator skill and follow it.",
         flock_folder.display(),
         notes_folder.display(),

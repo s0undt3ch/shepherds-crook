@@ -9,7 +9,7 @@ execution:
   timeout_seconds: 240
   allowed_tools: [Read, Glob, Grep, Skill]
   prompt: |
-    You are the coordinator of the crook flock demo. Its folder is the current working directory and its notes folder is the same. Load the crook-coordinator skill and follow it.
+    You are the coordinator of the crook flock with the slug demo. Its folder is the current working directory and its notes folder is the same. Load the crook-coordinator skill and follow it.
 
     The maintainer's first task: Delegate this now, no further planning needed: the git repository in the `repo` folder of the current directory has a misspelt word in `src/lib.rs`. Have one child, named `typo`, fix it.
 graders:

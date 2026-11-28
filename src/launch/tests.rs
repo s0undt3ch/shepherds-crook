@@ -101,7 +101,7 @@ fn golden_coordinator_first_start() {
     ]);
     expected.extend(strs(&["--agent", "crook:coordinator", "--session-id", SID]));
     expected.push(
-        "You are the coordinator of the crook flock demo. Its folder is /data/crook/flocks/2026-11-27-demo and \
+        "You are the coordinator of the crook flock with the slug demo. Its folder is /data/crook/flocks/2026-11-27-demo and \
          its notes folder is /data/crook/flocks/2026-11-27-demo. Run every crook command as \
          \"/home/u/.local/share/mise/shims/crook\" <subcommand> ..., with that exact quoted path, as its own \
          Bash command: nothing before it and no pipe, `&&` or `;` after it. Only that form runs without asking \
@@ -150,7 +150,7 @@ fn golden_coordinator_resume_has_no_prompt_and_the_notes_folder() {
 fn the_first_prompt_without_a_task_is_only_the_fixed_text() {
     let spec = coordinator(&coord(common(None, flock()), Session::New(SID), None, None));
     let prompt = spec.argv.last().expect("prompt");
-    assert!(prompt.starts_with("You are the coordinator of the crook flock demo."));
+    assert!(prompt.starts_with("You are the coordinator of the crook flock with the slug demo."));
     assert!(prompt.ends_with("follow it."));
     assert!(!prompt.contains("first task"));
 }

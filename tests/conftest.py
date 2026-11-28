@@ -39,19 +39,39 @@ def _path_without_shims() -> str:
     return os.pathsep.join(out)
 
 
+def _toolchain_homes() -> dict[str, str]:
+    """Return cargo's and rustup's folders as they are under the real HOME.
+
+    They are toolchain caches, like mise's install folders, and cargo needs its registry cache to work offline.
+    """
+    real = Path("~").expanduser()
+    homes = {"CARGO_HOME": real / ".cargo", "RUSTUP_HOME": real / ".rustup"}
+    return {name: os.environ.get(name) or str(path) for name, path in homes.items()}
+
+
 @pytest.fixture(scope="session")
 def _test_path() -> str:
     return _path_without_shims()
 
 
+@pytest.fixture(scope="session")
+def _test_toolchain() -> dict[str, str]:
+    return _toolchain_homes()
+
+
 @pytest.fixture(autouse=True)
 def _scratch_home(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch, _test_path: str
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _test_path: str,
+    _test_toolchain: dict[str, str],
 ) -> Path:
     """Point HOME and the XDG, Claude and herdr-app folders at a scratch home for every test."""
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", _test_path)
+    for name, value in _test_toolchain.items():
+        monkeypatch.setenv(name, value)
     for name in HOME_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")

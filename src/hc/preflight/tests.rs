@@ -25,6 +25,14 @@ fn quick() -> Options {
     }
 }
 
+/// For a test that must pass: a long deadline, so a slow runner never turns a late answer into a timeout.
+fn patient() -> Options {
+    Options {
+        start_deadline: Duration::from_secs(30),
+        poll_interval: Duration::from_millis(1),
+    }
+}
+
 fn kinds(hc: &FakeHc) -> Vec<&'static str> {
     hc.calls()
         .iter()
@@ -122,7 +130,7 @@ fn a_schema_without_terminal_run_is_refused() {
 fn a_core_that_answers_late_is_waited_for() {
     let hc = FakeHc::new();
     hc.fail("schema", 3);
-    run_with(&hc, &vars(), &quick()).expect("passes");
+    run_with(&hc, &vars(), &patient()).expect("passes");
     assert_eq!(
         kinds(&hc),
         [

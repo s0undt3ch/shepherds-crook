@@ -15,6 +15,7 @@ import signal
 import socket
 import stat
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -70,6 +71,7 @@ class World:
         self.bin.mkdir(parents=True)
         self.tmp = tmp_path / "tmp"
         self.tmp.mkdir()
+        (tmp_path / "home").mkdir()
         self.log = tmp_path / "calls.log"
         self.screen = tmp_path / "screen.txt"
         self.get_json = tmp_path / "get.json"
@@ -194,6 +196,69 @@ def test_setup_puts_the_stub_herdr_app_in_every_run_and_the_stub_claude_in_tier_
         assert not (r3 / "stubs" / "claude").exists(), "tier 3 uses the real claude"
     finally:
         t3.cleanup()
+
+
+def test_tier_3_keeps_the_login_home_and_nothing_else_real(tmp_path: Path) -> None:
+    """Tier 3 needs Claude's login: HOME stays the caller's. Crook's own folders stay the run's."""
+    t3 = World(tmp_path / "t3", "--tier", "3")
+    try:
+        v = t3.vars()
+        assert v["TIER"] == "3" and v["REAL_HOME"] == t3.env["HOME"]
+        r = t3.run("hc.sh", str(t3.envf), "ls")
+        assert r.returncode == 0, r.stderr
+        seen = t3.last_env()
+        assert seen["HOME"] == t3.env["HOME"], "tier 3 keeps the caller's HOME for Claude's login"
+        assert "CLAUDE_CONFIG_DIR" not in seen, "no custom Claude folder was set when setup ran"
+        for name in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "HERDR_APP_HOME"]:
+            assert seen[name].startswith(v["RUN"] + "/"), f"{name} must stay inside the run"
+        assert seen["XDG_RUNTIME_DIR"] == v["RT"]
+        assert seen["TMPDIR"].startswith(v["RUN"] + "/")
+        assert seen["PATH"].startswith(v["RUN"] + "/stubs:")
+        for name in LEAKS:
+            assert name not in seen
+    finally:
+        t3.cleanup()
+
+
+def test_tier_3_passes_the_login_claude_folder_through_when_setup_saw_one(tmp_path: Path) -> None:
+    root = tmp_path / "t3"
+    login = tmp_path / "login-claude"
+    login.mkdir()
+    w = World(root, "--tier", "3")
+    try:
+        # World ran setup.sh before CLAUDE_CONFIG_DIR existed; run it again with it set.
+        w.env["CLAUDE_CONFIG_DIR"] = str(login)
+        again = w.run("setup.sh", "--tier", "3")
+        assert again.returncode == 0, again.stderr
+        envf = Path(again.stdout.strip())
+        assert w.run("hc.sh", str(envf), "ls").returncode == 0
+        seen = w.last_env()
+        assert seen["CLAUDE_CONFIG_DIR"] == str(login)
+        assert not seen["CLAUDE_CONFIG_DIR"].startswith(str(envf.parent))
+        shutil.rmtree(dict(line.split("=", 1) for line in envf.read_text().splitlines())["RT"], ignore_errors=True)
+    finally:
+        w.cleanup()
+
+
+def test_tier_3_refuses_a_login_home_inside_the_run_and_a_forged_tier(tmp_path: Path) -> None:
+    w = World(tmp_path / "t3", "--tier", "3")
+    try:
+        bad = w.env_with("REAL_HOME", w.vars()["RUN"] + "/home")
+        r = w.run("hc.sh", str(bad), "ls")
+        assert r.returncode != 0 and "inside the run" in r.stderr
+        bad = w.env_with("TIER", "4")
+        assert w.run("hc.sh", str(bad), "ls").returncode != 0
+        bad = w.env_with("REAL_HOME", str(tmp_path / "nowhere"))
+        assert w.run("hc.sh", str(bad), "ls").returncode != 0
+    finally:
+        w.cleanup()
+
+
+def test_tier_2_still_runs_in_a_scratch_home_whatever_real_home_says(world: World) -> None:
+    forged = world.env_with("REAL_HOME", world.env["HOME"])
+    r = world.run("hc.sh", str(forged), "ls")
+    assert r.returncode == 0, r.stderr
+    assert world.last_env()["HOME"] == world.vars()["RUN"] + "/home"
 
 
 def test_setup_refuses_a_bad_slug_and_leaves_nothing(tmp_path: Path) -> None:
@@ -652,3 +717,130 @@ def test_lib_removes_every_name_the_binarys_own_scrub_removes() -> None:
         assert re.search(rf"\b{name}\b", lib), f"lib.sh does not remove {name}"
     for prefix in re.findall(r'"([A-Z_]+_)"', prefixes.group(1)):
         assert f"{prefix}*" in lib, f"lib.sh does not remove {prefix}*"
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# lib.sh helpers the tier 3 runner relies on
+
+
+def _lib(tmp_path: Path, snippet: str, extra: dict[str, str] | None = None, path_first: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k != "RUN"} | (extra or {})
+    if path_first is not None:
+        env["PATH"] = f"{path_first}:{env['PATH']}"
+    return subprocess.run(  # noqa: S603
+        ["/bin/bash", "-c", f'source "{E2E}/lib.sh"; {snippet}'],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize(
+    ("only", "valid"),
+    [("S1", True), ("S1,S4,S12", True), ("s1", False), ("S2", False), ("", False), ("S1,,S4", False), ("S1,S99", False)],
+)
+def test_only_accepts_exactly_the_scenario_names(tmp_path: Path, only: str, valid: bool) -> None:
+    r = _lib(tmp_path, f'valid_only "{only}" "S1 S4 S5 S6 S7 S9 S11 S12"')
+    assert (r.returncode == 0) is valid
+
+
+def test_the_runner_refuses_an_unknown_only_before_it_makes_a_run(world: World) -> None:
+    before = sorted(p.name for p in world.tmp.iterdir())
+    r = world.run("tier3.sh", "--only", "s1")
+    assert r.returncode != 0 and "--only takes names from" in r.stderr
+    assert sorted(p.name for p in world.tmp.iterdir()) == before, "no run was made"
+
+
+@pytest.mark.parametrize(("gnu", "flag"), [(True, "-c"), (False, "-f")])
+def test_mtime_list_picks_the_stat_flavour_once(tmp_path: Path, gnu: bool, flag: str) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "stat.log"
+    _stub(bin_dir / "stat", f'[ "$1" = --version ] && {{ exit {0 if gnu else 1}; }}\necho "$1" >> {log}\necho "1 $3"')
+    target = tmp_path / "t"
+    target.mkdir()
+    r = _lib(tmp_path, f'mtime_list "{target}"', path_first=bin_dir)
+    assert r.returncode == 0, r.stderr
+    assert set(log.read_text().split()) == {flag}
+
+
+def test_proc_with_id_refuses_empty_ids_and_other_peoples_processes(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    mine = subprocess.Popen(["/bin/bash", "-c", "sleep 30; true", "_", "--resume", "abc123", "--model", "sonnet", f"{run}/x"])  # noqa: S603
+    other = subprocess.Popen(["/bin/bash", "-c", "sleep 30; true", "_", "--resume", "abc123", "--model", "sonnet", "/elsewhere/x"])  # noqa: S603
+    try:
+        env = {"RUN": str(run)}
+        assert _lib(tmp_path, 'proc_with_id --resume abc123 "--model sonnet"', env).returncode == 0
+        assert _lib(tmp_path, 'proc_with_id --resume "" "--model sonnet"', env).returncode != 0
+        assert _lib(tmp_path, 'proc_with_id --resume null "--model sonnet"', env).returncode != 0
+        assert _lib(tmp_path, 'proc_with_id --resume abc123 "--model opus"', env).returncode != 0
+        assert _lib(tmp_path, 'proc_with_id --resume abc123 "--model sonnet"', {"RUN": str(tmp_path / "nowhere")}).returncode != 0
+        assert _lib(tmp_path, 'proc_with_id --resume abc123 "--model sonnet"', {}).returncode != 0, "no RUN, no match"
+    finally:
+        mine.kill()
+        other.kill()
+
+
+def _jsonl(path: Path, *entries: dict) -> Path:
+    path.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
+    return path
+
+
+def test_transcript_helpers_never_pass_on_a_missing_or_empty_transcript(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("")
+    for name in ["no_tool", "no_send_in", "told_lacks", "told_has", "count_in"]:
+        for target in [str(tmp_path / "missing.jsonl"), str(empty), ""]:
+            args = {"no_tool": f'"{target}" X', "no_send_in": f'"{target}"', "told_lacks": f'hc "{target}" X',
+                    "told_has": f'hc "{target}" X', "count_in": f'X "{target}"'}[name]
+            assert _lib(tmp_path, f"{name} {args}").returncode != 0, (name, target)
+
+
+def test_hc_notes_are_what_the_session_was_told_not_what_the_model_said(tmp_path: Path) -> None:
+    t = _jsonl(
+        tmp_path / "t.jsonl",
+        {"type": "user", "message": {"content": "<hc>t2 s5.two is blocked (question)</hc>"}},
+        {"type": "user", "message": {"content": [{"type": "text", "text": "<hc from=\"t2 s5.two\">Result updated: /p/two.md</hc>"}]}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "I saw <hc>s5.two is blocked</hc> and Result updated: /p/two.md"}]}},
+        {"type": "user", "message": {"content": "my own words: <hc> s9.x is blocked"}},
+        {"type": "attachment", "attachment": {"type": "hook_additional_context", "content": ["Undelivered child result: /p/two.md"]}},
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "hc read t2"}}]}},
+    )
+    assert _lib(tmp_path, f'told_has hc "{t}" "s5.two is blocked"').returncode == 0
+    assert _lib(tmp_path, f'count_in "Result updated: /p/two.md" "{t}"').stdout.strip() == "1"
+    assert _lib(tmp_path, f'told_has hc "{t}" "s9.x"').returncode != 0, "a user line that does not start with <hc"
+    assert _lib(tmp_path, f'told_has hook "{t}" "Undelivered child result: /p/two.md"').returncode == 0
+    assert _lib(tmp_path, f'told_lacks hook "{t}" "Result updated"').returncode == 0
+    assert _lib(tmp_path, f'no_tool "{t}" "^AskUserQuestion"').returncode == 0
+    assert _lib(tmp_path, f'no_tool "{t}" "^Bash"').returncode != 0
+    assert _lib(tmp_path, f'no_send_in "{t}"').returncode == 0
+
+
+def test_the_runner_tears_down_from_a_trap_set_before_load_run_and_fails_when_teardown_does() -> None:
+    text = (E2E / "tier3.sh").read_text(encoding="utf-8")
+    assert text.index("trap cleanup EXIT") < text.index('load_run "$ENVF"'), "a die after setup.sh must still tear down"
+    cleanup = text[text.index("cleanup() {") : text.index("trap cleanup EXIT")]
+    assert "exit 1" in cleanup and "|| rc=$?" in cleanup, "a teardown that fails must fail the runner"
+    assert "REFUSED" in text and "keep=1" in text, "a refused trust keeps the run and stops"
+    assert '"$BASH" -c' not in text.replace('"$BASH" "$here', "")
+
+
+def test_teardown_reports_a_process_with_the_runs_session_that_runs_outside_the_run(world: World, tmp_path: Path) -> None:
+    session = world.vars()["SESSION"]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    p = subprocess.Popen(  # noqa: S603
+        # Not /bin/sleep: macOS hides the environment of its own (SIP) binaries from ps.
+        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=outside, env={"PATH": "/usr/bin:/bin", "HC_SESSION": session}, stdout=subprocess.DEVNULL
+    )
+    try:
+        r = world.run("teardown.sh", str(world.envf))
+        if "outside the run (left alone)" not in r.stderr and r.returncode == 0:
+            pytest.skip("this platform's ps does not print environments")
+        assert r.returncode != 0 and "left alone" in r.stderr
+        assert p.poll() is None, "a process outside the run was not touched"
+    finally:
+        p.kill()

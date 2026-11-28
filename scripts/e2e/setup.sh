@@ -65,7 +65,8 @@ chmod +x "$run"/stubs/*
   for kv in "RUN=$run" "RT=$rt" "SESSION=$session" "SLUG=$slug" "TIER=$tier" "REAL_PATH=$PATH" \
     "REPO=$run/repo" "REMOTE=$run/remote.git" "DATA=$run/data" "CONFIG=$run/config" "STATE=$run/state" \
     "CACHE=$run/cache" "APP=$run/herdr-app" "RUN_HOME=$run/home" "CLAUDE_DIR=$run/claude" "STUBS=$run/stubs" \
-    "SHIMS=$run/shims" "INSTALL=$run/install" "RUN_TMP=$run/tmp" "SHIM=$run/shims/crook"; do
+    "SHIMS=$run/shims" "INSTALL=$run/install" "RUN_TMP=$run/tmp" "SHIM=$run/shims/crook" \
+    "REAL_HOME=$([ "$tier" = 3 ] && printf '%s' "$HOME")" "REAL_CLAUDE=$([ "$tier" = 3 ] && printf '%s' "${CLAUDE_CONFIG_DIR:-}")"; do
     printf '%s=%q\n' "${kv%%=*}" "${kv#*=}"
   done
 } >"$run/run.env"

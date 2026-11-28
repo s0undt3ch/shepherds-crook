@@ -51,6 +51,25 @@ $left
 E2E_LEFT
   sleep "$attempt"
 done
+# A process that carries this run's HC_SESSION in its environment but works outside the run is not ended (the kill
+# guard refuses it), and it is not ignored: the run is kept. `ps ewwax` prints the environment after the command on
+# macOS and on procps (Linux); where a platform does not, nothing is found and this check says nothing.
+env_strays() {
+  ps ewwax -o pid=,command= 2>/dev/null | awk -v s="HC_SESSION=$SESSION" -v me="$$" \
+    '$1 != me && index($0, " " s) && !/awk -v s=/ { print $1 }' |
+    while read -r p; do
+      # No working folder: the process is gone or a zombie waiting to be reaped.
+      cwd="$(cwd_of "$p")"
+      [ -n "$cwd" ] || continue
+      in_run_path "$cwd" || echo "$p $cwd"
+    done
+}
+strays="$(env_strays)"
+if [ -n "$strays" ]; then
+  echo "teardown: a process with this run's HC_SESSION runs outside the run (left alone):" >&2
+  echo "$strays" >&2
+  failed=1
+fi
 left="$(leftovers)"
 if [ -n "$left" ]; then
   echo "teardown: still running in the run:" >&2

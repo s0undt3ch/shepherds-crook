@@ -45,6 +45,7 @@ that decisions cite lives in [`research/`](research/).
 | [0025](decisions/0025-roles-and-child-models.md) | Two roles; the coordinator picks each child's model | Accepted |
 | [0026](decisions/0026-config-file.md) | crook's settings live in an XDG config file | Accepted |
 | [0027](decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md) | The coordinator calls crook by a literal path | Accepted |
+| [0028](decisions/0028-the-coordinator-s-hc-calls-and-brief-writes-under-default-mode.md) | The coordinator's hc calls and brief writes under default mode | Proposed |
 
 ## Open questions
 

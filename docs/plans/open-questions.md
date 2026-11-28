@@ -40,8 +40,8 @@ by the maintainer on 2026-11-27.
 | 17 | Where does the plugin version come from? | The release stamps `version` in `plugin.json`; debug builds use `0.0.0-dev`. Hooks read it from `$CLAUDE_PLUGIN_ROOT`. Per-session records live under `XDG_STATE_HOME` and are pruned after 30 days. |
 | 18 | Where is a flock's notes folder? | `<notes_root>/<date>-<slug>/`, created by `new` and passed with `--add-dir`, placed before `--agent` so the prompt follows a single-value flag. |
 | 19 | Does `open` pass `CROOK_BIN`? | Yes, as `spawn` and `resume` do. |
-| 20 | How does the coordinator call `crook`? | Through the same shim form as the hooks, never a bare `crook` (spike 22). |
-| 21 | How are Bash permission prompts for `crook` avoided? | `crook open` passes `--settings` allowing the shim command. |
+| 20 | How does the coordinator call `crook`? | Through the same shim form as the hooks, never a bare `crook` (spike 22). Replaced for the coordinator by Q46 (ADR 0027): it calls the literal path; hooks and the mod keep the shim form. |
+| 21 | How are Bash permission prompts for `crook` avoided? | `crook open` passes `--settings` allowing the shim command. Does not work (spike 27); replaced by Q46 (ADR 0027). |
 | 22 | How does `setup` install the mod, and who trusts the roots? | `setup` honours `HERDR_APP_HOME`, builds the mod in a staging folder and swaps it in with the marker written last, refuses to replace a newer mod, and is the only command that refreshes it. For trust it prints the command for each root, so CI can skip it. |
 | 23 | What does `doctor --json` report? | The resolved `plugin/`, `mod/` and app home, and a missing shim with `CROOK_BIN` as the fix. |
 | 24 | Do any ADRs need wording fixes? | Yes: drop 0015's `space.new` sentence, and reword 0019's "flock panel", which 0021 defers. |
@@ -105,6 +105,7 @@ The maintainer approved these fixes after an audit of the ADRs against the plans
 | # | Question | Decision | Status |
 | --- | --- | --- | --- |
 | 46 | Q21's allow rule can never match: Claude Code refuses to match any command that holds a variable (spike 27). How does the coordinator call `crook` with no prompt? | `crook open` resolves the shim to a literal path, allows `Bash("<path>" *)`, and names the path in the first prompt and in the coordinator's SessionStart context ([0027](../architecture/decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md), accepted 2026-11-28). | decided |
+| 47 | 0027 covers only crook calls. Under `default` mode, how do the coordinator's brief writes, `hc read` and `hc send` run with no prompt? | Proposed: a `crook send` subcommand, plus allow rules for `hc read` and for writes in the flock's folders ([0028](../architecture/decisions/0028-the-coordinator-s-hc-calls-and-brief-writes-under-default-mode.md)). Not built until the maintainer accepts 0028. | open |
 
 ## Changed during the build
 

@@ -8,9 +8,13 @@ decision-makers:
 links:
 - target: 15
   kind: amends
+- target: 29
+  kind: amendedby
 ---
 
 # Show a flock with herdr-app's own space, tab and agent tree
+
+Amended by [0029](0029-a-flocks-panel-and-each-flock-s-task-links-and-repositories.md) (proposed): a Flocks panel in a crook-installed layout shows what the tree cannot.
 
 ## Context and problem statement
 

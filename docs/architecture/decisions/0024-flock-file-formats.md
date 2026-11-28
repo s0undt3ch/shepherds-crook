@@ -1,13 +1,18 @@
 ---
 number: 24
-title: "File formats for the roster, briefs, results and delivery marks"
+title: File formats for the roster, briefs, results and delivery marks
 status: accepted
 date: 2026-11-27
 decision-makers:
 - maintainer
+links:
+- target: 29
+  kind: amendedby
 ---
 
 # File formats for the roster, briefs, results and delivery marks
+
+Amended by [0029](0029-a-flocks-panel-and-each-flock-s-task-links-and-repositories.md) (proposed): roster version 2 adds `task`, `links` and `repos`.
 
 ## Context and problem statement
 

@@ -595,3 +595,9 @@ Also seen:
   `mod.json`'s `palette` entry shows in ⌘⇧P.
 - The Haiku coordinator spawned without agreeing the plan first, and once ran `crook status` with the folder
   name (`2026-11-28-two`) instead of the slug. crook's error listed the slugs, and the next call used `two`.
+- A mod with `"place": "left"` and a fresh folder name did not dock into the stock `main` layout, either while
+  the app ran or after a restart, and Herdr never listed the folder in `seen.json`. A panel needs a layout that
+  names it ([0029](../decisions/0029-a-flocks-panel-and-each-flock-s-task-links-and-repositories.md)).
+- A throwaway Flocks panel (a separate mod in a `main` clone's sidebar, above Spaces) and a Properties overlay with
+  task, links and repositories rendered, and `herdr-app check` passed them. Its edits were saved in the mod's own
+  `data/` folder; crook did not see them.

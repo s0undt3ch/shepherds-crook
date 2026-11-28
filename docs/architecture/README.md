@@ -46,6 +46,7 @@ that decisions cite lives in [`research/`](research/).
 | [0026](decisions/0026-config-file.md) | crook's settings live in an XDG config file | Accepted |
 | [0027](decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md) | The coordinator calls crook by a literal path | Accepted |
 | [0028](decisions/0028-the-coordinator-s-hc-calls-and-brief-writes-under-default-mode.md) | The coordinator's hc calls and brief writes under default mode | Accepted |
+| [0029](decisions/0029-a-flocks-panel-and-each-flock-s-task-links-and-repositories.md) | A Flocks panel, and each flock's task, links and repositories | Proposed |
 
 ## Open questions
 

@@ -20,9 +20,13 @@ links:
   kind: amendedby
 - target: 28
   kind: amendedby
+- target: 29
+  kind: amendedby
 ---
 
 # Mechanical steps run through `crook` subcommands
+
+Amended by [0029](0029-a-flocks-panel-and-each-flock-s-task-links-and-repositories.md) (proposed): a new `crook edit` command, and `--link` and `--repo` on `crook new`.
 
 Amended by [0027](0027-the-coordinator-calls-crook-by-a-literal-path.md): the coordinator calls crook by the
 literal path `crook open` resolves from the shim, not by the shim form; hooks and the mod keep the shim form.

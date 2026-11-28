@@ -561,3 +561,37 @@ starts with `/`.
 So an `Edit` rule covers the Write tool too, a `Write` rule matches nothing, and an absolute path needs a second
 leading slash. A `**` rule stays inside its folder. Not checked: a path holding glob characters (`*`, `?`, `[`), and a
 folder reached through a symbolic link.
+
+## 29. What the mod depends on in the app (2026-11-28)
+
+The mod plan's M0.1 questions, answered in a second herdr-app window with its own `HERDR_APP_HOME`, hc core,
+`HOME`, Claude config and a copy of the login, all under a tier 3 run folder. The app was started with `CROOK_BIN`
+pointing at the run's shim, which runs the checkout's debug build. The mod was the checkout's `mod/`, copied into
+`mods/crook/` once a second. The maintainer clicked and typed; the window was read with `herdr-app shot`,
+`view.json` and `shared.json`. Claude Code 2.1.332, coordinator on Haiku, child on Sonnet.
+
+1. `CROOK_BIN` reaches `exec` when it is in the app's environment at start: the dialog ran `crook status` through
+   the shim. A normal launch after a login-shell export or `launchctl setenv` was not checked, because this window
+   was started from a shell. Still open.
+2. The overlay honours `height`: the dialog measured 560 by 460, as `mod.json` asks. It is modal: the maintainer
+   could not reach the window behind it.
+3. Not measured. Creating a flock finished before the maintainer could press Esc, so the dialog was busy for too
+   short a time to matter.
+4. The new space was in the Spaces list before the dialog closed, and the app switched to it by itself: with a
+   second flock `view.json` showed `"active": "crook-two"`, and a third flock's space was selected in the shot taken
+   after Create. No timing was taken.
+5. Enter in a `Textarea` adds a new line and does not submit. Enter in the name `Input` creates the flock.
+
+Also seen:
+
+- A symbolic link `mods/crook` to the checkout's `mod/` did not reload on edits (waited 8 s). A real folder,
+  kept in step by `rsync`, reloaded within about 4 s.
+- The whole loop ran: brief, spawn, the child nested under the coordinator in Agents, peek and "keep", the
+  child's result, `Result updated:` delivered by the Stop hook, the README updated, and `crook stop` after the
+  maintainer agreed in the coordinator's pane.
+- A sandbox with no trusted roots asked to trust the flock folder at start, then asked to add the flock's notes
+  folder. Expected: [0013](../decisions/0013-directory-access-through-trusted-roots.md) trusts the roots once.
+- 1Password takes ⌘⇧F system-wide, so the app never sees it. Herdr's ⌘P picker takes no entries from mods;
+  `mod.json`'s `palette` entry shows in ⌘⇧P.
+- The Haiku coordinator spawned without agreeing the plan first, and once ran `crook status` with the folder
+  name (`2026-11-28-two`) instead of the slug. crook's error listed the slugs, and the next call used `two`.

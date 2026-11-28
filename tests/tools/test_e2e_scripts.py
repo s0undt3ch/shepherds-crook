@@ -6,8 +6,9 @@ touched: no hc core is started and the real home is never read. The tests run in
 
 from __future__ import annotations
 
-import os
+import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -198,8 +199,8 @@ def test_setup_puts_the_stub_herdr_app_in_every_run_and_the_stub_claude_in_tier_
         t3.cleanup()
 
 
-def test_tier_3_keeps_the_login_home_and_nothing_else_real(tmp_path: Path) -> None:
-    """Tier 3 needs Claude's login: HOME stays the caller's. Crook's own folders stay the run's."""
+def test_tier_3_runs_in_the_runs_home_and_claude_folder(tmp_path: Path) -> None:
+    """D122: tier 3 records the caller's HOME, to copy the login from, and never passes it on."""
     t3 = World(tmp_path / "t3", "--tier", "3")
     try:
         v = t3.vars()
@@ -207,8 +208,8 @@ def test_tier_3_keeps_the_login_home_and_nothing_else_real(tmp_path: Path) -> No
         r = t3.run("hc.sh", str(t3.envf), "ls")
         assert r.returncode == 0, r.stderr
         seen = t3.last_env()
-        assert seen["HOME"] == t3.env["HOME"], "tier 3 keeps the caller's HOME for Claude's login"
-        assert "CLAUDE_CONFIG_DIR" not in seen, "no custom Claude folder was set when setup ran"
+        assert seen["HOME"] == v["RUN"] + "/home"
+        assert seen["CLAUDE_CONFIG_DIR"] == v["RUN"] + "/claude"
         for name in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "HERDR_APP_HOME"]:
             assert seen[name].startswith(v["RUN"] + "/"), f"{name} must stay inside the run"
         assert seen["XDG_RUNTIME_DIR"] == v["RT"]
@@ -220,24 +221,145 @@ def test_tier_3_keeps_the_login_home_and_nothing_else_real(tmp_path: Path) -> No
         t3.cleanup()
 
 
-def test_tier_3_passes_the_login_claude_folder_through_when_setup_saw_one(tmp_path: Path) -> None:
+def test_tier_3_records_the_callers_claude_folder_but_never_passes_it(tmp_path: Path) -> None:
     root = tmp_path / "t3"
     login = tmp_path / "login-claude"
     login.mkdir()
     w = World(root, "--tier", "3")
     try:
-        # World ran setup.sh before CLAUDE_CONFIG_DIR existed; run it again with it set.
         w.env["CLAUDE_CONFIG_DIR"] = str(login)
         again = w.run("setup.sh", "--tier", "3")
         assert again.returncode == 0, again.stderr
         envf = Path(again.stdout.strip())
+        recorded = dict(line.split("=", 1) for line in envf.read_text().splitlines())
+        assert recorded["REAL_CLAUDE"] == str(login)
         assert w.run("hc.sh", str(envf), "ls").returncode == 0
-        seen = w.last_env()
-        assert seen["CLAUDE_CONFIG_DIR"] == str(login)
-        assert not seen["CLAUDE_CONFIG_DIR"].startswith(str(envf.parent))
-        shutil.rmtree(dict(line.split("=", 1) for line in envf.read_text().splitlines())["RT"], ignore_errors=True)
+        assert w.last_env()["CLAUDE_CONFIG_DIR"] == str(envf.parent / "claude")
+        shutil.rmtree(recorded["RT"], ignore_errors=True)
     finally:
         w.cleanup()
+
+
+SECURITY_STUB = """
+log="$FAKE_KEYCHAIN/calls.log"
+printf '%s\\n' "$1 $2 $3" >>"$log"
+cmd="$1"; shift
+service='' account='' password='' want_w=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s) service="$2"; shift ;;
+    -a) account="$2"; shift ;;
+    -w) if [ "$cmd" = add-generic-password ]; then password="$2"; shift; else want_w=1; fi ;;
+  esac
+  shift
+done
+item="$FAKE_KEYCHAIN/$(printf '%s' "$service" | tr ' /' '__')"
+case "$cmd" in
+  find-generic-password)
+    [ -f "$item" ] || exit 44
+    if [ "$want_w" = 1 ]; then cat "$item"; else printf '    "acct"<blob>="%s"\\n' "$(cat "$item.acct")"; fi ;;
+  add-generic-password) printf '%s' "$password" >"$item"; printf '%s' "$account" >"$item.acct" ;;
+  delete-generic-password) rm -f "$item" "$item.acct" ;;
+esac
+"""
+
+
+def _creds(minutes: float) -> str:
+    expires = int((time.time() + minutes * 60) * 1000)
+    return json.dumps({"claudeAiOauth": {"accessToken": "at-secret", "refreshToken": "rt-secret", "expiresAt": expires, "scopes": ["x"]}})
+
+
+def _login_world(tmp_path: Path, minutes: float) -> tuple[World, Path]:
+    w = World(tmp_path / "t3", "--tier", "3")
+    keychain = tmp_path / "keychain"
+    keychain.mkdir()
+    _stub(w.bin / "security", SECURITY_STUB)
+    w.env["FAKE_KEYCHAIN"] = str(keychain)
+    real_home = Path(w.vars()["REAL_HOME"])
+    (real_home / ".claude.json").write_text(json.dumps({"hasCompletedOnboarding": True, "projects": {"/x": {}}, "mcpServers": {"m": {}}}))
+    (keychain / "Claude_Code-credentials").write_text(_creds(minutes))
+    (keychain / "Claude_Code-credentials.acct").write_text("me")
+    return w, keychain
+
+
+def _service_file(keychain: Path, folder: str) -> Path:
+    digest = hashlib.sha256(folder.encode()).hexdigest()[:8]
+    return keychain / f"Claude_Code-credentials-{digest}"
+
+
+def test_login_copies_the_keychain_login_without_its_refresh_token(tmp_path: Path) -> None:
+    w, keychain = _login_world(tmp_path, minutes=120)
+    try:
+        r = w.run("login.sh", str(w.envf))
+        assert r.returncode == 0, r.stderr
+        assert "secret" not in r.stdout + r.stderr
+        v = w.vars()
+        copy = json.loads(_service_file(keychain, v["CLAUDE_DIR"]).read_text())
+        assert "refreshToken" not in copy["claudeAiOauth"]
+        assert copy["claudeAiOauth"]["accessToken"] == "at-secret"
+        assert json.loads((keychain / "Claude_Code-credentials").read_text())["claudeAiOauth"]["refreshToken"] == "rt-secret"
+        assert (keychain / f"{_service_file(keychain, v['CLAUDE_DIR']).name}.acct").read_text() == "me"
+        seeded = json.loads((Path(v["CLAUDE_DIR"]) / ".claude.json").read_text())
+        assert seeded == {"hasCompletedOnboarding": True, "hasSeenAutoDefaultNudge": True}
+        link = Path(v["RUN_HOME"]) / "Library" / "Keychains"
+        assert link.is_symlink() and os.readlink(link) == v["REAL_HOME"] + "/Library/Keychains"
+        down = w.run("teardown.sh", str(w.envf))
+        assert down.returncode == 0, down.stderr
+        assert not _service_file(keychain, v["CLAUDE_DIR"]).exists(), "teardown deletes the copy"
+        assert (keychain / "Claude_Code-credentials").exists(), "and leaves the caller's login alone"
+    finally:
+        w.cleanup()
+
+
+def test_login_refuses_a_token_that_would_expire_during_the_run(tmp_path: Path) -> None:
+    w, keychain = _login_world(tmp_path, minutes=20)
+    try:
+        r = w.run("login.sh", str(w.envf))
+        assert r.returncode != 0 and "expires in" in r.stderr
+        assert not _service_file(keychain, w.vars()["CLAUDE_DIR"]).exists()
+        assert w.run("login.sh", str(w.envf), "--min-minutes", "10").returncode == 0
+    finally:
+        w.run("teardown.sh", str(w.envf))
+        w.cleanup()
+
+
+def test_login_reads_the_custom_claude_folders_keychain_item(tmp_path: Path) -> None:
+    w, keychain = _login_world(tmp_path, minutes=120)
+    try:
+        login = tmp_path / "login-claude"
+        login.mkdir()
+        (login / ".claude.json").write_text("{}")
+        _service_file(keychain, str(login)).write_text(_creds(120))
+        (keychain / f"{_service_file(keychain, str(login)).name}.acct").write_text("me")
+        bad = w.env_with("REAL_CLAUDE", str(login))
+        r = w.run("login.sh", str(bad))
+        assert r.returncode == 0, r.stderr
+        assert _service_file(keychain, w.vars()["CLAUDE_DIR"]).exists()
+    finally:
+        w.run("teardown.sh", str(w.envf))
+        w.cleanup()
+
+
+def test_login_writes_a_private_credentials_file_where_there_is_no_keychain(tmp_path: Path) -> None:
+    w, _ = _login_world(tmp_path, minutes=120)
+    try:
+        real = Path(w.vars()["REAL_HOME"]) / ".claude"
+        real.mkdir()
+        (real / ".credentials.json").write_text(_creds(120))
+        r = w.run("login.sh", str(w.envf), extra={"E2E_LOGIN_STORE": "file"})
+        assert r.returncode == 0, r.stderr
+        copy = Path(w.vars()["CLAUDE_DIR"]) / ".credentials.json"
+        assert "refreshToken" not in json.loads(copy.read_text())["claudeAiOauth"]
+        assert stat.S_IMODE(copy.stat().st_mode) == 0o600
+        assert w.run("teardown.sh", str(w.envf), "--keep").returncode == 0
+        assert not copy.exists(), "teardown deletes the copy even when it keeps the run"
+    finally:
+        w.cleanup()
+
+
+def test_login_is_for_tier_3_only(world: World) -> None:
+    r = world.run("login.sh", str(world.envf))
+    assert r.returncode != 0 and "tier 3" in r.stderr
 
 
 def test_tier_3_refuses_a_login_home_inside_the_run_and_a_forged_tier(tmp_path: Path) -> None:

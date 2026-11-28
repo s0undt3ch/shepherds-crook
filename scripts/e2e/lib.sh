@@ -9,10 +9,36 @@
 RUN_PREFIX=crook-e2e-run.
 RT_PREFIX=crook-e2e-rt.
 SESSION_PREFIX=crook-e2e-
+# login.sh leaves this in the run's Claude folder; teardown.sh deletes the login copy only where it finds it.
+LOGIN_MARKER=.crook-e2e-login
 
 die() {
   echo "e2e: $*" >&2
   exit 1
+}
+
+# The macOS keychain item Claude Code keeps its login in for a config folder; none means the default folder (D122).
+claude_cred_service() {
+  if [ -z "${1:-}" ]; then
+    echo "Claude Code-credentials"
+  else
+    echo "Claude Code-credentials-$(printf '%s' "$1" | shasum -a 256 | cut -c1-8)"
+  fi
+}
+
+# Deletes the login copy login.sh made for this run, if it made one. Only a name made from a folder inside the run.
+claude_login_remove() {
+  in_run_path "$CLAUDE_DIR" || die "CLAUDE_DIR is not inside the run: $CLAUDE_DIR"
+  [ -f "$CLAUDE_DIR/$LOGIN_MARKER" ] || return 0
+  rm -f "$CLAUDE_DIR/.credentials.json"
+  if command -v security >/dev/null 2>&1; then
+    security delete-generic-password -s "$(claude_cred_service "$CLAUDE_DIR")" >/dev/null 2>&1 || true
+    if security find-generic-password -s "$(claude_cred_service "$CLAUDE_DIR")" >/dev/null 2>&1; then
+      echo "e2e: the run's keychain item is still there: $(claude_cred_service "$CLAUDE_DIR")" >&2
+      return 1
+    fi
+  fi
+  rm -f "$CLAUDE_DIR/$LOGIN_MARKER"
 }
 
 # A resolved directory path; macOS reports /private/var and /private/tmp.
@@ -104,7 +130,8 @@ load_run() {
   case "$TIER" in
     2) ;;
     3)
-      # Tier 3 keeps the caller's HOME and Claude config folder, for Claude's login, and nothing else of them.
+      # The caller's HOME and Claude folder are only read: login.sh copies the login from them (D122), and tier3.sh
+      # checks they were not changed.
       [ -n "$REAL_HOME" ] && [ -d "$REAL_HOME" ] || die "tier 3: REAL_HOME is empty or missing"
       in_run_path "$REAL_HOME" && die "tier 3: REAL_HOME is inside the run"
       [ -z "$REAL_CLAUDE" ] || [ -d "$REAL_CLAUDE" ] || die "tier 3: REAL_CLAUDE is not a folder"
@@ -125,14 +152,8 @@ e2e_build_env() {
   while IFS= read -r name; do
     if removed_name "$name" && ! set_name "$name"; then E2E_ENV[${#E2E_ENV[@]}]="-u"; E2E_ENV[${#E2E_ENV[@]}]="$name"; fi
   done < <(compgen -e)
-  # `env` takes its -u options before the first NAME=value, so this one goes ahead of the run's own values.
-  if [ "$TIER" = 3 ] && [ -z "$REAL_CLAUDE" ]; then E2E_ENV[${#E2E_ENV[@]}]="-u"; E2E_ENV[${#E2E_ENV[@]}]="CLAUDE_CONFIG_DIR"; fi
   E2E_ENV[${#E2E_ENV[@]}]="HC_SESSION=$SESSION"
-  if [ "$TIER" = 3 ]; then
-    E2E_ENV[${#E2E_ENV[@]}]="HOME=$REAL_HOME"
-  else
-    E2E_ENV[${#E2E_ENV[@]}]="HOME=$RUN_HOME"
-  fi
+  E2E_ENV[${#E2E_ENV[@]}]="HOME=$RUN_HOME"
   E2E_ENV[${#E2E_ENV[@]}]="TMPDIR=$RUN_TMP"
   E2E_ENV[${#E2E_ENV[@]}]="XDG_STATE_HOME=$STATE"
   E2E_ENV[${#E2E_ENV[@]}]="XDG_CONFIG_HOME=$CONFIG"
@@ -140,11 +161,7 @@ e2e_build_env() {
   E2E_ENV[${#E2E_ENV[@]}]="XDG_CACHE_HOME=$CACHE"
   E2E_ENV[${#E2E_ENV[@]}]="XDG_RUNTIME_DIR=$RT"
   E2E_ENV[${#E2E_ENV[@]}]="HERDR_APP_HOME=$APP"
-  if [ "$TIER" != 3 ]; then
-    E2E_ENV[${#E2E_ENV[@]}]="CLAUDE_CONFIG_DIR=$CLAUDE_DIR"
-  elif [ -n "$REAL_CLAUDE" ]; then
-    E2E_ENV[${#E2E_ENV[@]}]="CLAUDE_CONFIG_DIR=$REAL_CLAUDE"
-  fi
+  E2E_ENV[${#E2E_ENV[@]}]="CLAUDE_CONFIG_DIR=$CLAUDE_DIR"
   E2E_ENV[${#E2E_ENV[@]}]="CROOK_BIN=$SHIM"
   # The run's stub programs come first, so a stray `herdr-app` or `claude` is never the real one.
   E2E_ENV[${#E2E_ENV[@]}]="PATH=$STUBS:$REAL_PATH"
@@ -171,16 +188,8 @@ e2e_verify_env() {
     if removed_name "$name" && ! set_name "$name"; then die "$name is still set after the scrub"; fi
     case "$name" in
       HC_SESSION) [ "$value" = "$SESSION" ] || die "HC_SESSION is '$value', not the run's '$SESSION'"; seen="$seen $name" ;;
-      HOME)
-        if [ "$TIER" = 3 ]; then [ "$value" = "$REAL_HOME" ] || die "HOME is not the tier-3 login home"
-        else [ "$value" = "$RUN_HOME" ] || die "HOME is outside the run: $value"; fi
-        seen="$seen $name"
-        ;;
-      CLAUDE_CONFIG_DIR)
-        if [ "$TIER" = 3 ]; then [ "$value" = "$REAL_CLAUDE" ] || die "CLAUDE_CONFIG_DIR is not the tier-3 login folder"
-        else in_run_path "$value" || die "$name is outside the run: $value"; fi
-        seen="$seen $name"
-        ;;
+      HOME) [ "$value" = "$RUN_HOME" ] || die "HOME is outside the run: $value"; seen="$seen $name" ;;
+      CLAUDE_CONFIG_DIR) [ "$value" = "$CLAUDE_DIR" ] || die "CLAUDE_CONFIG_DIR is not the run's: $value"; seen="$seen $name" ;;
       XDG_STATE_HOME | XDG_CONFIG_HOME | XDG_DATA_HOME | XDG_CACHE_HOME | HERDR_APP_HOME)
         in_run_path "$value" || die "$name is outside the run: $value"
         seen="$seen $name"
@@ -192,8 +201,6 @@ $dump
 E2E_DUMP
   for name in HC_SESSION HOME XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR \
     HERDR_APP_HOME CLAUDE_CONFIG_DIR; do
-    # Tier 3 without a custom Claude config folder has no CLAUDE_CONFIG_DIR at all.
-    if [ "$name" = CLAUDE_CONFIG_DIR ] && [ "$TIER" = 3 ] && [ -z "$REAL_CLAUDE" ]; then continue; fi
     case "$seen" in *" $name"*) ;; *) die "$name is missing from the scrubbed environment" ;; esac
   done
 }

@@ -72,8 +72,16 @@ inspection; remember to tear it down.
 
 ## The tier 3 runner
 
-`bash scripts/e2e/tier3.sh [--keep] [--only S4,S5,...] [--binary <crook>]`. The Bash tool stops a call at ten
-minutes, and a model turn takes 5 to 60 s: start it with `run_in_background` and read the log.
+`bash scripts/e2e/tier3.sh [--keep] [--only S4,S5,...] [--binary <crook>] [--permission-mode auto|default]`. The
+Bash tool stops a call at ten minutes, and a model turn takes 5 to 60 s: start it with `run_in_background` and read
+the log.
+
+The run has its own `HOME` and Claude config folder. `login.sh` copies the maintainer's Claude login into the run
+without its refresh token, and teardown deletes the copy (D122). It refuses when the access token has under an hour
+left: say so to the maintainer, who refreshes it by using Claude Code once. `auto`, the default, is the mode the
+maintainer's own sessions run in. `--permission-mode default` is the check that the coordinator's crook calls need
+no approval (ADR 0027): S1 alone covers it, as in `--only S1 --permission-mode default`. Under `default` the
+children's own tool calls would wait for approval, so run no other scenario in that mode.
 
 What it does, per scenario, each on its own flock:
 
@@ -147,10 +155,10 @@ If a check starts failing for no reason, look for a wording change first:
 
 ## Report
 
-Say, once, in the report: tier 3 keeps the maintainer's `HOME` and Claude config for the login, so each run leaves
-trust entries and transcripts for its `$TMPDIR/crook-e2e-run.*` folders in the real Claude config, and its sessions
-load the maintainer's own Claude settings, plugins and hooks. crook's own data, state, config and herdr-app home are
-the run's. Quote the snapshot result. The runner compares names and mtimes of `~/.config/herdr-app/mods`,
+Say, once, in the report: tier 3 runs in its own `HOME` and Claude config folder with a copy of the maintainer's
+login that cannot refresh, and teardown deletes the copy. Its sessions load none of the maintainer's Claude settings,
+plugins or hooks. Quote the snapshot result and the two checks that the maintainer's Claude folder got no project
+folder and no `.claude.json` entry from the run. The runner compares names and mtimes of `~/.config/herdr-app/mods`,
 `~/.local/share/crook`, `~/.local/state/crook`, `~/.config/crook`, `~/.config/herdr-core` and
 `~/.local/state/herdr-core` before and after; any change is a failure, except the maintainer's own core's registry
 (`~/.local/state/herdr-core/default/terminals.json` and its folder), which moves with their own terminals. For that

@@ -78,6 +78,12 @@ if [ -n "$left" ]; then
   failed=1
 fi
 
+# The login copy goes even with --keep: a kept run is for reading, and nothing in it runs any more.
+if [ "$TIER" = 3 ] && ! claude_login_remove; then
+  echo "teardown: could not delete the run's copy of the Claude login" >&2
+  failed=1
+fi
+
 if [ "$failed" = 0 ] && [ "$keep" = 0 ]; then
   rm -rf "$RUN" "$RT" && echo "removed $RUN and $RT"
 elif [ "$keep" = 1 ] && [ "$failed" = 0 ]; then

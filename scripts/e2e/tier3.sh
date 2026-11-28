@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# tier3.sh [--keep] [--only S1,S4,...] [--binary <crook>]: the tier 3 scenarios (release plan, "E2E harness"): a
+# tier3.sh [--keep] [--only S1,S4,...] [--binary <crook>] [--permission-mode auto|default]: the tier 3 scenarios (release plan, "E2E harness"): a
 # real scratch hc core, the REAL `claude` CLI on Haiku, a stub `herdr-app`. LOCAL ONLY (Q34), and driven by Claude
 # with the crook-e2e skill: it spends model tokens and needs Claude's login.
 #
-# The run keeps the caller's HOME and CLAUDE_CONFIG_DIR, for Claude's login and nothing else (lib.sh, tier 3):
-# crook's own XDG folders and HERDR_APP_HOME are the run's. So a run leaves trust entries and transcripts in the real
-# Claude config, and its sessions load the maintainer's own Claude settings, plugins and hooks. Names only are
+# The run has its own HOME and CLAUDE_CONFIG_DIR, as in tier 2. login.sh copies Claude's login into them without its
+# refresh token (D122), and teardown.sh deletes the copy. The sessions load none of the maintainer's Claude settings,
+# plugins or hooks: the run's settings.json sets only the permission mode, `auto` by default as the maintainer's
+# sessions run, `default` for ADR 0027's check that the coordinator's crook calls need no approval. Names only are
 # ever printed from the environment, never values.
 #
 # Every hc and crook call goes through hc.sh and crook.sh. Run this script with bash, never type a raw `hc` or
@@ -25,15 +26,18 @@ keep=0
 only=''
 only_given=0
 binary="$here/../../target/release/crook"
+mode=auto
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --keep) keep=1 ;;
     --only) only="${2:-}"; only_given=1; shift ;;
     --binary) binary="${2:-}"; shift ;;
-    *) die "usage: tier3.sh [--keep] [--only S1,S4,...] [--binary <crook>]" ;;
+    --permission-mode) mode="${2:-}"; shift ;;
+    *) die "usage: tier3.sh [--keep] [--only S1,S4,...] [--binary <crook>] [--permission-mode auto|default]" ;;
   esac
   shift
 done
+case "$mode" in auto | default) ;; *) die "--permission-mode takes auto or default (got '$mode')" ;; esac
 # An unknown or lower-case name would run nothing and pass.
 if [ "$only_given" = 1 ]; then
   valid_only "$only" "$SCENARIOS" || die "--only takes names from: $SCENARIOS (got '$only')"
@@ -60,7 +64,14 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 load_run "$ENVF"
 [ "$TIER" = 3 ] || die "setup made a tier $TIER run"
-echo "run: $RUN"
+echo "run: $RUN (permission mode $mode)"
+"$BASH" "$here/login.sh" "$ENVF" || die "no Claude login for the run"
+# `tui` as the maintainer's sessions run, and so a fresh config does not stop at the "try the fullscreen renderer" dialog.
+# An `autoMode.environment` line, so auto mode does not stop to offer to scan the environment (shell history included).
+jq -n --arg m "$mode" '{permissions: {defaultMode: $m}, skipAutoPermissionPrompt: true, tui: "fullscreen",
+  autoMode: {environment: ["A throwaway crook end-to-end test run: every folder it uses is under one temporary folder."]}}' \
+  >"$CLAUDE_DIR/settings.json"
+REAL_CFG="${REAL_CLAUDE:-$REAL_HOME/.claude}"
 
 # The real places a run must not change, as names and mtimes: what the maintainer's app and crook installs hold.
 REGISTRY="$REAL_HOME/.local/state/herdr-core/default/terminals.json"
@@ -105,7 +116,7 @@ wait_for() {
   return 1
 }
 
-CFG="${REAL_CLAUDE:-$REAL_HOME/.claude}"
+CFG="$CLAUDE_DIR"
 flock_dir() { find "$DATA/crook/flocks" -maxdepth 1 -type d -name "*-$1" 2>/dev/null | head -1; }
 roster() { echo "$(flock_dir "$1")/roster.json"; }
 res() { echo "$(flock_dir "$1")/results/$2.md"; }
@@ -133,6 +144,16 @@ say() {
   hc send "$1" "$2" --wait --timeout "${3:-120}" >"$RUN_TMP/say.out" 2>&1 || return 1
   jq -e '.started == true' "$RUN_TMP/say.out" >/dev/null 2>&1
 }
+# /clear starts no model turn, so say's check that a turn started does not fit it: send it, then wait until the
+# session is idle again.
+clear_in() { # clear_in <terminal>
+  # hc exits non-zero when the send starts no turn, which is what /clear does; its JSON reply says it was typed.
+  hc send "$1" "/clear" --wait --timeout 60 >"$RUN_TMP/clear.out" 2>&1
+  jq -e '.turn != null' "$RUN_TMP/clear.out" >/dev/null 2>&1 || return 1
+  # A cleared session with no turn yet reports `idle`, not `done`.
+  wait_for 30 settled "$1"
+}
+settled() { case "$(state_of "$1")" in done | idle) return 0 ;; *) return 1 ;; esac; }
 brief() { # brief <flock> <child> <goal>
   local dir
   dir="$(flock_dir "$1")"
@@ -152,12 +173,21 @@ trust_in() { # trust_in <terminal>
   fi
   return "$rc"
 }
+# A fresh Claude config offers, after the first turn under `default` mode, to make auto mode the default. The answer
+# is "No, keep manual mode" (the second option); nothing else is ever answered here.
+no_auto_offer() { # no_auto_offer <terminal>
+  if state_is "$1" blocked && screen_has "$1" 'Make auto mode your default permission mode'; then
+    note "answered Claude's auto-mode offer in $1 with: No, keep manual mode"
+    hc keys "$1" down enter >/dev/null 2>&1 || return 1
+    wait_for 30 state_is "$1" "done"
+  fi
+}
 new_flock() { # new_flock <slug> <task>
   crook new "$1" --task "$2" >"$RUN_TMP/new-$1.out" 2>&1 || return 1
   wait_for 30 is_live "$1" || return 1
   wait_for 90 state_is "$1" blocked || true
   trust_in "$1" || return 1
-  wait_for 180 state_is "$1" "done"
+  wait_for 180 state_is "$1" "done" || { no_auto_offer "$1" && state_is "$1" "done"; }
 }
 spawn_child() { # spawn_child <flock> <child> <goal> [crook spawn options...]
   local f="$1" c="$2"
@@ -232,7 +262,36 @@ s1() {
   tr="$(transcript "$sid")"
   expect "the coordinator's transcript exists under the Claude config folder" tr_ok "$tr"
   expect "the coordinator runs on --model haiku (the run's coordinator_model)" proc_with_id --session-id "$sid" "--model haiku"
-  note "permission mode of the real session (Q21): $(jq -r 'select(.permissionMode != null) | .permissionMode' "$tr" 2>/dev/null | sort | uniq -c | tr '\n' ' ')"
+  note "permission mode of the real session: $(jq -r 'select(.permissionMode != null) | .permissionMode' "$tr" 2>/dev/null | sort | uniq -c | tr '\n' ' ')"
+  # ADR 0027: the coordinator calls crook by the literal path its allow rule names, so the call needs no approval.
+  # Only `--permission-mode default` proves that; under `auto` a classifier may allow any form.
+  if say s1 "Run crook status for the flock s1 with --json, then reply with only its state." 180; then
+    wait_for 120 state_is s1 "done" || true
+    if state_is s1 blocked; then
+      bad "the coordinator's crook call waits for approval (0027):"
+      shot s1 12
+      hc keys s1 escape >/dev/null 2>&1 || true
+    else
+      expect "the coordinator ran crook as the literal run path, with no denial (0027, $mode mode)" crook_call_ran "$tr"
+      expect "the coordinator's crook calls never use a variable (0027)" no_variable_crook_call "$tr"
+    fi
+  else
+    nx "the coordinator took no turn for the crook status request: $(head -c 300 "$RUN_TMP/say.out" | tr '\n' ' ')"
+    shot s1 10
+  fi
+}
+
+# A Bash call that starts with the quoted run shim path, and whose result is not an error.
+crook_call_ran() {
+  jq -s -e --arg p "\"$SHIM\" " '
+    [.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Bash")
+      | select(.input.command | startswith($p)) | .id] as $ids
+    | [.[] | select(.type == "user") | .message.content[]? | select(.type == "tool_result")
+      | select(.tool_use_id as $i | $ids | index($i)) | select(.is_error != true)] | length > 0' "$1"
+}
+no_variable_crook_call() {
+  ! jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Bash")
+    | .input.command' "$1" | grep -q -e 'CROOK_BIN' -e 'MISE_DATA_DIR' -e 'shims/crook}'
 }
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -270,7 +329,7 @@ s4() {
   sid="$(child_field s4 one session_id)"
   proj="$(dirname "$(transcript "$sid")")"
   before="$(names_in "$proj")"
-  if say s4.one "/clear" 60 && sleep 3 && say s4.one "Append the line 'after clear' under Summary in $p, keep status done, then end your turn." 120; then
+  if clear_in s4.one && sleep 3 && say s4.one "Append the line 'after clear' under Summary in $p, keep status done, then end your turn." 120; then
     after="$(names_in "$proj")"
     newfiles="$(comm -13 <(printf '%s\n' "$before" | tr ' ' '\n' | sort) <(printf '%s\n' "$after" | tr ' ' '\n' | sort) | tr '\n' ' ')"
     note "/clear: transcripts new in the child's project folder: ${newfiles:-none}; the original session id was $sid"
@@ -299,7 +358,8 @@ s4() {
       nx "/clear: the child did not write the line after the clear"
     fi
   else
-    nx "/clear: the sends to the child failed"
+    nx "/clear: the sends to the child failed: clear: $(head -c 200 "$RUN_TMP/clear.out" | tr '\n' ' '); say: $(head -c 200 "$RUN_TMP/say.out" | tr '\n' ' ')"
+    shot s4.one 10
   fi
 }
 
@@ -581,6 +641,16 @@ elif grep -q -e "$RUN" -e "$SESSION" "$REGISTRY"; then
 else
   ok "the real core's registry holds no entry of this run"
 fi
+
+# D122: the run's sessions used the run's Claude folder, so the maintainer's has no project folder for any of them.
+leaked="$(find "$REAL_CFG/projects" -maxdepth 1 -name "*crook-e2e-run*" -newer "$SNAP_BEFORE" 2>/dev/null | head -3)"
+if [ -z "$leaked" ]; then
+  ok "the maintainer's Claude folder got no transcript or project entry from this run"
+else
+  bad "the maintainer's Claude folder got project folders from this run: $leaked"
+fi
+if [ -n "$REAL_CLAUDE" ]; then real_json="$REAL_CLAUDE/.claude.json"; else real_json="$REAL_HOME/.claude.json"; fi
+expect "the maintainer's .claude.json names no folder of this run" not_in_tree "$RUN" "$real_json"
 
 echo
 echo "tier 3: $PASS passed, $FAIL failed, $SKIP not exercised, $NOTE note(s)"

@@ -25,6 +25,10 @@ pub enum Call {
         to: String,
         text: String,
     },
+    Read {
+        id: String,
+        lines: u32,
+    },
     Kill(String),
     ServerStart(Vec<(OsString, OsString)>),
 }
@@ -338,6 +342,25 @@ impl Hc for FakeHc {
             }
             Some(_) => SendOutcome::Sent,
         })
+    }
+
+    fn read(&self, id: &str, lines: u32) -> Result<String, Error> {
+        self.record(
+            Call::Read {
+                id: id.to_string(),
+                lines,
+            },
+            "read",
+        )?;
+        let s = self.state.borrow();
+        match find(&s.terminals, id) {
+            Some(i) => Ok(format!("screen of {}\n", s.terminals[i].address)),
+            None => Err(Error::Hc {
+                args: format!("read {id}"),
+                kind: Some("not_found".to_string()),
+                message: format!("no terminal {id}"),
+            }),
+        }
     }
 
     fn kill(&self, id: &str) -> Result<KillOutcome, Error> {

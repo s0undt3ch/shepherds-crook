@@ -105,7 +105,7 @@ The maintainer approved these fixes after an audit of the ADRs against the plans
 | # | Question | Decision | Status |
 | --- | --- | --- | --- |
 | 46 | Q21's allow rule can never match: Claude Code refuses to match any command that holds a variable (spike 27). How does the coordinator call `crook` with no prompt? | `crook open` resolves the shim to a literal path, allows `Bash("<path>" *)`, and names the path in the first prompt and in the coordinator's SessionStart context ([0027](../architecture/decisions/0027-the-coordinator-calls-crook-by-a-literal-path.md), accepted 2026-11-28). | decided |
-| 47 | 0027 covers only crook calls. Under `default` mode, how do the coordinator's brief writes, `hc read` and `hc send` run with no prompt? | Proposed: flat `crook send` and `crook read` subcommands, so the coordinator makes no `hc` call, plus `Edit` and `Write` allow rules for the flock's folders ([0028](../architecture/decisions/0028-the-coordinator-s-hc-calls-and-brief-writes-under-default-mode.md)). Not built until the maintainer accepts 0028. | open |
+| 47 | 0027 covers only crook calls. Under `default` mode, how do the coordinator's brief writes, `hc read` and `hc send` run with no prompt? | Flat `crook send` and `crook read` subcommands, so the coordinator makes no `hc` call, plus `Edit` and `Write` allow rules for the flock's folders ([0028](../architecture/decisions/0028-the-coordinator-s-hc-calls-and-brief-writes-under-default-mode.md)). Accepted 2026-11-28. | decided |
 
 ## Changed during the build
 

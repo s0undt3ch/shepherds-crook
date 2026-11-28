@@ -33,6 +33,7 @@ fn coord<'a>(
         model,
         task,
         crook: CROOK,
+        plugin_target: None,
     }
 }
 
@@ -90,7 +91,13 @@ fn golden_coordinator_first_start() {
         "--add-dir",
         "/data/crook/flocks/2026-11-27-demo",
         "--settings",
-        r#"{"permissions":{"allow":["Bash(\"/home/u/.local/share/mise/shims/crook\" *)"]}}"#,
+        concat!(
+            r#"{"permissions":{"allow":["Bash(\"/home/u/.local/share/mise/shims/crook\" *)","#,
+            r#""Edit(//data/crook/flocks/2026-11-27-demo/briefs/**)","#,
+            r#""Edit(//data/crook/flocks/2026-11-27-demo/README.md)","#,
+            r#""Edit(//data/crook/flocks/2026-11-27-demo/notes/**)","#,
+            r#""Read(//data/crook/current/plugin/**)"]}}"#
+        ),
     ]);
     expected.extend(strs(&["--agent", "crook:coordinator", "--session-id", SID]));
     expected.push(
@@ -108,12 +115,13 @@ fn golden_coordinator_first_start() {
 #[test]
 fn golden_coordinator_resume_has_no_prompt_and_the_notes_folder() {
     let notes = Path::new("/notes/2026-11-27-demo");
-    let spec = coordinator(&coord(
+    let c = coord(
         common(None, notes),
         Session::Resume(SID),
         Some("opus"),
         Some("ignored on a resume"),
-    ));
+    );
+    let spec = coordinator(&c);
     let mut expected = strs(&[
         "env",
         &format!("CROOK_BIN={CROOK}"),
@@ -126,7 +134,7 @@ fn golden_coordinator_resume_has_no_prompt_and_the_notes_folder() {
         "/notes/2026-11-27-demo",
         "--settings",
     ]);
-    expected.push(settings_json(CROOK));
+    expected.push(settings_json(&c));
     expected.extend(strs(&[
         "--agent",
         "crook:coordinator",
@@ -278,8 +286,11 @@ fn the_allow_rule_is_the_literal_path_the_first_prompt_names() {
     assert!(!settings.contains('$'), "{settings}");
     let json: serde_json::Value = serde_json::from_str(settings).expect("json");
     let rules = json["permissions"]["allow"].as_array().expect("allow");
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0], format!("Bash(\"{CROOK}\" *)"));
+    let bash: Vec<_> = rules
+        .iter()
+        .filter(|r| r.as_str().is_some_and(|r| r.starts_with("Bash(")))
+        .collect();
+    assert_eq!(bash, [&serde_json::json!(format!("Bash(\"{CROOK}\" *)"))]);
     let prompt = c.argv.last().expect("prompt");
     assert!(
         prompt.contains(&format!("\"{CROOK}\" <subcommand>")),
@@ -332,4 +343,86 @@ fn the_eval_stub_says_the_same_call_rule() {
     let stub = include_str!("../../plugin/evals/_lib/crook-stub.sh");
     let expected = call_rule("%s").replace('"', "\\\"");
     assert!(stub.contains(&format!("rule='{expected}'")), "{expected}");
+}
+
+/// ADR 0028: the briefs in the flock folder, and the README and notes in the notes folder, wherever it is.
+#[test]
+fn the_writes_allowed_are_the_briefs_readme_and_notes() {
+    let notes = Path::new("/notes/2026-11-27-demo");
+    let c = coordinator(&coord(
+        common(None, notes),
+        Session::Resume(SID),
+        None,
+        None,
+    ));
+    let settings: serde_json::Value =
+        serde_json::from_str(&c.argv[position(&c.argv, "--settings") + 1]).expect("json");
+    let edits: Vec<&str> = settings["permissions"]["allow"]
+        .as_array()
+        .expect("allow")
+        .iter()
+        .filter_map(|r| r.as_str().filter(|r| r.starts_with("Edit(")))
+        .collect();
+    assert_eq!(
+        edits,
+        [
+            "Edit(//data/crook/flocks/2026-11-27-demo/briefs/**)",
+            "Edit(//notes/2026-11-27-demo/README.md)",
+            "Edit(//notes/2026-11-27-demo/notes/**)",
+        ]
+    );
+}
+
+#[test]
+fn a_folder_a_rule_would_misread_gets_no_edit_rule() {
+    for bad in [
+        "/data/a*b",
+        "/data/a?b",
+        "/data/a[1]",
+        "/data/a(b)",
+        "/data/a{b}",
+        "/data/a\\b",
+        "/data/a!b",
+    ] {
+        assert_eq!(edit_rule(Path::new(bad), "briefs/**"), None, "{bad}");
+    }
+    assert_eq!(edit_rule(Path::new("relative/x"), "briefs/**"), None);
+    assert_eq!(
+        edit_rule(Path::new("/Users/a b/x"), "briefs/**").as_deref(),
+        Some("Edit(//Users/a b/x/briefs/**)")
+    );
+}
+
+#[test]
+fn a_child_gets_no_edit_rules() {
+    let k = child(&kid(common(None, flock()), Session::New(SID)));
+    assert!(!k.argv.iter().any(|a| a.contains("Edit(")));
+}
+
+/// D127: the skill's own files, by the plugin link and by where it points when `crook open` runs.
+#[test]
+fn reads_of_the_plugin_are_allowed_by_link_and_by_target() {
+    let target = Path::new("/data/crook/install/1.2.0/plugin");
+    let mut c = coord(common(None, flock()), Session::Resume(SID), None, None);
+    c.plugin_target = Some(target);
+    let settings: serde_json::Value = serde_json::from_str(&settings_json(&c)).expect("json");
+    let reads: Vec<&str> = settings["permissions"]["allow"]
+        .as_array()
+        .expect("allow")
+        .iter()
+        .filter_map(|r| r.as_str().filter(|r| r.starts_with("Read(")))
+        .collect();
+    assert_eq!(
+        reads,
+        [
+            "Read(//data/crook/current/plugin/**)",
+            "Read(//data/crook/install/1.2.0/plugin/**)"
+        ]
+    );
+    c.plugin_target = Some(Path::new("/data/crook/current/plugin"));
+    assert_eq!(
+        settings_json(&c).matches("Read(").count(),
+        1,
+        "the same path once"
+    );
 }

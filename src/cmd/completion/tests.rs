@@ -52,6 +52,8 @@ fn every_shell_script_lists_every_subcommand_but_not_the_hidden_helper() {
             "close",
             "spawn",
             "stop",
+            "send",
+            "read",
             "resume",
             "status",
             "hook",
@@ -135,12 +137,14 @@ fn the_list_helper_prints_one_candidate_per_line_and_never_fails() {
     assert_eq!(bufs.out.text(), "");
 }
 
-const EXPECTED: [&str; 11] = [
+const EXPECTED: [&str; 13] = [
     "new",
     "open",
     "close",
     "spawn",
     "stop",
+    "send",
+    "read",
     "resume",
     "status",
     "hook",

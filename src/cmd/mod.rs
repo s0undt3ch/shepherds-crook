@@ -19,7 +19,9 @@ pub mod completion;
 pub mod doctor;
 pub mod new;
 pub mod open;
+pub mod read;
 pub mod resume;
+pub mod send;
 pub mod setup;
 pub mod spawn;
 pub mod status;
@@ -88,6 +90,14 @@ pub fn dispatch_with(command: &Command, ctx: &Ctx, hc: &dyn Hc, io: &mut Io) -> 
             },
         ),
         Command::Stop { child, flock } => stop::run(ctx, hc, io, child, flock.as_deref()),
+        Command::Send { child, text, flock } => {
+            send::run(ctx, hc, io, child, text, flock.as_deref())
+        }
+        Command::Read {
+            child,
+            lines,
+            flock,
+        } => read::run(ctx, hc, io, child, *lines, flock.as_deref()),
         Command::Resume {
             child,
             model,
@@ -278,6 +288,44 @@ pub fn live_named(hc: &dyn Hc, name: &str) -> Result<Option<Terminal>, Error> {
 /// The flock's live terminals: its coordinator and its children, as `hc ls` lists them (no labels).
 pub fn live_terminals(hc: &dyn Hc, slug: &str) -> Result<Vec<Terminal>, Error> {
     hc.ls_by_label(false, &[(names::LABEL_FLOCK.to_string(), slug.to_string())])
+}
+
+/// The live terminal of `child`, a child in this flock's roster, for `send` and `read` (ADR 0028). Only a
+/// terminal carrying this flock's label and the child's name counts, so neither command can reach a
+/// terminal outside the flock.
+pub fn live_child_terminal(
+    ctx: &Ctx,
+    hc: &dyn Hc,
+    child: &str,
+    flag: Option<&str>,
+) -> Result<(String, Terminal), Error> {
+    require_context(ctx, flag)?;
+    names::validate_child(child)?;
+    crate::hc::preflight::run(hc, &(ctx.vars)())?;
+    let (slug, _) = resolve_slug(ctx, hc, flag)?;
+    let flock = find_flock(ctx, &slug)?;
+    let on_disk = crate::files::roster::load(&flock.folder)?;
+    if !on_disk.children.iter().any(|c| c.name == child) {
+        let known: Vec<&str> = on_disk.children.iter().map(|c| c.name.as_str()).collect();
+        return Err(Error::Flock(format!(
+            "flock {slug:?} has no child named {child:?} (children: {})",
+            if known.is_empty() {
+                "none".to_string()
+            } else {
+                known.join(", ")
+            }
+        )));
+    }
+    let name = names::hc_child(&slug, child);
+    live_terminals(hc, &slug)?
+        .into_iter()
+        .find(|t| t.name.as_deref() == Some(name.as_str()))
+        .map(|t| (slug.clone(), t))
+        .ok_or_else(|| {
+            Error::Flock(format!(
+                "{name} has no live terminal; `crook resume {child}` starts it again"
+            ))
+        })
 }
 
 /// The live terminal named `<slug>`, whatever runs in it.

@@ -138,7 +138,10 @@ hc run --bg --name <hc name> --cwd <folder>
   path from `paths::crook_call_path`: `CROOK_BIN` when set, else the mise shim, never a link target (0027,
   Q46). The coordinator also always gets `env CROOK_BIN=<path>`, so its hooks name the same path, and its first
   prompt says to call crook only as `"<path>" <subcommand>`. A path holding `"`, `$`, a backtick, a backslash
-  or a control character is refused, because no rule can match a call to it (spike 27).
+  or a control character is refused, because no rule can match a call to it (spike 27). Next to it, `Edit` rules
+  allow `<flock>/briefs/**`, `<notes>/README.md` and `<notes>/notes/**` (0028, spike 28); a folder whose path
+  holds glob characters, a parenthesis, a backslash or `!` gets none, so its writes ask. `Read` rules allow the
+  plugin folder by its link and by its target when `open` runs (D127).
 
 ### Never break the session
 
@@ -497,7 +500,7 @@ prove the task; write them first.
     work", plus the brief and result paths (Q14);
   - coordinator resume: no prompt (0018).
 - Files: `src/launch.rs`.
-- ADR: 0007, 0013, 0017, 0018, 0019, 0025, 0027; Q1, Q14, Q15, Q32, Q46.
+- ADR: 0007, 0013, 0017, 0018, 0019, 0025, 0027, 0028; Q1, Q14, Q15, Q32, Q46, Q47.
 - Tests: golden argv for each of the four cases; the token before the prompt is `--session-id <uuid>` or
   `--resume <uuid>`; every `--add-dir` comes before `--agent`; `--plugin-dir` ends in `current/plugin`;
   `--agent` is `crook:coordinator` or `crook:child`; a child always has `--model`, the coordinator only when
@@ -596,6 +599,21 @@ prove the task; write them first.
   `warning:` line; unknown child refused; a second `stop` on a `done` child removes a worktree that is now
   pushed, and prints the `warning:` line again for one that is still dirty.
 - Done when: a stopped child never appears in a later resume.
+
+#### 6.4 `crook send <child> <text>` and `crook read <child> [--lines N]`
+
+- What: find the child's live terminal: the child must be in this flock's roster, and only a terminal carrying the
+  flock's label and the name `<slug>.<child>` counts. `send` runs `hc send` (never `--force`; the text goes after
+  `--`) and exits with hc's own code when it does not land: 9 blocked, 11 ended or not found. `read` prints
+  `hc read --lines N`. Both refuse an unknown or ended child before any hc call, and refuse to run in a child's
+  terminal.
+- Files: `src/cmd/send.rs`, `src/cmd/read.rs`, `src/cmd/mod.rs` (`live_child_terminal`), `src/hc/` (`read`),
+  `src/error.rs` (`Error::Send`, `exit_code`).
+- ADR: 0020, 0028.
+- Tests: the line reaches the child's terminal as given; a blocked child exits 9 and an ended one 11; another
+  flock's child of the same name, and a terminal named like the child without the flock's label, are never
+  reached; empty text, an unknown name and a child's own terminal are refused; `read` passes `--lines`.
+- Done when: the coordinator skill makes no `hc` call.
 
 #### 6.3 `crook resume [<child>] [--model <model>]`
 

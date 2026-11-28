@@ -298,6 +298,18 @@ impl Hc for HcClient<'_> {
         })
     }
 
+    fn read(&self, id: &str, lines: u32) -> Result<String, Error> {
+        let args = vec![
+            "read".to_string(),
+            "--lines".to_string(),
+            lines.to_string(),
+            "--".to_string(),
+            id.to_string(),
+        ];
+        check_id(&args, id)?;
+        Ok(self.call_ok(args)?.stdout)
+    }
+
     fn kill(&self, id: &str) -> Result<KillOutcome, Error> {
         let args = vec!["kill".to_string(), "--json".to_string(), id.to_string()];
         check_id(&args, id)?;

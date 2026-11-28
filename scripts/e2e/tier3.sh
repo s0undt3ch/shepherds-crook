@@ -279,6 +279,53 @@ s1() {
     nx "the coordinator took no turn for the crook status request: $(head -c 300 "$RUN_TMP/say.out" | tr '\n' ' ')"
     shot s1 10
   fi
+  [ "$mode" = default ] && s1_default_steps "$tr"
+}
+
+# ADR 0028, `default` mode only: the coordinator's brief write, `crook read` and `crook send` need no approval either.
+s1_default_steps() { # s1_default_steps <coordinator transcript>
+  local tr="$1" brief
+  brief="$(flock_dir s1)/briefs/peek.md"
+  if ! say s1 "Delegate this now, no further planning: one child named peek, on haiku, lists the files in the flock folder. Write its brief, spawn it, then look at its screen with crook read, then send it the line 'hello' with crook send. Report what each step printed." 300; then
+    nx "0028: the coordinator took no turn for the brief, read and send request"
+    return
+  fi
+  wait_for 240 state_is s1 "done" || true
+  if state_is s1 blocked; then
+    bad "0028: the coordinator waits for approval:"
+    shot s1 12
+    hc keys s1 escape >/dev/null 2>&1 || true
+    return
+  fi
+  if [ -f "$brief" ]; then ok "0028: the coordinator wrote briefs/peek.md with no approval ($mode mode)"; else nx "0028: the model wrote no brief for peek"; fi
+  local sub
+  for sub in read send; do
+    if crook_sub_called "$tr" "$sub"; then
+      expect "0028: crook $sub ran with no approval ($mode mode)" crook_sub_unrefused "$tr" "$sub"
+    else
+      nx "0028: the model did not run crook $sub"
+    fi
+  done
+  expect "0028: the coordinator made no hc call of its own" no_hc_call "$tr"
+}
+crook_sub_called() { # crook_sub_called <transcript> <subcommand>
+  jq -e -s --arg p "\"$SHIM\" $2 " '[.[] | select(.type == "assistant") | .message.content[]?
+    | select(.type == "tool_use" and .name == "Bash") | select(.input.command | startswith($p))] | length > 0' "$1" >/dev/null
+}
+# The call reached crook: its result is crook's output (an exit code such as send's 9 counts), not a refusal by
+# Claude's permission check.
+crook_sub_unrefused() { # crook_sub_unrefused <transcript> <subcommand>
+  jq -e -s --arg p "\"$SHIM\" $2 " '
+    [.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Bash")
+      | select(.input.command | startswith($p)) | .id] as $ids
+    | [.[] | select(.type == "user") | .message.content[]? | select(.type == "tool_result")
+      | select(.tool_use_id as $i | $ids | index($i))
+      | (.content | if type == "array" then map(.text? // "") | join(" ") else tostring end)
+      | select(test("permission|requires approval|was blocked"; "i") | not)] | length > 0' "$1" >/dev/null
+}
+no_hc_call() {
+  ! jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Bash")
+    | .input.command' "$1" | grep -Eq '(^|[;&|]|^[[:space:]]*)hc[[:space:]]'
 }
 
 # A Bash call that starts with the quoted run shim path, and whose result is not an error.

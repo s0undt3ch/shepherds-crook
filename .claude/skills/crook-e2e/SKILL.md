@@ -80,8 +80,9 @@ The run has its own `HOME` and Claude config folder. `login.sh` copies the maint
 without its refresh token, and teardown deletes the copy (D122). It refuses when the access token has under an hour
 left: say so to the maintainer, who refreshes it by using Claude Code once. `auto`, the default, is the mode the
 maintainer's own sessions run in. `--permission-mode default` is the check that the coordinator's crook calls need
-no approval (ADR 0027): S1 alone covers it, as in `--only S1 --permission-mode default`. Under `default` the
-children's own tool calls would wait for approval, so run no other scenario in that mode.
+no approval (ADR 0027), nor do its brief write, `crook read` and `crook send` (ADR 0028). S1 alone covers it, as in
+`--only S1 --permission-mode default`. Under `default` the children's own tool calls would wait for approval, so run
+no other scenario in that mode.
 
 What it does, per scenario, each on its own flock:
 

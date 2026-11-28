@@ -468,3 +468,25 @@ fn a_missing_hc_is_a_clear_error() {
     let err = client.version().expect_err("fails");
     assert!(err.to_string().contains("/nonexistent/hc"), "{err}");
 }
+
+#[test]
+fn read_asks_for_the_history_and_returns_the_screen() {
+    let r = FakeRunner::new([Ok(Output {
+        code: Some(0),
+        stdout: "the screen\n".to_string(),
+        stderr: String::new(),
+    })]);
+    let screen = HcClient::new(&r).read("t7", 25).expect("read");
+    assert_eq!(screen, "the screen\n");
+    assert_eq!(r.calls(), [hc(&["read", "--lines", "25", "--", "t7"])]);
+}
+
+#[test]
+fn a_failed_read_is_an_error() {
+    let r = FakeRunner::new([Ok(Output {
+        code: Some(3),
+        stdout: String::new(),
+        stderr: r#"{"error":{"kind":"not_found","message":"no terminal t7"}}"#.to_string(),
+    })]);
+    assert!(HcClient::new(&r).read("t7", 0).is_err());
+}

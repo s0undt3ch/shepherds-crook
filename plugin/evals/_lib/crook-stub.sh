@@ -34,6 +34,12 @@ stop)
 resume)
     printf 'resumed demo.%s (terminal t3)\n' "$2"
     ;;
+send)
+    printf 'sent to demo.%s\n' "$2"
+    ;;
+read)
+    printf 'demo.%s screen: waiting for input\n' "$2"
+    ;;
 hook)
     # The coordinator's SessionStart context names the literal path to call, as the real hook does
     # (ADR 0027). The text must stay launch::call_rule's; a Rust test compares them.

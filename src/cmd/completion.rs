@@ -103,7 +103,7 @@ _crook() {
   elif [ "$prev" != "--model" ] && [ "$prev" != "--repo" ] && [ "$prev" != "--task" ]; then
     case "$sub" in
       open | close | status) words="$(crook completion list slugs 2>/dev/null)" ;;
-      stop | resume)
+      stop | resume | send | read)
         if [ -n "$flock" ]; then
           words="$(crook completion list children --flock "$flock" 2>/dev/null)"
         else
@@ -147,7 +147,7 @@ _crook() {
     open | close | status)
       candidates=(${(f)"$(crook completion list slugs 2>/dev/null)"})
       ;;
-    stop | resume)
+    stop | resume | send | read)
       if [[ -n $flock ]]; then
         candidates=(${(f)"$(crook completion list children --flock $flock 2>/dev/null)"})
       else
@@ -183,7 +183,7 @@ end
 complete -c crook -f
 complete -c crook -n '__fish_use_subcommand' -a '@COMMANDS@'
 complete -c crook -n '__fish_seen_subcommand_from open close status' -a '(crook completion list slugs 2>/dev/null)'
-complete -c crook -n '__fish_seen_subcommand_from stop resume' -a '(__crook_children)'
+complete -c crook -n '__fish_seen_subcommand_from stop resume send read' -a '(__crook_children)'
 complete -c crook -l flock -x -a '(crook completion list slugs 2>/dev/null)'
 complete -c crook -n '__fish_seen_subcommand_from completion; and not __fish_seen_subcommand_from print' -a 'print'
 complete -c crook -n '__fish_seen_subcommand_from print' -a 'bash zsh fish'

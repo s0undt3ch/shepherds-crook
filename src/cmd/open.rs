@@ -27,6 +27,7 @@ pub fn run(
     }
     let setup = Setup::load(ctx)?;
     let crook = paths::crook_call_path(ctx.env, setup.crook_bin.as_deref())?;
+    let plugin_target = setup.plugin_dir.canonicalize().ok();
     preflight::run(hc, &(ctx.vars)())?;
 
     let mut found = coordinator_terminal(hc, slug)?;
@@ -72,6 +73,7 @@ pub fn run(
         model: setup.config.coordinator_model.as_deref(),
         task,
         crook: &crook,
+        plugin_target: plugin_target.as_deref(),
     });
     let address = match hc.run(&spec) {
         Ok(terminal) => terminal.address,

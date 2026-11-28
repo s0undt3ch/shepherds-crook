@@ -537,9 +537,10 @@ Each task lists what, files, ADRs, how it is checked, and when it is done.
 
 - What: sections 7, 8, 9 and 11 of `SKILL.md`.
 - Files: `plugin/skills/crook-coordinator/SKILL.md`.
-- ADRs: 0003, 0008, 0009, 0010, 0021, 0024. Decisions: Q28, Q30.
+- ADRs: 0003, 0008, 0009, 0010, 0021, 0024, 0028. Decisions: Q28, Q30, Q47.
 - Check: Tier 2 cases fed a stub result path and a stub `blocked (question)` note; e2e steps E2 and E3.
-- Done when: no case runs `hc send --force` or pastes a result body back, and a blocked note names the child.
+- Done when: no case makes an `hc` call (the coordinator uses `crook send` and `crook read`, 0028) or pastes a
+  result body back, and a blocked note names the child.
 
 #### P3.1c Stopping, closing and notes
 

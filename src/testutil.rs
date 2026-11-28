@@ -404,6 +404,9 @@ impl crate::hc::Hc for HookedHc<'_> {
         }
         self.inner.send(to, text)
     }
+    fn read(&self, id: &str, lines: u32) -> Result<String, Error> {
+        self.inner.read(id, lines)
+    }
     fn kill(&self, id: &str) -> Result<crate::hc::KillOutcome, Error> {
         if let Some(hook) = &self.on_kill {
             hook(id);

@@ -330,6 +330,9 @@ impl crate::hc::Hc for FailLast<'_> {
     fn send(&self, to: &str, text: &str) -> Result<crate::hc::SendOutcome, Error> {
         self.inner.send(to, text)
     }
+    fn read(&self, id: &str, lines: u32) -> Result<String, Error> {
+        self.inner.read(id, lines)
+    }
     fn kill(&self, id: &str) -> Result<crate::hc::KillOutcome, Error> {
         self.kills.set(self.kills.get() + 1);
         if self.kills.get() == self.fail_at {

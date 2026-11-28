@@ -10,9 +10,15 @@ links:
   kind: amends
 - target: 20
   kind: amends
+- target: 28
+  kind: amendedby
 ---
 
 # The coordinator calls crook by a literal path
+
+Amended by [0028](0028-the-coordinator-s-hc-calls-and-brief-writes-under-default-mode.md): the coordinator talks to
+its children with `crook send` and `crook read` and makes no `hc` call; `crook open` also allows its brief, README
+and notes writes.
 
 ## Context and problem statement
 

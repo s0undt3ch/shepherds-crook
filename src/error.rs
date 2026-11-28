@@ -70,4 +70,17 @@ pub enum Error {
     Preflight(String),
     #[error("doctor: {0} check(s) failed")]
     Checks(usize),
+    /// `crook send` exits with hc's own code, so the coordinator's skill reads 9 and 11 as before (ADR 0028).
+    #[error("{message}")]
+    Send { code: u8, message: String },
+}
+
+impl Error {
+    /// The process exit code: hc's own for a send that did not land, 1 for everything else.
+    pub fn exit_code(&self) -> u8 {
+        match self {
+            Error::Send { code, .. } => *code,
+            _ => 1,
+        }
+    }
 }

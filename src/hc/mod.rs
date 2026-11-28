@@ -169,6 +169,8 @@ pub trait Hc {
     fn get(&self, id: &str) -> Result<Option<Terminal>, Error>;
     fn run(&self, spec: &RunSpec) -> Result<Terminal, Error>;
     fn send(&self, to: &str, text: &str) -> Result<SendOutcome, Error>;
+    /// The terminal's screen, with `lines` of history above it.
+    fn read(&self, id: &str, lines: u32) -> Result<String, Error>;
     fn kill(&self, id: &str) -> Result<KillOutcome, Error>;
     /// Starts the core, or reports the running one. `env` is the whole environment of the call, and
     /// fixes the environment every later terminal gets (spike 23).

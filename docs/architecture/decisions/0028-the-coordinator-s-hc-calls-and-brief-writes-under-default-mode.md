@@ -1,10 +1,15 @@
 ---
 number: 28
-title: "The coordinator's hc calls and brief writes under default mode"
-status: proposed
+title: The coordinator's hc calls and brief writes under default mode
+status: accepted
 date: 2026-11-28
 decision-makers:
 - maintainer
+links:
+- target: 27
+  kind: amends
+- target: 20
+  kind: amends
 ---
 
 # The coordinator's hc calls and brief writes under default mode
@@ -93,3 +98,5 @@ send and read, and neither can reach past the flock or use `--force`.
 - Raised on 2026-11-28 while 0027 was confirmed. Tier 3 S1 checks only a crook call (build log D120 to D123).
 - Spike 27 in [the spikes](../research/2026-11-26-hc-herdr-app-spikes.md) showed how Bash rules match.
 - `hc send --help` on `--force`: "Type even if the program is blocked (it may answer its dialog)".
+- As built, `crook open` also allows reads of the plugin's own files, which the skill sends the coordinator to
+  (build log D126 and D127). The rule spelling is spike 28.

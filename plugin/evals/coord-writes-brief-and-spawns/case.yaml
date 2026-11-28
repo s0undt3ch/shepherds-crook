@@ -30,10 +30,10 @@ graders:
     min: 0
     max: 0
     weight: 20
-  - name: no-forbidden-hc
+  - name: no-hc-call
     type: 'tool_used'
     tool: 'Bash'
-    input_match: 'hc\s+(run|kill|rm)\b|--force'
+    input_match: '("command"\s*:\s*"|[;&|]|\\n)\s*hc\s|--force'
     min: 0
     max: 0
     weight: 20
@@ -52,6 +52,13 @@ graders:
     type: 'tool_used'
     tool: 'Bash'
     input_match: '"command"\s*:\s*"(?!\\"/)(?:[^"\\]|\\.)*shims/crook|shims/crook\\"(?:[^"\\]|\\.)*(\||&&|;)'
+    min: 0
+    max: 0
+    weight: 20
+  - name: no-bash-file-io
+    type: 'tool_used'
+    tool: 'Bash'
+    input_match: '(^|"command"\s*:\s*"|[;&|]\s*)(cat|tee)\s|<<\s*\\?[\x27"]?[A-Z]|\becho\s[^|;&]*>'
     min: 0
     max: 0
     weight: 20

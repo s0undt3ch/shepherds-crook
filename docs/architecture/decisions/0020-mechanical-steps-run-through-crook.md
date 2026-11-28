@@ -18,12 +18,18 @@ links:
   kind: amends
 - target: 27
   kind: amendedby
+- target: 28
+  kind: amendedby
 ---
 
 # Mechanical steps run through `crook` subcommands
 
 Amended by [0027](0027-the-coordinator-calls-crook-by-a-literal-path.md): the coordinator calls crook by the
 literal path `crook open` resolves from the shim, not by the shim form; hooks and the mod keep the shim form.
+
+Amended by [0028](0028-the-coordinator-s-hc-calls-and-brief-writes-under-default-mode.md): the coordinator talks to
+its children with `crook send` and `crook read` and makes no `hc` call; `crook open` also allows its brief, README
+and notes writes.
 
 ## Context and problem statement
 

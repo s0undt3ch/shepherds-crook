@@ -51,6 +51,22 @@ pub enum Command {
         #[arg(long)]
         flock: Option<String>,
     },
+    /// Type a line into a live child of the flock (never --force)
+    Send {
+        child: String,
+        text: String,
+        #[arg(long)]
+        flock: Option<String>,
+    },
+    /// Print a live child's screen
+    Read {
+        child: String,
+        /// Lines of history above the screen
+        #[arg(long, default_value_t = 0)]
+        lines: u32,
+        #[arg(long)]
+        flock: Option<String>,
+    },
     /// Resume one child, or every active child without a live terminal
     Resume {
         child: Option<String>,
@@ -125,6 +141,8 @@ impl Command {
             Command::Close { .. } => "close",
             Command::Spawn { .. } => "spawn",
             Command::Stop { .. } => "stop",
+            Command::Send { .. } => "send",
+            Command::Read { .. } => "read",
             Command::Resume { .. } => "resume",
             Command::Status { .. } => "status",
             Command::Hook { .. } => "hook",

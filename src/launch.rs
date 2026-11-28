@@ -50,6 +50,9 @@ pub struct Coordinator<'a> {
     pub task: Option<&'a str>,
     /// The literal path from [`paths::crook_call_path`] (ADR 0027).
     pub crook: &'a str,
+    /// Where the plugin link points when `crook open` runs, so reads of the skill's own files are allowed by
+    /// either path (D127).
+    pub plugin_target: Option<&'a Path>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -83,13 +86,44 @@ fn text(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// The `--settings` JSON that lets the coordinator call crook without a prompt (ADR 0027). Claude Code
-/// matches a rule only against a command with no variables in it, so the rule names the literal path.
-pub fn settings_json(crook: &str) -> String {
-    serde_json::json!({
-        "permissions": { "allow": [format!("Bash(\"{crook}\" *)")] }
-    })
-    .to_string()
+/// The `--settings` JSON that lets the coordinator work without a prompt: its crook calls (ADR 0027), which
+/// include `crook send` and `crook read`, its writes of briefs, the README and notes (ADR 0028), and its reads
+/// of the plugin's own files (D127). Claude Code
+/// matches a Bash rule only against a command with no variables in it, so that rule names the literal path. An
+/// `Edit` rule covers the Write tool too and takes an absolute path after a second `/` (spike 28).
+pub fn settings_json(c: &Coordinator) -> String {
+    let (flock_folder, notes_folder) = (c.common.flock_folder, c.common.notes_folder);
+    let mut allow = vec![format!("Bash(\"{}\" *)", c.crook)];
+    allow.extend(edit_rule(flock_folder, "briefs/**"));
+    allow.extend(edit_rule(notes_folder, "README.md"));
+    allow.extend(edit_rule(notes_folder, "notes/**"));
+    // The skill sends the coordinator to its own models.md, resume.md and brief template (D127).
+    let mut plugin = vec![c.common.plugin_dir];
+    plugin.extend(c.plugin_target.filter(|t| *t != c.common.plugin_dir));
+    allow.extend(
+        plugin
+            .into_iter()
+            .filter_map(|dir| edit_rule(dir, "**"))
+            .map(|rule| rule.replacen("Edit(", "Read(", 1)),
+    );
+    serde_json::json!({ "permissions": { "allow": allow } }).to_string()
+}
+
+/// `Edit(/<folder>/<pattern>)`, or nothing for a folder whose path a rule would misread: glob characters would
+/// widen or narrow the match, and a parenthesis or backslash could end the rule early. Its writes then ask the
+/// maintainer, which is the safe way to fail.
+fn edit_rule(folder: &Path, pattern: &str) -> Option<String> {
+    let path = folder.to_str()?;
+    let unsafe_char = |c: char| {
+        matches!(
+            c,
+            '*' | '?' | '[' | ']' | '{' | '}' | '(' | ')' | '\\' | '!'
+        ) || c.is_control()
+    };
+    if !folder.is_absolute() || path.chars().any(unsafe_char) {
+        return None;
+    }
+    Some(format!("Edit(/{}/{pattern})", path.trim_end_matches('/')))
 }
 
 /// How the coordinator must call crook, for its first prompt and its SessionStart context (ADR 0027).
@@ -166,7 +200,7 @@ pub fn coordinator(c: &Coordinator) -> RunSpec {
         parent: Parent::None,
         argv: claude_argv(
             &common,
-            Some(settings_json(c.crook)),
+            Some(settings_json(c)),
             COORDINATOR_AGENT,
             c.model,
             c.session,

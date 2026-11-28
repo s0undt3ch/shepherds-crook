@@ -538,3 +538,26 @@ variable never matches a rule, and no rule spelling helps. A literal absolute pa
 mode every call asks the maintainer. Not checked: an interactive session, where the refusal would be a prompt
 rather than a denial, and `auto` mode, where a classifier decides. The plugin's eval harness hit the same
 refusal with four rule spellings (build log D105).
+
+## 28. Which `Edit` and `Write` rule spellings match an absolute path (2026-11-28)
+
+`claude -p --model haiku --permission-mode default --no-session-persistence` in a tier 3 run folder, with the run's
+own `HOME` and Claude config and a copy of the login (build log D122), Claude Code 2.1.332. The flock folder was
+passed with `--add-dir`. Each run asked the model to write or edit one file, with one `--settings` allow rule.
+`permission_denials` and the file on disk say whether it ran. `<abs>` is the flock folder's absolute path, which
+starts with `/`.
+
+| Rule | Tool | Result |
+| --- | --- | --- |
+| None | Write | Refused |
+| `Write(/<abs>/briefs/**)` (so `//…`) | Write | Refused |
+| `Write(<abs>/briefs/**)` | Write | Refused |
+| `Edit(/<abs>/briefs/**)` | Write | Ran |
+| `Edit(/<abs>/briefs/**)` | Edit | Ran |
+| `Edit(<abs>/briefs/**)` (one slash) | Write | Refused |
+| `Edit(/<abs>/briefs/**)`, a file outside `briefs/` | Write | Refused |
+| `Edit(/<abs>/README.md)` | Write | Ran |
+
+So an `Edit` rule covers the Write tool too, a `Write` rule matches nothing, and an absolute path needs a second
+leading slash. A `**` rule stays inside its folder. Not checked: a path holding glob characters (`*`, `?`, `[`), and a
+folder reached through a symbolic link.

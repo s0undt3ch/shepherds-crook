@@ -163,6 +163,9 @@ impl Hc for PanickingHc {
     fn send(&self, _: &str, _: &str) -> Result<SendOutcome, crate::Error> {
         panic!("boom")
     }
+    fn read(&self, _: &str, _: u32) -> Result<String, crate::Error> {
+        panic!("boom")
+    }
     fn kill(&self, _: &str) -> Result<KillOutcome, crate::Error> {
         panic!("boom")
     }

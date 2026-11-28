@@ -74,6 +74,8 @@ fn help_lists_exactly_the_planned_commands() {
         "close",
         "spawn",
         "stop",
+        "send",
+        "read",
         "resume",
         "status",
         "hook",

@@ -28,7 +28,7 @@ weak. Then:
    children, and hc notes may be lost.
 3. On a yes, run `crook resume <child> --model <model>`, written with the quoted path, as the
    `crook-coordinator` skill says. The child keeps its conversation and its worktree.
-   Then send it a follow-up with `hc send <slug>.<child> "<text>"` that names the `Done when` items that were not
+   Then send it a follow-up with `crook send <child> "<text>"` that names the `Done when` items that were not
    met. The child reopens them.
 4. crook refuses while the child is working. Then it ends the child's terminal without marking it done, and
    resumes it on the new model. If it refuses, wait until the child is idle and run it again.
